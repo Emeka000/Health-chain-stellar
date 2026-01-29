@@ -50,7 +50,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-              "function_name": "register_blood_bank",
+              "function_name": "register_hospital",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
@@ -85,7 +85,7 @@
                   "u32": 450
                 },
                 {
-                  "u64": 604800
+                  "u64": 86401
                 },
                 {
                   "symbol": "donor1"
@@ -97,46 +97,12 @@
         }
       ]
     ],
-    [
-      [
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
-        {
-          "function": {
-            "contract_fn": {
-              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-              "function_name": "register_blood",
-              "args": [
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
-                },
-                {
-                  "vec": [
-                    {
-                      "symbol": "APositive"
-                    }
-                  ]
-                },
-                {
-                  "u32": 400
-                },
-                {
-                  "u64": 604800
-                },
-                {
-                  "symbol": "donor2"
-                }
-              ]
-            }
-          },
-          "sub_invocations": []
-        }
-      ]
-    ]
+    []
   ],
   "ledger": {
     "protocol_version": 22,
     "sequence_number": 0,
-    "timestamp": 0,
+    "timestamp": 86402,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
     "min_persistent_entry_ttl": 4096,
@@ -272,7 +238,39 @@
                       "val": {
                         "bool": true
                       }
-                    },
+                    }
+                  ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          4095
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "key": {
+              "symbol": "HOSPS"
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "key": {
+                  "symbol": "HOSPS"
+                },
+                "durability": "persistent",
+                "val": {
+                  "map": [
                     {
                       "key": {
                         "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
@@ -312,7 +310,7 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u64": 3
+                  "u64": 2
                 }
               }
             },
@@ -395,7 +393,7 @@
                               "symbol": "expiration_date"
                             },
                             "val": {
-                              "u64": 604800
+                              "u64": 86401
                             }
                           },
                           {
@@ -420,119 +418,6 @@
                             },
                             "val": {
                               "u32": 450
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "recipient_hospital"
-                            },
-                            "val": "void"
-                          },
-                          {
-                            "key": {
-                              "symbol": "registration_timestamp"
-                            },
-                            "val": {
-                              "u64": 0
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "status"
-                            },
-                            "val": {
-                              "vec": [
-                                {
-                                  "symbol": "Available"
-                                }
-                              ]
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "transfer_timestamp"
-                            },
-                            "val": "void"
-                          }
-                        ]
-                      }
-                    },
-                    {
-                      "key": {
-                        "u64": 2
-                      },
-                      "val": {
-                        "map": [
-                          {
-                            "key": {
-                              "symbol": "allocation_timestamp"
-                            },
-                            "val": "void"
-                          },
-                          {
-                            "key": {
-                              "symbol": "bank_id"
-                            },
-                            "val": {
-                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "blood_type"
-                            },
-                            "val": {
-                              "vec": [
-                                {
-                                  "symbol": "APositive"
-                                }
-                              ]
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "delivery_timestamp"
-                            },
-                            "val": "void"
-                          },
-                          {
-                            "key": {
-                              "symbol": "donor_id"
-                            },
-                            "val": {
-                              "symbol": "donor2"
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "expiration_date"
-                            },
-                            "val": {
-                              "u64": 604800
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "id"
-                            },
-                            "val": {
-                              "u64": 2
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "location"
-                            },
-                            "val": {
-                              "symbol": "BANK"
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "quantity"
-                            },
-                            "val": {
-                              "u32": 400
                             }
                           },
                           {
@@ -655,39 +540,6 @@
       ],
       [
         {
-          "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
-            "key": {
-              "ledger_key_nonce": {
-                "nonce": 2032731177588607455
-              }
-            },
-            "durability": "temporary"
-          }
-        },
-        [
-          {
-            "last_modified_ledger_seq": 0,
-            "data": {
-              "contract_data": {
-                "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
-                "key": {
-                  "ledger_key_nonce": {
-                    "nonce": 2032731177588607455
-                  }
-                },
-                "durability": "temporary",
-                "val": "void"
-              }
-            },
-            "ext": "v0"
-          },
-          6311999
-        ]
-      ],
-      [
-        {
           "contract_code": {
             "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
           }
@@ -709,90 +561,5 @@
       ]
     ]
   },
-  "events": [
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
-        "type_": "contract",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "blood"
-              },
-              {
-                "symbol": "register"
-              }
-            ],
-            "data": {
-              "map": [
-                {
-                  "key": {
-                    "symbol": "bank_id"
-                  },
-                  "val": {
-                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "blood_type"
-                  },
-                  "val": {
-                    "vec": [
-                      {
-                        "symbol": "APositive"
-                      }
-                    ]
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "donor_id"
-                  },
-                  "val": {
-                    "symbol": "donor2"
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "expiration_timestamp"
-                  },
-                  "val": {
-                    "u64": 604800
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "quantity_ml"
-                  },
-                  "val": {
-                    "u32": 400
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "registration_timestamp"
-                  },
-                  "val": {
-                    "u64": 0
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "unit_id"
-                  },
-                  "val": {
-                    "u64": 2
-                  }
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    }
-  ]
+  "events": []
 }

@@ -255,6 +255,12 @@
                         "map": [
                           {
                             "key": {
+                              "symbol": "allocation_timestamp"
+                            },
+                            "val": "void"
+                          },
+                          {
+                            "key": {
                               "symbol": "bank_id"
                             },
                             "val": {
@@ -272,6 +278,12 @@
                                 }
                               ]
                             }
+                          },
+                          {
+                            "key": {
+                              "symbol": "delivery_timestamp"
+                            },
+                            "val": "void"
                           },
                           {
                             "key": {
@@ -315,11 +327,35 @@
                           },
                           {
                             "key": {
+                              "symbol": "recipient_hospital"
+                            },
+                            "val": "void"
+                          },
+                          {
+                            "key": {
                               "symbol": "registration_timestamp"
                             },
                             "val": {
                               "u64": 0
                             }
+                          },
+                          {
+                            "key": {
+                              "symbol": "status"
+                            },
+                            "val": {
+                              "vec": [
+                                {
+                                  "symbol": "Available"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "transfer_timestamp"
+                            },
+                            "val": "void"
                           }
                         ]
                       }
