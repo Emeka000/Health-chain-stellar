@@ -126,7 +126,7 @@
           "contract_data": {
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
             "key": {
-              "symbol": "HOSPITALS"
+              "symbol": "HOSPS"
             },
             "durability": "persistent"
           }
