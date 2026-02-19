@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, Loader2 } from 'lucide-react';
 
 interface SignupFormData {
   email: string;
@@ -20,6 +20,7 @@ const SignupPage: React.FC<SignupPageProps> = ({ onUserTypeSelect, onSignInClick
   const [activeTab, setActiveTab] = useState<'signup' | 'signin'>('signup');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState<SignupFormData>({
     email: '',
     firstName: '',
@@ -39,22 +40,30 @@ const SignupPage: React.FC<SignupPageProps> = ({ onUserTypeSelect, onSignInClick
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading) return;
+
+    setIsLoading(true);
     
     if (activeTab === 'signup') {
       if (formData.password !== formData.confirmPassword) {
         alert('Passwords do not match');
+        setIsLoading(false);
         return;
       }
 
       // Navigate to detailed signup form based on user type
       if (onUserTypeSelect) {
+        // Short delay to show the user the "Continue" action is processing
+        await new Promise(resolve => setTimeout(resolve, 600));
         onUserTypeSelect(formData.userType);
+        setIsLoading(false);
         return;
       }
     }
 
     try {
-      // API call logic will go here for sign in
+      // API call logic simulation
+      await new Promise(resolve => setTimeout(resolve, 1500));
       console.log('Auth data:', formData);
       if (activeTab === 'signup') {
         alert('Account created successfully! Please check your email for verification.');
@@ -64,10 +73,13 @@ const SignupPage: React.FC<SignupPageProps> = ({ onUserTypeSelect, onSignInClick
     } catch (error) {
       console.error('Auth error:', error);
       alert(`Failed to ${activeTab === 'signup' ? 'create account' : 'sign in'}. Please try again.`);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleGoogleSignup = () => {
+    if (isLoading) return;
     // Google OAuth logic will go here
     console.log('Google signup clicked');
   };
@@ -113,7 +125,8 @@ const SignupPage: React.FC<SignupPageProps> = ({ onUserTypeSelect, onSignInClick
         {/* Back Button */}
         {onBack && (
           <button 
-            className="absolute top-6 left-6 xl:top-8 xl:left-8 flex items-center gap-2 bg-none border-none text-burgundy-950 cursor-pointer text-sm xl:text-base p-2 rounded-lg transition-all duration-300 hover:bg-burgundy-950/10 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-burgundy-950/20" 
+            disabled={isLoading}
+            className="absolute top-6 left-6 xl:top-8 xl:left-8 flex items-center gap-2 bg-none border-none text-burgundy-950 cursor-pointer text-sm xl:text-base p-2 rounded-lg transition-all duration-300 hover:bg-burgundy-950/10 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-burgundy-950/20 disabled:opacity-50" 
             onClick={onBack}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="xl:w-5 xl:h-5">
@@ -154,21 +167,23 @@ const SignupPage: React.FC<SignupPageProps> = ({ onUserTypeSelect, onSignInClick
           {/* Auth Tabs */}
           <div className="flex mb-8 xl:mb-10 border-b border-gray-200 w-full relative">
             <button 
+              disabled={isLoading}
               className={`flex-1 py-3 xl:py-4 bg-none border-none text-base xl:text-lg font-medium cursor-pointer transition-all duration-300 relative z-10 ${
                 activeTab === 'signup' 
                   ? 'text-burgundy-950 font-semibold' 
                   : 'text-gray-500 hover:text-burgundy-950 hover:bg-gray-50'
-              } rounded-t-lg`}
+              } rounded-t-lg disabled:cursor-not-allowed`}
               onClick={() => setActiveTab('signup')}
             >
               Sign Up
             </button>
             <button 
+              disabled={isLoading}
               className={`flex-1 py-3 xl:py-4 bg-none border-none text-base xl:text-lg font-medium cursor-pointer transition-all duration-300 relative z-10 ${
                 activeTab === 'signin' 
                   ? 'text-burgundy-950 font-semibold' 
                   : 'text-gray-500 hover:text-burgundy-950 hover:bg-gray-50'
-              } rounded-t-lg`}
+              } rounded-t-lg disabled:cursor-not-allowed`}
               onClick={() => {
                 if (onSignInClick) {
                   onSignInClick();
@@ -192,54 +207,59 @@ const SignupPage: React.FC<SignupPageProps> = ({ onUserTypeSelect, onSignInClick
               <div className="space-y-4 xl:space-y-5">
                 <div className="relative">
                   <input
+                    disabled={isLoading}
                     type="email"
                     name="email"
                     placeholder="Email address"
                     value={formData.email}
                     onChange={handleInputChange}
                     required
-                    className="w-full py-3 xl:py-4 px-4 xl:px-5 border border-gray-300 rounded-xl text-base xl:text-lg transition-all duration-300 bg-white placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-4 focus:ring-burgundy-950/10 hover:border-gray-400"
+                    className="w-full py-3 xl:py-4 px-4 xl:px-5 border border-gray-300 rounded-xl text-base xl:text-lg transition-all duration-300 bg-white placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-4 focus:ring-burgundy-950/10 hover:border-gray-400 disabled:bg-gray-50"
                   />
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 xl:gap-5">
                   <div className="relative">
                     <input
+                      disabled={isLoading}
                       type="text"
                       name="firstName"
                       placeholder="First name"
                       value={formData.firstName}
                       onChange={handleInputChange}
                       required
-                      className="w-full py-3 xl:py-4 px-4 xl:px-5 border border-gray-300 rounded-xl text-base xl:text-lg transition-all duration-300 bg-white placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-4 focus:ring-burgundy-950/10 hover:border-gray-400"
+                      className="w-full py-3 xl:py-4 px-4 xl:px-5 border border-gray-300 rounded-xl text-base xl:text-lg transition-all duration-300 bg-white placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-4 focus:ring-burgundy-950/10 hover:border-gray-400 disabled:bg-gray-50"
                     />
                   </div>
                   <div className="relative">
                     <input
+                      disabled={isLoading}
                       type="text"
                       name="lastName"
                       placeholder="Last name"
                       value={formData.lastName}
                       onChange={handleInputChange}
                       required
-                      className="w-full py-3 xl:py-4 px-4 xl:px-5 border border-gray-300 rounded-xl text-base xl:text-lg transition-all duration-300 bg-white placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-4 focus:ring-burgundy-950/10 hover:border-gray-400"
+                      className="w-full py-3 xl:py-4 px-4 xl:px-5 border border-gray-300 rounded-xl text-base xl:text-lg transition-all duration-300 bg-white placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-4 focus:ring-burgundy-950/10 hover:border-gray-400 disabled:bg-gray-50"
                     />
                   </div>
                 </div>
 
                 <div className="relative">
                   <input
+                    disabled={isLoading}
                     type={showPassword ? "text" : "password"}
                     name="password"
                     placeholder="Enter password"
                     value={formData.password}
                     onChange={handleInputChange}
                     required
-                    className="w-full py-3 xl:py-4 px-4 xl:px-5 border border-gray-300 rounded-xl text-base xl:text-lg transition-all duration-300 bg-white placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-4 focus:ring-burgundy-950/10 hover:border-gray-400"
+                    className="w-full py-3 xl:py-4 px-4 xl:px-5 border border-gray-300 rounded-xl text-base xl:text-lg transition-all duration-300 bg-white placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-4 focus:ring-burgundy-950/10 hover:border-gray-400 disabled:bg-gray-50"
                   />
                   <button
+                    disabled={isLoading}
                     type="button"
-                    className="absolute right-4 xl:right-5 top-1/2 transform -translate-y-1/2 bg-none border-none text-gray-500 cursor-pointer p-1 flex items-center justify-center hover:text-gray-700 transition-colors duration-200 rounded-md hover:bg-gray-100"
+                    className="absolute right-4 xl:right-5 top-1/2 transform -translate-y-1/2 bg-none border-none text-gray-500 cursor-pointer p-1 flex items-center justify-center hover:text-gray-700 transition-colors duration-200 rounded-md hover:bg-gray-100 disabled:opacity-50"
                     onClick={() => setShowPassword(!showPassword)}
                   >
                     {showPassword ? <EyeOff size={20} className="xl:w-6 xl:h-6" /> : <Eye size={20} className="xl:w-6 xl:h-6" />}
@@ -248,17 +268,19 @@ const SignupPage: React.FC<SignupPageProps> = ({ onUserTypeSelect, onSignInClick
 
                 <div className="relative">
                   <input
+                    disabled={isLoading}
                     type={showConfirmPassword ? "text" : "password"}
                     name="confirmPassword"
                     placeholder="Re-enter password"
                     value={formData.confirmPassword}
                     onChange={handleInputChange}
                     required
-                    className="w-full py-3 xl:py-4 px-4 xl:px-5 border border-gray-300 rounded-xl text-base xl:text-lg transition-all duration-300 bg-white placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-4 focus:ring-burgundy-950/10 hover:border-gray-400"
+                    className="w-full py-3 xl:py-4 px-4 xl:px-5 border border-gray-300 rounded-xl text-base xl:text-lg transition-all duration-300 bg-white placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-4 focus:ring-burgundy-950/10 hover:border-gray-400 disabled:bg-gray-50"
                   />
                   <button
+                    disabled={isLoading}
                     type="button"
-                    className="absolute right-4 xl:right-5 top-1/2 transform -translate-y-1/2 bg-none border-none text-gray-500 cursor-pointer p-1 flex items-center justify-center hover:text-gray-700 transition-colors duration-200 rounded-md hover:bg-gray-100"
+                    className="absolute right-4 xl:right-5 top-1/2 transform -translate-y-1/2 bg-none border-none text-gray-500 cursor-pointer p-1 flex items-center justify-center hover:text-gray-700 transition-colors duration-200 rounded-md hover:bg-gray-100 disabled:opacity-50"
                     onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                   >
                     {showConfirmPassword ? <EyeOff size={20} className="xl:w-6 xl:h-6" /> : <Eye size={20} className="xl:w-6 xl:h-6" />}
@@ -268,9 +290,11 @@ const SignupPage: React.FC<SignupPageProps> = ({ onUserTypeSelect, onSignInClick
 
               <button 
                 type="submit" 
-                className="w-full py-3 xl:py-4 bg-burgundy-950 text-white border-none rounded-xl text-base xl:text-lg font-semibold cursor-pointer transition-all duration-300 mt-6 xl:mt-8 shadow-lg hover:shadow-xl hover:bg-burgundy-800 hover:scale-[1.02] active:scale-[0.98]"
+                disabled={isLoading}
+                className="w-full py-3 xl:py-4 bg-burgundy-950 text-white border-none rounded-xl text-base xl:text-lg font-semibold cursor-pointer transition-all duration-300 mt-6 xl:mt-8 shadow-lg hover:shadow-xl hover:bg-burgundy-800 hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2 disabled:bg-burgundy-900/80 disabled:scale-100"
               >
-                Continue
+                {isLoading ? <Loader2 className="animate-spin" size={20} /> : null}
+                {isLoading ? 'Processing...' : 'Continue'}
               </button>
 
               <div className="flex items-center my-6 xl:my-8 text-gray-500">
@@ -281,7 +305,8 @@ const SignupPage: React.FC<SignupPageProps> = ({ onUserTypeSelect, onSignInClick
 
               <button 
                 type="button" 
-                className="w-full py-3 xl:py-4 bg-white border border-gray-300 rounded-xl text-base xl:text-lg cursor-pointer flex items-center justify-center gap-3 transition-all duration-300 font-medium text-gray-700 shadow-sm hover:bg-gray-50 hover:border-gray-400 hover:shadow-md hover:scale-[1.02] active:scale-[0.98]" 
+                disabled={isLoading}
+                className="w-full py-3 xl:py-4 bg-white border border-gray-300 rounded-xl text-base xl:text-lg cursor-pointer flex items-center justify-center gap-3 transition-all duration-300 font-medium text-gray-700 shadow-sm hover:bg-gray-50 hover:border-gray-400 hover:shadow-md hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:scale-100" 
                 onClick={handleGoogleSignup}
               >
                 <svg width="24" height="24" viewBox="0 0 24 24" className="xl:w-6 xl:h-6">
@@ -300,29 +325,32 @@ const SignupPage: React.FC<SignupPageProps> = ({ onUserTypeSelect, onSignInClick
               <div className="space-y-4 xl:space-y-5">
                 <div className="relative">
                   <input
+                    disabled={isLoading}
                     type="email"
                     name="email"
                     placeholder="Email address"
                     value={formData.email}
                     onChange={handleInputChange}
                     required
-                    className="w-full py-3 xl:py-4 px-4 xl:px-5 border border-gray-300 rounded-xl text-base xl:text-lg transition-all duration-300 bg-white placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-4 focus:ring-burgundy-950/10 hover:border-gray-400"
+                    className="w-full py-3 xl:py-4 px-4 xl:px-5 border border-gray-300 rounded-xl text-base xl:text-lg transition-all duration-300 bg-white placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-4 focus:ring-burgundy-950/10 hover:border-gray-400 disabled:bg-gray-50"
                   />
                 </div>
 
                 <div className="relative">
                   <input
+                    disabled={isLoading}
                     type={showPassword ? "text" : "password"}
                     name="password"
                     placeholder="Enter password"
                     value={formData.password}
                     onChange={handleInputChange}
                     required
-                    className="w-full py-3 xl:py-4 px-4 xl:px-5 border border-gray-300 rounded-xl text-base xl:text-lg transition-all duration-300 bg-white placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-4 focus:ring-burgundy-950/10 hover:border-gray-400"
+                    className="w-full py-3 xl:py-4 px-4 xl:px-5 border border-gray-300 rounded-xl text-base xl:text-lg transition-all duration-300 bg-white placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-4 focus:ring-burgundy-950/10 hover:border-gray-400 disabled:bg-gray-50"
                   />
                   <button
+                    disabled={isLoading}
                     type="button"
-                    className="absolute right-4 xl:right-5 top-1/2 transform -translate-y-1/2 bg-none border-none text-gray-500 cursor-pointer p-1 flex items-center justify-center hover:text-gray-700 transition-colors duration-200 rounded-md hover:bg-gray-100"
+                    className="absolute right-4 xl:right-5 top-1/2 transform -translate-y-1/2 bg-none border-none text-gray-500 cursor-pointer p-1 flex items-center justify-center hover:text-gray-700 transition-colors duration-200 rounded-md hover:bg-gray-100 disabled:opacity-50"
                     onClick={() => setShowPassword(!showPassword)}
                   >
                     {showPassword ? <EyeOff size={20} className="xl:w-6 xl:h-6" /> : <Eye size={20} className="xl:w-6 xl:h-6" />}
@@ -332,9 +360,11 @@ const SignupPage: React.FC<SignupPageProps> = ({ onUserTypeSelect, onSignInClick
 
               <button 
                 type="submit" 
-                className="w-full py-3 xl:py-4 bg-burgundy-950 text-white border-none rounded-xl text-base xl:text-lg font-semibold cursor-pointer transition-all duration-300 mt-6 xl:mt-8 shadow-lg hover:shadow-xl hover:bg-burgundy-800 hover:scale-[1.02] active:scale-[0.98]"
+                disabled={isLoading}
+                className="w-full py-3 xl:py-4 bg-burgundy-950 text-white border-none rounded-xl text-base xl:text-lg font-semibold cursor-pointer transition-all duration-300 mt-6 xl:mt-8 shadow-lg hover:shadow-xl hover:bg-burgundy-800 hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2 disabled:bg-burgundy-900/80 disabled:scale-100"
               >
-                Continue
+                {isLoading ? <Loader2 className="animate-spin" size={20} /> : null}
+                {isLoading ? 'Processing...' : 'Continue'}
               </button>
 
               <div className="flex items-center my-6 xl:my-8 text-gray-500">
@@ -345,7 +375,8 @@ const SignupPage: React.FC<SignupPageProps> = ({ onUserTypeSelect, onSignInClick
 
               <button 
                 type="button" 
-                className="w-full py-3 xl:py-4 bg-white border border-gray-300 rounded-xl text-base xl:text-lg cursor-pointer flex items-center justify-center gap-3 transition-all duration-300 font-medium text-gray-700 shadow-sm hover:bg-gray-50 hover:border-gray-400 hover:shadow-md hover:scale-[1.02] active:scale-[0.98]" 
+                disabled={isLoading}
+                className="w-full py-3 xl:py-4 bg-white border border-gray-300 rounded-xl text-base xl:text-lg cursor-pointer flex items-center justify-center gap-3 transition-all duration-300 font-medium text-gray-700 shadow-sm hover:bg-gray-50 hover:border-gray-400 hover:shadow-md hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:scale-100" 
                 onClick={handleGoogleSignup}
               >
                 <svg width="24" height="24" viewBox="0 0 24 24" className="xl:w-6 xl:h-6">

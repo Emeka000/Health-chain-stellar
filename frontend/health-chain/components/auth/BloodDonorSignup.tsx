@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useState } from 'react';
 import { ArrowLeft, Eye, EyeOff } from 'lucide-react';
 
@@ -52,6 +54,7 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
   const [currentStep, setCurrentStep] = useState(1);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState<BloodDonorFormData>({
     email: '',
     firstName: '',
@@ -107,7 +110,7 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
   };
 
   const handlePrevious = () => {
-    if (currentStep > 1) {
+    if (currentStep > 1 && !isLoading) {
       setCurrentStep(currentStep - 1);
     }
   };
@@ -115,6 +118,8 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    if (isLoading) return;
+
     if (formData.password !== formData.confirmPassword) {
       alert('Passwords do not match');
       return;
@@ -125,9 +130,15 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
       return;
     }
 
+    setIsLoading(true);
+
     try {
-      // API call logic will go here
+      // API call logic
       console.log('Blood donor signup data:', formData);
+      
+      // Simulate API delay
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
       alert('Registration successful! Please check your email for verification.');
       if (onSuccess) {
         onSuccess();
@@ -135,6 +146,8 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
     } catch (error) {
       console.error('Signup error:', error);
       alert('Failed to create account. Please try again.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -151,7 +164,8 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             value={formData.email}
             onChange={handleInputChange}
             required
-            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 md:py-3 md:px-4 md:text-sm sm:py-2.5 sm:px-3.5 sm:text-sm"
+            disabled={isLoading}
+            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 disabled:bg-gray-50 disabled:cursor-not-allowed"
           />
         </div>
       </div>
@@ -165,7 +179,8 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             value={formData.firstName}
             onChange={handleInputChange}
             required
-            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 md:py-3 md:px-4 md:text-sm sm:py-2.5 sm:px-3.5 sm:text-sm"
+            disabled={isLoading}
+            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 disabled:bg-gray-50 disabled:cursor-not-allowed"
           />
         </div>
         <div className="relative">
@@ -176,7 +191,8 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             value={formData.lastName}
             onChange={handleInputChange}
             required
-            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 md:py-3 md:px-4 md:text-sm sm:py-2.5 sm:px-3.5 sm:text-sm"
+            disabled={isLoading}
+            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 disabled:bg-gray-50 disabled:cursor-not-allowed"
           />
         </div>
       </div>
@@ -190,12 +206,14 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             value={formData.password}
             onChange={handleInputChange}
             required
-            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 md:py-3 md:px-4 md:text-sm sm:py-2.5 sm:px-3.5 sm:text-sm"
+            disabled={isLoading}
+            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 disabled:bg-gray-50 disabled:cursor-not-allowed"
           />
           <button
             type="button"
-            className="absolute right-4 top-1/2 transform -translate-y-1/2 bg-none border-none text-gray-500 cursor-pointer p-0 flex items-center justify-center hover:text-gray-700"
+            className="absolute right-4 top-1/2 transform -translate-y-1/2 bg-none border-none text-gray-500 cursor-pointer p-0 flex items-center justify-center hover:text-gray-700 disabled:opacity-50"
             onClick={() => setShowPassword(!showPassword)}
+            disabled={isLoading}
           >
             {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
           </button>
@@ -208,12 +226,14 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             value={formData.confirmPassword}
             onChange={handleInputChange}
             required
-            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 md:py-3 md:px-4 md:text-sm sm:py-2.5 sm:px-3.5 sm:text-sm"
+            disabled={isLoading}
+            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 disabled:bg-gray-50 disabled:cursor-not-allowed"
           />
           <button
             type="button"
-            className="absolute right-4 top-1/2 transform -translate-y-1/2 bg-none border-none text-gray-500 cursor-pointer p-0 flex items-center justify-center hover:text-gray-700"
+            className="absolute right-4 top-1/2 transform -translate-y-1/2 bg-none border-none text-gray-500 cursor-pointer p-0 flex items-center justify-center hover:text-gray-700 disabled:opacity-50"
             onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+            disabled={isLoading}
           >
             {showConfirmPassword ? <EyeOff size={20} /> : <Eye size={20} />}
           </button>
@@ -235,7 +255,8 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             value={formData.dateOfBirth}
             onChange={handleInputChange}
             required
-            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 md:py-3 md:px-4 md:text-sm sm:py-2.5 sm:px-3.5 sm:text-sm"
+            disabled={isLoading}
+            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 disabled:bg-gray-50 disabled:cursor-not-allowed"
           />
         </div>
         <div className="relative">
@@ -244,7 +265,8 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             value={formData.gender}
             onChange={handleInputChange}
             required
-            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border text-gray-700 cursor-pointer focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 md:py-3 md:px-4 md:text-sm sm:py-2.5 sm:px-3.5 sm:text-sm"
+            disabled={isLoading}
+            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border text-gray-700 cursor-pointer focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 disabled:bg-gray-50"
           >
             <option value="male">Male</option>
             <option value="female">Female</option>
@@ -262,7 +284,8 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             value={formData.phoneNumber}
             onChange={handleInputChange}
             required
-            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 md:py-3 md:px-4 md:text-sm sm:py-2.5 sm:px-3.5 sm:text-sm"
+            disabled={isLoading}
+            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 disabled:bg-gray-50"
           />
         </div>
         <div className="relative">
@@ -271,7 +294,8 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             value={formData.bloodType}
             onChange={handleInputChange}
             required
-            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border text-gray-700 cursor-pointer focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 md:py-3 md:px-4 md:text-sm sm:py-2.5 sm:px-3.5 sm:text-sm"
+            disabled={isLoading}
+            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border text-gray-700 cursor-pointer focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 disabled:bg-gray-50"
           >
             <option value="A+">A+</option>
             <option value="A-">A-</option>
@@ -294,7 +318,8 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             value={formData.weight}
             onChange={handleInputChange}
             required
-            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 md:py-3 md:px-4 md:text-sm sm:py-2.5 sm:px-3.5 sm:text-sm"
+            disabled={isLoading}
+            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 disabled:bg-gray-50"
             min="40"
             max="200"
           />
@@ -307,7 +332,8 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             value={formData.height}
             onChange={handleInputChange}
             required
-            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 md:py-3 md:px-4 md:text-sm sm:py-2.5 sm:px-3.5 sm:text-sm"
+            disabled={isLoading}
+            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 disabled:bg-gray-50"
             min="120"
             max="250"
           />
@@ -327,7 +353,8 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
           value={formData.address}
           onChange={handleInputChange}
           required
-          className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 md:py-3 md:px-4 md:text-sm sm:py-2.5 sm:px-3.5 sm:text-sm"
+          disabled={isLoading}
+          className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 disabled:bg-gray-50"
           rows={3}
         />
       </div>
@@ -341,7 +368,8 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             value={formData.city}
             onChange={handleInputChange}
             required
-            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 md:py-3 md:px-4 md:text-sm sm:py-2.5 sm:px-3.5 sm:text-sm"
+            disabled={isLoading}
+            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 disabled:bg-gray-50"
           />
         </div>
         <div className="relative">
@@ -352,7 +380,8 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             value={formData.state}
             onChange={handleInputChange}
             required
-            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 md:py-3 md:px-4 md:text-sm sm:py-2.5 sm:px-3.5 sm:text-sm"
+            disabled={isLoading}
+            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 disabled:bg-gray-50"
           />
         </div>
       </div>
@@ -366,7 +395,8 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             value={formData.zipCode}
             onChange={handleInputChange}
             required
-            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 md:py-3 md:px-4 md:text-sm sm:py-2.5 sm:px-3.5 sm:text-sm"
+            disabled={isLoading}
+            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 disabled:bg-gray-50"
           />
         </div>
         <div className="relative">
@@ -377,7 +407,8 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             value={formData.country}
             onChange={handleInputChange}
             required
-            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 md:py-3 md:px-4 md:text-sm sm:py-2.5 sm:px-3.5 sm:text-sm"
+            disabled={isLoading}
+            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 disabled:bg-gray-50"
           />
         </div>
       </div>
@@ -392,7 +423,8 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             value={formData.emergencyContactName}
             onChange={handleInputChange}
             required
-            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 md:py-3 md:px-4 md:text-sm sm:py-2.5 sm:px-3.5 sm:text-sm"
+            disabled={isLoading}
+            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 disabled:bg-gray-50"
           />
         </div>
         <div className="relative">
@@ -403,7 +435,8 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             value={formData.emergencyContactPhone}
             onChange={handleInputChange}
             required
-            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 md:py-3 md:px-4 md:text-sm sm:py-2.5 sm:px-3.5 sm:text-sm"
+            disabled={isLoading}
+            className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 disabled:bg-gray-50"
           />
         </div>
       </div>
@@ -421,6 +454,7 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             name="hasRecentTattoo"
             checked={formData.hasRecentTattoo}
             onChange={handleInputChange}
+            disabled={isLoading}
             className="w-4 h-4 accent-burgundy-950 cursor-pointer flex-shrink-0 mt-0.5"
           />
           I have gotten a tattoo in the last 3 months
@@ -432,6 +466,7 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             name="hasRecentPiercing"
             checked={formData.hasRecentPiercing}
             onChange={handleInputChange}
+            disabled={isLoading}
             className="w-4 h-4 accent-burgundy-950 cursor-pointer flex-shrink-0 mt-0.5"
           />
           I have gotten a piercing in the last 3 months
@@ -443,6 +478,7 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             name="hasRecentTravel"
             checked={formData.hasRecentTravel}
             onChange={handleInputChange}
+            disabled={isLoading}
             className="w-4 h-4 accent-burgundy-950 cursor-pointer flex-shrink-0 mt-0.5"
           />
           I have traveled internationally in the last 3 months
@@ -454,6 +490,7 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             name="isAvailableForEmergency"
             checked={formData.isAvailableForEmergency}
             onChange={handleInputChange}
+            disabled={isLoading}
             className="w-4 h-4 accent-burgundy-950 cursor-pointer flex-shrink-0 mt-0.5"
           />
           I am available for emergency blood donations
@@ -467,6 +504,7 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             placeholder="Please provide travel details"
             value={formData.travelDetails}
             onChange={handleInputChange}
+            disabled={isLoading}
             className="w-full py-3.5 px-4 border border-gray-300 rounded-lg text-base transition-all duration-300 bg-white box-border placeholder-gray-400 focus:outline-none focus:border-burgundy-950 focus:ring-3 focus:ring-burgundy-950/10 md:py-3 md:px-4 md:text-sm sm:py-2.5 sm:px-3.5 sm:text-sm"
             rows={3}
           />
@@ -483,6 +521,7 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
               checked={formData.agreeToTerms}
               onChange={handleInputChange}
               required
+              disabled={isLoading}
               className="w-4 h-4 accent-burgundy-950 cursor-pointer flex-shrink-0 mt-0.5"
             />
             I agree to the Terms and Conditions
@@ -495,6 +534,7 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
               checked={formData.agreeToPrivacyPolicy}
               onChange={handleInputChange}
               required
+              disabled={isLoading}
               className="w-4 h-4 accent-burgundy-950 cursor-pointer flex-shrink-0 mt-0.5"
             />
             I agree to the Privacy Policy
@@ -507,6 +547,7 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
               checked={formData.consentToMedicalScreening}
               onChange={handleInputChange}
               required
+              disabled={isLoading}
               className="w-4 h-4 accent-burgundy-950 cursor-pointer flex-shrink-0 mt-0.5"
             />
             I consent to medical screening for blood donation eligibility
@@ -520,8 +561,9 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
     <div className="max-w-4xl mx-auto p-8 font-system lg:p-6 md:p-4 sm:p-3">
       <div className="flex items-center gap-4 mb-8 lg:mb-6 sm:mb-4">
         <button 
-          className="flex items-center gap-2 bg-none border-none text-burgundy-950 cursor-pointer text-base p-2 rounded transition-colors duration-300 hover:bg-burgundy-950/10 md:text-sm md:p-1.5 sm:text-xs sm:p-1" 
+          className="flex items-center gap-2 bg-none border-none text-burgundy-950 cursor-pointer text-base p-2 rounded transition-colors duration-300 hover:bg-burgundy-950/10 md:text-sm md:p-1.5 sm:text-xs sm:p-1 disabled:opacity-50" 
           onClick={onBack}
+          disabled={isLoading}
         >
           <ArrowLeft size={20} className="md:w-4 md:h-4 sm:w-3.5 sm:h-3.5" />
           Back
@@ -566,7 +608,8 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
             <button 
               type="button" 
               onClick={handlePrevious} 
-              className="px-8 py-3.5 bg-gray-100 text-gray-700 border border-gray-300 rounded-lg text-base font-semibold cursor-pointer transition-all duration-300 hover:bg-gray-200 active:translate-y-px lg:ml-0 md:px-6 md:py-3 md:text-sm sm:px-5 sm:py-2.5 sm:text-sm"
+              disabled={isLoading}
+              className="px-8 py-3.5 bg-gray-100 text-gray-700 border border-gray-300 rounded-lg text-base font-semibold cursor-pointer transition-all duration-300 hover:bg-gray-200 active:translate-y-px lg:ml-0 md:px-6 md:py-3 md:text-sm sm:px-5 sm:py-2.5 sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Previous
             </button>
@@ -583,9 +626,24 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
           ) : (
             <button 
               type="submit" 
-              className="px-8 py-3.5 bg-burgundy-950 text-white border-none rounded-lg text-base font-semibold cursor-pointer transition-all duration-300 ml-auto hover:bg-burgundy-800 active:translate-y-px lg:ml-0 md:px-6 md:py-3 md:text-sm sm:px-5 sm:py-2.5 sm:text-sm"
+              disabled={isLoading}
+              className={`px-8 py-3.5 border-none rounded-lg text-base font-semibold cursor-pointer transition-all duration-300 ml-auto shadow-lg active:translate-y-px lg:ml-0 md:px-6 md:py-3 md:text-sm sm:px-5 sm:py-2.5 sm:text-sm ${
+                isLoading 
+                  ? 'bg-gray-400 text-white cursor-not-allowed' 
+                  : 'bg-burgundy-950 text-white hover:bg-burgundy-800'
+              }`}
             >
-              Complete Registration
+              {isLoading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                  </svg>
+                  Processing...
+                </span>
+              ) : (
+                'Complete Registration'
+              )}
             </button>
           )}
         </div>

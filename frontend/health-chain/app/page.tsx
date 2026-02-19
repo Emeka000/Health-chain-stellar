@@ -15,7 +15,7 @@ export default function Home() {
         <p className="font-roboto font-normal text-[16px] text-brand-black leading-relaxed text-justify md:text-left">
           At MDrips, our mission is to bring hope, healing, and humanity closer to everyone who needs it. 
           We believe that every drop of blood carries the power to save a life, and no one should struggle 
-          to find help in moments of urgency. That's why we are building a community where generosity flows 
+          to find help in moments of urgency. That&apos;s why we are building a community where generosity flows 
           freely and compassion moves without barriers.
         </p>
       </section>

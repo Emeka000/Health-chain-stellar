@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useState } from 'react';
 import { Eye, EyeOff, ArrowLeft } from 'lucide-react';
 
@@ -38,38 +40,53 @@ const SignInPage: React.FC<SignInPageProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Safety check to prevent double execution
+    if (isLoading) return;
+
     setIsLoading(true);
 
     try {
-      // API call logic will go here
       console.log('Sign in data:', formData);
       
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Simulate API call delay
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
       alert('Signed in successfully!');
+      // Note: If redirecting here, we don't set isLoading(false) 
+      // to keep the button disabled during the page transition.
     } catch (error) {
       console.error('Sign in error:', error);
       alert('Failed to sign in. Please check your credentials and try again.');
+      setIsLoading(false); // Only re-enable if there is an error
+    } finally {
+      // For the sake of this demo/simulation, we re-enable it.
+      // In a real app, you'd only do this if the user stays on the page.
+      setIsLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    if (isLoading) return;
+    
+    setIsLoading(true);
+    try {
+      if (onGoogleSignIn) {
+        await onGoogleSignIn();
+      } else {
+        console.log('Google sign in clicked');
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleGoogleSignIn = () => {
-    if (onGoogleSignIn) {
-      onGoogleSignIn();
-    } else {
-      // Default Google OAuth logic
-      console.log('Google sign in clicked');
-    }
-  };
-
   const handleForgotPassword = () => {
+    if (isLoading) return;
     if (onForgotPassword) {
       onForgotPassword();
     } else {
-      // Default forgot password logic
       const email = prompt('Please enter your email address:');
       if (email) {
         console.log('Password reset requested for:', email);
@@ -82,7 +99,6 @@ const SignInPage: React.FC<SignInPageProps> = ({
     <div className="flex min-h-screen font-system bg-gray-50">
       {/* Left Panel - Hidden on mobile/tablet, visible on desktop */}
       <div className="hidden xl:flex w-1/2 bg-gradient-to-br from-red-600 via-burgundy-800 to-burgundy-950 items-center justify-center relative overflow-hidden">
-        {/* Subtle pattern overlay */}
         <div 
           className="absolute inset-0 opacity-10 bg-no-repeat bg-cover"
           style={{
@@ -90,7 +106,6 @@ const SignInPage: React.FC<SignInPageProps> = ({
           }}
         />
         
-        {/* Brand Content */}
         <div className="relative z-10 text-center text-white max-w-md px-8">
           <div className="mb-8">
             <div className="animate-float inline-block">
@@ -114,24 +129,21 @@ const SignInPage: React.FC<SignInPageProps> = ({
         </div>
       </div>
 
-      {/* Right Panel - Full width on mobile/tablet, half width on desktop */}
+      {/* Right Panel */}
       <div className="flex-1 xl:w-1/2 bg-white flex flex-col justify-center items-center p-6 sm:p-8 lg:p-12 xl:p-16 relative min-h-screen xl:min-h-0">
-        {/* Back Button */}
         {onBack && (
           <button 
-            className="absolute top-6 left-6 xl:top-8 xl:left-8 flex items-center gap-2 bg-none border-none text-burgundy-950 cursor-pointer text-sm xl:text-base p-2 rounded-lg transition-all duration-300 hover:bg-burgundy-950/10 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-burgundy-950/20" 
+            className="absolute top-6 left-6 xl:top-8 xl:left-8 flex items-center gap-2 bg-none border-none text-burgundy-950 cursor-pointer text-sm xl:text-base p-2 rounded-lg transition-all duration-300 hover:bg-burgundy-950/10 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-burgundy-950/20 disabled:opacity-50" 
             onClick={onBack}
+            disabled={isLoading}
           >
             <ArrowLeft size={18} className="xl:w-5 xl:h-5" />
             <span className="font-medium">Back</span>
           </button>
         )}
 
-        {/* Main Content Container */}
         <div className="w-full max-w-md xl:max-w-lg 2xl:max-w-xl">
-          {/* Header */}
           <div className="text-center mb-8 xl:mb-10">
-            {/* Mobile Logo */}
             <div className="xl:hidden mb-6">
               <svg width="60" height="60" viewBox="0 0 80 80" fill="none" className="mx-auto">
                 <circle cx="40" cy="40" r="40" fill="#7f1d1d"/>
@@ -152,22 +164,20 @@ const SignInPage: React.FC<SignInPageProps> = ({
             </p>
           </div>
 
-          {/* Auth Tabs */}
           <div className="flex mb-8 xl:mb-10 border-b border-gray-200 w-full relative">
             <button 
-              className="flex-1 py-3 xl:py-4 bg-none border-none text-base xl:text-lg font-medium text-gray-500 cursor-pointer transition-all duration-300 hover:text-burgundy-950 hover:bg-gray-50 rounded-t-lg relative z-10"
+              className="flex-1 py-3 xl:py-4 bg-none border-none text-base xl:text-lg font-medium text-gray-500 cursor-pointer transition-all duration-300 hover:text-burgundy-950 hover:bg-gray-50 rounded-t-lg relative z-10 disabled:cursor-not-allowed"
               onClick={onSignUpClick}
+              disabled={isLoading}
             >
               Sign Up
             </button>
             <button className="flex-1 py-3 xl:py-4 bg-none border-none text-base xl:text-lg font-medium cursor-pointer transition-all duration-300 text-burgundy-950 font-semibold relative z-10 rounded-t-lg">
               Sign In
             </button>
-            {/* Static underline for Sign In tab */}
             <div className="absolute bottom-0 left-1/2 w-1/2 h-0.5 bg-burgundy-950 rounded-full"></div>
           </div>
 
-          {/* Sign In Form */}
           <form className="space-y-5 xl:space-y-6" onSubmit={handleSubmit}>
             <div className="space-y-4 xl:space-y-5">
               <div className="relative">
@@ -278,10 +288,11 @@ const SignInPage: React.FC<SignInPageProps> = ({
 
           <div className="mt-8 xl:mt-10 text-center">
             <p className="text-gray-600 text-sm xl:text-base">
-              Don't have an account? 
+              Don&apos;t have an account? 
               <button 
-                className="bg-none border-none text-burgundy-950 cursor-pointer underline text-sm xl:text-base ml-1 hover:text-burgundy-800 transition-colors duration-200 font-medium" 
+                className="bg-none border-none text-burgundy-950 cursor-pointer underline text-sm xl:text-base ml-1 hover:text-burgundy-800 transition-colors duration-200 font-medium disabled:opacity-50" 
                 onClick={onSignUpClick}
+                disabled={isLoading}
               >
                 Sign up here
               </button>
