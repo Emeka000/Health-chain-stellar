@@ -69,3 +69,32 @@ export interface OrdersResponse {
 export interface OrderQueryParams extends OrderFilters, SortConfig, PaginationConfig {
   hospitalId: string;
 }
+
+// --- New Order Flow Types ---
+
+export type StockLevel = 'adequate' | 'low' | 'critical' | 'out_of_stock';
+
+export interface BloodBankAvailability {
+  id: string;
+  name: string;
+  location: string;
+  latitude: number;
+  longitude: number;
+  distanceKm: number;
+  estimatedDeliveryMinutes: number;
+  stock: Record<BloodType, number>;
+  stockLevel: StockLevel;
+}
+
+export interface NewOrderPayload {
+  hospitalId: string;
+  bloodType: BloodType;
+  quantity: number;
+  bloodBankId: string;
+}
+
+export interface NewOrderResponse {
+  orderId: string;
+  estimatedDeliveryMinutes: number;
+  bloodBank: BloodBankInfo;
+}
