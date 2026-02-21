@@ -8,6 +8,7 @@ import {
   Delete,
   HttpCode,
   HttpStatus,
+  Query,
 } from '@nestjs/common';
 import { DispatchService } from './dispatch.service';
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
@@ -29,6 +30,11 @@ export class DispatchController {
     return this.dispatchService.getDispatchStats();
   }
 
+  @Get('assignments')
+  getAssignments(@Query('orderId') orderId?: string) {
+    return this.dispatchService.getAssignmentLogs(orderId);
+  }
+
   @Get(':id')
   @RequirePermissions(Permission.READ_DISPATCH)
   findOne(@Param('id') id: string) {
@@ -48,6 +54,15 @@ export class DispatchController {
     @Body('riderId') riderId: string,
   ) {
     return this.dispatchService.assignOrder(orderId, riderId);
+  }
+
+  @Post('assignments/respond')
+  respondToAssignment(
+    @Body('orderId') orderId: string,
+    @Body('riderId') riderId: string,
+    @Body('accepted') accepted: boolean,
+  ) {
+    return this.dispatchService.respondToAssignment(orderId, riderId, accepted);
   }
 
   @Patch(':id')

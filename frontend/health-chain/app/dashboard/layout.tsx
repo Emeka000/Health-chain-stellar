@@ -22,6 +22,7 @@ function classNames(...classes: (string | undefined | null | false)[]) {
 const sidebarLinks = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutGrid },
   { name: "Blood Requests", href: "/dashboard/requests", icon: GitPullRequest },
+  { name: "Orders", href: "/dashboard/orders", icon: Package },
   { name: "Donors Lists", href: "/dashboard/donors", icon: HandHeart },
   { name: "Hospitals", href: "/dashboard/hospitals", icon: Building2 },
   { name: "Track Riders", href: "/dashboard/track-riders", icon: Bike },

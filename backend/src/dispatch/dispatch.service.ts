@@ -1,18 +1,22 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
-  OrderConfirmedEvent,
   OrderCancelledEvent,
   OrderStatusUpdatedEvent,
   OrderRiderAssignedEvent,
 } from '../events';
+import { RiderAssignmentService } from './rider-assignment.service';
 
 @Injectable()
 export class DispatchService {
   private readonly logger = new Logger(DispatchService.name);
   private readonly processedEvents = new Set<string>(); // For idempotency
 
-  constructor() {}
+  constructor(
+    private readonly eventEmitter: EventEmitter2,
+    private readonly riderAssignmentService: RiderAssignmentService,
+  ) {}
 
   /**
    * Generate a unique key for event idempotency
@@ -34,36 +38,11 @@ export class DispatchService {
   private markEventProcessed(eventKey: string): void {
     this.processedEvents.add(eventKey);
     // Clean up old entries after 1 hour to prevent memory leak
-    setTimeout(() => this.processedEvents.delete(eventKey), 3600000);
-  }
-
-  @OnEvent('order.confirmed')
-  async handleOrderConfirmed(event: OrderConfirmedEvent) {
-    const eventKey = this.getEventKey('order.confirmed', event.orderId, event.timestamp);
-
-    if (this.isEventProcessed(eventKey)) {
-      this.logger.warn(`Duplicate event detected: ${eventKey}`);
-      return;
-    }
-
-    this.logger.log(`Handling order confirmed: ${event.orderId}`);
-
-    // TODO: Implement dispatch creation logic
-    const dispatch = {
-      id: `dispatch-${Date.now()}`,
-      orderId: event.orderId,
-      hospitalId: event.hospitalId,
-      bloodType: event.bloodType,
-      quantity: event.quantity,
-      deliveryAddress: event.deliveryAddress,
-      status: 'pending',
-      createdAt: new Date(),
-    };
-
-    this.markEventProcessed(eventKey);
-
-    this.logger.log(`Dispatch created: ${dispatch.id} for order ${event.orderId}`);
-    return dispatch;
+    const cleanupTimer = setTimeout(
+      () => this.processedEvents.delete(eventKey),
+      3600000,
+    );
+    cleanupTimer.unref?.();
   }
 
   @OnEvent('order.cancelled')
@@ -143,11 +122,10 @@ export class DispatchService {
     return result;
   }
 
-  async findAll() {
-    // TODO: Implement find all dispatches logic
+  async findAll(): Promise<{ message: string; data: unknown[] }> {
     return {
       message: 'Dispatches retrieved successfully',
-      data: [],
+      data: (await this.riderAssignmentService.getAssignmentLogs()).data,
     };
   }
 
@@ -184,7 +162,10 @@ export class DispatchService {
   }
 
   async assignOrder(orderId: string, riderId: string) {
-    // TODO: Implement assign order to rider logic
+    this.eventEmitter.emit(
+      'order.rider.assigned',
+      new OrderRiderAssignedEvent(orderId, riderId),
+    );
     return {
       message: 'Order assigned to rider successfully',
       data: { orderId, riderId },
@@ -207,17 +188,25 @@ export class DispatchService {
     };
   }
 
-  async getDispatchStats() {
-    // TODO: Implement get dispatch statistics logic
-    return {
-      message: 'Dispatch statistics retrieved successfully',
-      data: {
-        total: 0,
-        pending: 0,
-        inProgress: 0,
-        completed: 0,
-        cancelled: 0,
-      },
+  getDispatchStats(): {
+    message: string;
+    data: {
+      total: number;
+      pending: number;
+      accepted: number;
+      escalated: number;
+      timeout: number;
+      rejected: number;
     };
+  } {
+    return this.riderAssignmentService.getDispatchStats();
+  }
+
+  async getAssignmentLogs(orderId?: string): Promise<{ message: string; data: unknown[] }> {
+    return this.riderAssignmentService.getAssignmentLogs(orderId);
+  }
+
+  async respondToAssignment(orderId: string, riderId: string, accepted: boolean) {
+    return this.riderAssignmentService.respondToAssignment(orderId, riderId, accepted);
   }
 }

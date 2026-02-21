@@ -1,8 +1,104 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Redis } from 'ioredis';
+import { REDIS_CLIENT } from '../redis/redis.constants';
 
 @Injectable()
 export class MapsService {
-  constructor() {}
+  private readonly logger = new Logger(MapsService.name);
+  private readonly cacheTtlSeconds = 300;
+
+  constructor(
+    private readonly configService: ConfigService,
+    @Optional() @Inject(REDIS_CLIENT) private readonly redis?: Redis,
+  ) {}
+
+  private buildDistanceCacheKey(origin: string, destination: string): string {
+    return `maps:distance-matrix:${encodeURIComponent(origin)}:${encodeURIComponent(destination)}`;
+  }
+
+  async getTravelTimeSeconds(origin: string, destination: string): Promise<number> {
+    const cacheKey = this.buildDistanceCacheKey(origin, destination);
+    const cached = await this.tryGetCachedDistance(cacheKey);
+    if (cached !== null) {
+      return cached;
+    }
+
+    const apiKey = this.configService.get<string>('GOOGLE_MAPS_API_KEY');
+    if (!apiKey) {
+      this.logger.warn(
+        'GOOGLE_MAPS_API_KEY not set. Falling back to high travel time score.',
+      );
+      return Number.MAX_SAFE_INTEGER;
+    }
+
+    const url = new URL(
+      'https://maps.googleapis.com/maps/api/distancematrix/json',
+    );
+    url.searchParams.set('origins', origin);
+    url.searchParams.set('destinations', destination);
+    url.searchParams.set('key', apiKey);
+
+    const response = await fetch(url.toString());
+    if (!response.ok) {
+      throw new Error(`Distance Matrix API request failed: ${response.status}`);
+    }
+
+    const body = (await response.json()) as {
+      status: string;
+      rows?: Array<{
+        elements?: Array<{ status: string; duration?: { value: number } }>;
+      }>;
+    };
+
+    if (body.status !== 'OK') {
+      throw new Error(`Distance Matrix API error: ${body.status}`);
+    }
+
+    const element = body.rows?.[0]?.elements?.[0];
+    if (
+      !element ||
+      element.status !== 'OK' ||
+      element.duration?.value === undefined
+    ) {
+      throw new Error(`Distance Matrix element error: ${element?.status ?? 'UNKNOWN'}`);
+    }
+
+    const travelTimeSeconds = element.duration.value;
+    await this.trySetCachedDistance(cacheKey, travelTimeSeconds);
+    return travelTimeSeconds;
+  }
+
+  private async tryGetCachedDistance(cacheKey: string): Promise<number | null> {
+    if (!this.redis) {
+      return null;
+    }
+    try {
+      const cached = await this.redis.get(cacheKey);
+      return cached ? Number(cached) : null;
+    } catch (error) {
+      this.logger.warn(`Distance cache read failed for key ${cacheKey}: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private async trySetCachedDistance(
+    cacheKey: string,
+    travelTimeSeconds: number,
+  ): Promise<void> {
+    if (!this.redis) {
+      return;
+    }
+    try {
+      await this.redis.setex(
+        cacheKey,
+        this.cacheTtlSeconds,
+        String(travelTimeSeconds),
+      );
+    } catch (error) {
+      this.logger.warn(`Distance cache write failed for key ${cacheKey}: ${String(error)}`);
+    }
+  }
 
   async getDirections(
     originLat: number,

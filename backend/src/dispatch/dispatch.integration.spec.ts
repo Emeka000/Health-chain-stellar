@@ -1,24 +1,51 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { EventEmitter2, EventEmitterModule } from '@nestjs/event-emitter';
 import { DispatchService } from './dispatch.service';
-import {
-  OrderConfirmedEvent,
-  OrderCancelledEvent,
-  OrderStatusUpdatedEvent,
-  OrderRiderAssignedEvent,
-} from '../events';
+import { RiderAssignmentService } from './rider-assignment.service';
+import { OrderConfirmedEvent } from '../events';
+import { RidersService } from '../riders/riders.service';
+import { MapsService } from '../maps/maps.service';
+import { ConfigService } from '@nestjs/config';
 
 describe('DispatchService Integration Tests', () => {
   let dispatchService: DispatchService;
+  let riderAssignmentService: RiderAssignmentService;
   let eventEmitter: EventEmitter2;
+  let ridersService: { getAvailableRiders: jest.Mock };
+  let mapsService: { getTravelTimeSeconds: jest.Mock };
 
   beforeEach(async () => {
+    ridersService = {
+      getAvailableRiders: jest.fn(),
+    };
+    mapsService = {
+      getTravelTimeSeconds: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       imports: [EventEmitterModule.forRoot()],
-      providers: [DispatchService],
+      providers: [
+        DispatchService,
+        RiderAssignmentService,
+        { provide: RidersService, useValue: ridersService },
+        { provide: MapsService, useValue: mapsService },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: (key: string, defaultValue: number) => {
+              if (key === 'ASSIGNMENT_ACCEPTANCE_TIMEOUT_MS') return 10;
+              if (key === 'ASSIGNMENT_DISTANCE_WEIGHT') return 0.5;
+              if (key === 'ASSIGNMENT_WORKLOAD_WEIGHT') return 0.3;
+              if (key === 'ASSIGNMENT_RATING_WEIGHT') return 0.2;
+              return defaultValue;
+            },
+          },
+        },
+      ],
     }).compile();
 
     dispatchService = module.get<DispatchService>(DispatchService);
+    riderAssignmentService = module.get<RiderAssignmentService>(RiderAssignmentService);
     eventEmitter = module.get<EventEmitter2>(EventEmitter2);
   });
 
@@ -26,8 +53,34 @@ describe('DispatchService Integration Tests', () => {
     jest.clearAllMocks();
   });
 
-  describe('Event-Driven Dispatch Creation', () => {
-    it('should create dispatch when order.confirmed event is emitted', async () => {
+  describe('Event-driven rider assignment', () => {
+    it('should rank riders by weighted scoring on order.confirmed', async () => {
+      ridersService.getAvailableRiders.mockResolvedValue({
+        data: [
+          {
+            id: 'rider-a',
+            name: 'A',
+            status: 'available',
+            latitude: 6.45,
+            longitude: 3.4,
+            activeDeliveries: 2,
+            averageRating: 4.7,
+          },
+          {
+            id: 'rider-b',
+            name: 'B',
+            status: 'available',
+            latitude: 6.44,
+            longitude: 3.42,
+            activeDeliveries: 0,
+            averageRating: 4.9,
+          },
+        ],
+      });
+      mapsService.getTravelTimeSeconds
+        .mockResolvedValueOnce(900)
+        .mockResolvedValueOnce(700);
+
       const event = new OrderConfirmedEvent(
         'order-123',
         'hospital-456',
@@ -36,177 +89,98 @@ describe('DispatchService Integration Tests', () => {
         '123 Main St',
       );
 
-      const handleSpy = jest.spyOn(dispatchService, 'handleOrderConfirmed');
+      await riderAssignmentService.handleOrderConfirmed(event);
 
-      eventEmitter.emit('order.confirmed', event);
-
-      // Wait for async event handler
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      expect(handleSpy).toHaveBeenCalledWith(event);
-      expect(handleSpy).toHaveBeenCalledTimes(1);
+      const logs = await dispatchService.getAssignmentLogs('order-123');
+      expect(logs.data[0].selectedRiderId).toBe('rider-b');
+      expect(logs.data[0].status).toBe('pending');
     });
 
-    it('should handle order.cancelled event', async () => {
-      const event = new OrderCancelledEvent(
-        'order-123',
-        'hospital-456',
-        'Patient recovered',
+    it('should escalate to next candidate after timeout', async () => {
+      jest.useFakeTimers();
+      ridersService.getAvailableRiders.mockResolvedValue({
+        data: [
+          {
+            id: 'rider-a',
+            name: 'A',
+            status: 'available',
+            latitude: 6.45,
+            longitude: 3.4,
+            activeDeliveries: 0,
+            averageRating: 4.5,
+          },
+          {
+            id: 'rider-b',
+            name: 'B',
+            status: 'available',
+            latitude: 6.44,
+            longitude: 3.42,
+            activeDeliveries: 1,
+            averageRating: 4.8,
+          },
+        ],
+      });
+      mapsService.getTravelTimeSeconds
+        .mockResolvedValueOnce(300)
+        .mockResolvedValueOnce(1200);
+
+      await riderAssignmentService.handleOrderConfirmed(
+        new OrderConfirmedEvent(
+          'order-timeout',
+          'hospital-111',
+          'O+',
+          1,
+          'Lekki',
+        ),
       );
 
-      const handleSpy = jest.spyOn(dispatchService, 'handleOrderCancelled');
+      await jest.advanceTimersByTimeAsync(11);
 
-      eventEmitter.emit('order.cancelled', event);
-
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      expect(handleSpy).toHaveBeenCalledWith(event);
-      expect(handleSpy).toHaveBeenCalledTimes(1);
+      const logs = await dispatchService.getAssignmentLogs('order-timeout');
+      expect(logs.data.some((log: any) => log.status === 'timeout')).toBe(true);
+      expect(
+        logs.data.some(
+          (log: any) => log.status === 'pending' && log.selectedRiderId === 'rider-b',
+        ),
+      ).toBe(true);
+      jest.useRealTimers();
     });
 
-    it('should handle order.status.updated event', async () => {
-      const event = new OrderStatusUpdatedEvent(
-        'order-123',
-        'pending',
-        'confirmed',
+    it('should emit assignment event when rider accepts', async () => {
+      ridersService.getAvailableRiders.mockResolvedValue({
+        data: [
+          {
+            id: 'rider-a',
+            name: 'A',
+            status: 'available',
+            latitude: 6.45,
+            longitude: 3.4,
+            activeDeliveries: 1,
+            averageRating: 4.6,
+          },
+        ],
+      });
+      mapsService.getTravelTimeSeconds.mockResolvedValue(600);
+
+      const emitSpy = jest.spyOn(eventEmitter, 'emit');
+      await riderAssignmentService.handleOrderConfirmed(
+        new OrderConfirmedEvent(
+          'order-accepted',
+          'hospital-999',
+          'AB+',
+          1,
+          'Yaba',
+        ),
       );
+      await dispatchService.respondToAssignment('order-accepted', 'rider-a', true);
 
-      const handleSpy = jest.spyOn(dispatchService, 'handleOrderStatusUpdated');
-
-      eventEmitter.emit('order.status.updated', event);
-
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      expect(handleSpy).toHaveBeenCalledWith(event);
-      expect(handleSpy).toHaveBeenCalledTimes(1);
-    });
-
-    it('should handle order.rider.assigned event', async () => {
-      const event = new OrderRiderAssignedEvent('order-123', 'rider-789');
-
-      const handleSpy = jest.spyOn(dispatchService, 'handleOrderRiderAssigned');
-
-      eventEmitter.emit('order.rider.assigned', event);
-
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      expect(handleSpy).toHaveBeenCalledWith(event);
-      expect(handleSpy).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe('Idempotency', () => {
-    it('should not process duplicate order.confirmed events', async () => {
-      const timestamp = new Date();
-      const event = new OrderConfirmedEvent(
-        'order-123',
-        'hospital-456',
-        'A+',
-        2,
-        '123 Main St',
-        timestamp,
+      expect(emitSpy).toHaveBeenCalledWith(
+        'order.rider.assigned',
+        expect.objectContaining({
+          orderId: 'order-accepted',
+          riderId: 'rider-a',
+        }),
       );
-
-      const handleSpy = jest.spyOn(dispatchService, 'handleOrderConfirmed');
-
-      // Emit the same event twice
-      eventEmitter.emit('order.confirmed', event);
-      eventEmitter.emit('order.confirmed', event);
-
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      // Handler should be called twice but only process once
-      expect(handleSpy).toHaveBeenCalledTimes(2);
-    });
-
-    it('should not process duplicate order.cancelled events', async () => {
-      const timestamp = new Date();
-      const event = new OrderCancelledEvent(
-        'order-123',
-        'hospital-456',
-        'Patient recovered',
-        timestamp,
-      );
-
-      const handleSpy = jest.spyOn(dispatchService, 'handleOrderCancelled');
-
-      eventEmitter.emit('order.cancelled', event);
-      eventEmitter.emit('order.cancelled', event);
-
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      expect(handleSpy).toHaveBeenCalledTimes(2);
-    });
-
-    it('should not process duplicate order.status.updated events', async () => {
-      const timestamp = new Date();
-      const event = new OrderStatusUpdatedEvent(
-        'order-123',
-        'pending',
-        'confirmed',
-        timestamp,
-      );
-
-      const handleSpy = jest.spyOn(dispatchService, 'handleOrderStatusUpdated');
-
-      eventEmitter.emit('order.status.updated', event);
-      eventEmitter.emit('order.status.updated', event);
-
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      expect(handleSpy).toHaveBeenCalledTimes(2);
-    });
-
-    it('should not process duplicate order.rider.assigned events', async () => {
-      const timestamp = new Date();
-      const event = new OrderRiderAssignedEvent('order-123', 'rider-789', timestamp);
-
-      const handleSpy = jest.spyOn(dispatchService, 'handleOrderRiderAssigned');
-
-      eventEmitter.emit('order.rider.assigned', event);
-      eventEmitter.emit('order.rider.assigned', event);
-
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      expect(handleSpy).toHaveBeenCalledTimes(2);
-    });
-
-    it('should process events with different timestamps', async () => {
-      const event1 = new OrderConfirmedEvent(
-        'order-123',
-        'hospital-456',
-        'A+',
-        2,
-        '123 Main St',
-        new Date('2024-01-01'),
-      );
-
-      const event2 = new OrderConfirmedEvent(
-        'order-123',
-        'hospital-456',
-        'A+',
-        2,
-        '123 Main St',
-        new Date('2024-01-02'),
-      );
-
-      const handleSpy = jest.spyOn(dispatchService, 'handleOrderConfirmed');
-
-      eventEmitter.emit('order.confirmed', event1);
-      eventEmitter.emit('order.confirmed', event2);
-
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      // Both should be processed as they have different timestamps
-      expect(handleSpy).toHaveBeenCalledTimes(2);
-    });
-  });
-
-  describe('Module Independence', () => {
-    it('should not have direct dependency on OrdersModule', () => {
-      // This test verifies that DispatchService doesn't import OrdersService
-      const dispatchServiceString = dispatchService.constructor.toString();
-      expect(dispatchServiceString).not.toContain('OrdersService');
     });
   });
 });

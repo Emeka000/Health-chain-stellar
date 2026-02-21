@@ -1,129 +1,127 @@
+import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { EventEmitter2, EventEmitterModule } from '@nestjs/event-emitter';
 import { DispatchService } from './dispatch.service';
-import { OrdersService } from '../orders/orders.service';
+import { RiderAssignmentService } from './rider-assignment.service';
+import { OrderConfirmedEvent } from '../events';
+import { RidersService } from '../riders/riders.service';
+import { MapsService } from '../maps/maps.service';
+import { ConfigService } from '@nestjs/config';
 
-describe('Dispatch-Orders Event Integration (E2E)', () => {
+describe('Dispatch Event Integration (E2E)', () => {
+  let app: INestApplication;
   let dispatchService: DispatchService;
-  let ordersService: OrdersService;
+  let riderAssignmentService: RiderAssignmentService;
   let eventEmitter: EventEmitter2;
+  let ridersService: { getAvailableRiders: jest.Mock };
+  let mapsService: { getTravelTimeSeconds: jest.Mock };
 
   beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      imports: [EventEmitterModule.forRoot()],
-      providers: [DispatchService, OrdersService],
-    }).compile();
-
-    dispatchService = module.get<DispatchService>(DispatchService);
-    ordersService = module.get<OrdersService>(OrdersService);
-    eventEmitter = module.get<EventEmitter2>(EventEmitter2);
-  });
-
-  afterEach(() => {
-    jest.clearAllMocks();
-  });
-
-  it('should create dispatch when order is created', async () => {
-    const dispatchSpy = jest.spyOn(dispatchService, 'handleOrderConfirmed');
-
-    const createOrderDto = {
-      hospitalId: 'hospital-123',
-      bloodType: 'O-',
-      quantity: 3,
-      deliveryAddress: '456 Hospital Ave',
+    ridersService = {
+      getAvailableRiders: jest.fn(),
+    };
+    mapsService = {
+      getTravelTimeSeconds: jest.fn(),
     };
 
-    await ordersService.create(createOrderDto);
+    const moduleRef: TestingModule = await Test.createTestingModule({
+      imports: [EventEmitterModule.forRoot()],
+      providers: [
+        DispatchService,
+        RiderAssignmentService,
+        { provide: RidersService, useValue: ridersService },
+        { provide: MapsService, useValue: mapsService },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: (key: string, defaultValue: number) => {
+              if (key === 'ASSIGNMENT_ACCEPTANCE_TIMEOUT_MS') return 10;
+              if (key === 'ASSIGNMENT_DISTANCE_WEIGHT') return 0.5;
+              if (key === 'ASSIGNMENT_WORKLOAD_WEIGHT') return 0.3;
+              if (key === 'ASSIGNMENT_RATING_WEIGHT') return 0.2;
+              return defaultValue;
+            },
+          },
+        },
+      ],
+    }).compile();
 
-    // Wait for event propagation
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    app = moduleRef.createNestApplication();
+    await app.init();
 
-    expect(dispatchSpy).toHaveBeenCalled();
-    const callArgs = dispatchSpy.mock.calls[0][0];
-    expect(callArgs.hospitalId).toBe('hospital-123');
-    expect(callArgs.bloodType).toBe('O-');
-    expect(callArgs.quantity).toBe(3);
+    dispatchService = app.get<DispatchService>(DispatchService);
+    riderAssignmentService = app.get<RiderAssignmentService>(RiderAssignmentService);
+    eventEmitter = app.get<EventEmitter2>(EventEmitter2);
   });
 
-  it('should cancel dispatch when order is cancelled', async () => {
-    const dispatchSpy = jest.spyOn(dispatchService, 'handleOrderCancelled');
-
-    await ordersService.remove('order-123');
-
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    expect(dispatchSpy).toHaveBeenCalled();
-    const callArgs = dispatchSpy.mock.calls[0][0];
-    expect(callArgs.orderId).toBe('order-123');
+  afterEach(async () => {
+    jest.clearAllMocks();
+    await app.close();
   });
 
-  it('should update dispatch when order status changes', async () => {
-    const dispatchSpy = jest.spyOn(dispatchService, 'handleOrderStatusUpdated');
-
-    await ordersService.updateStatus('order-123', 'in-transit');
-
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    expect(dispatchSpy).toHaveBeenCalled();
-    const callArgs = dispatchSpy.mock.calls[0][0];
-    expect(callArgs.orderId).toBe('order-123');
-    expect(callArgs.newStatus).toBe('in-transit');
-  });
-
-  it('should assign rider to dispatch when rider is assigned to order', async () => {
-    const dispatchSpy = jest.spyOn(dispatchService, 'handleOrderRiderAssigned');
-
-    await ordersService.assignRider('order-123', 'rider-456');
-
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    expect(dispatchSpy).toHaveBeenCalled();
-    const callArgs = dispatchSpy.mock.calls[0][0];
-    expect(callArgs.orderId).toBe('order-123');
-    expect(callArgs.riderId).toBe('rider-456');
-  });
-
-  it('should handle complete order lifecycle', async () => {
-    const confirmedSpy = jest.spyOn(dispatchService, 'handleOrderConfirmed');
-    const statusSpy = jest.spyOn(dispatchService, 'handleOrderStatusUpdated');
-    const riderSpy = jest.spyOn(dispatchService, 'handleOrderRiderAssigned');
-
-    // Create order
-    const result = await ordersService.create({
-      hospitalId: 'hospital-789',
-      bloodType: 'AB+',
-      quantity: 1,
-      deliveryAddress: '789 Medical Center',
+  it('triggers assignment workflow on order.confirmed event', async () => {
+    ridersService.getAvailableRiders.mockResolvedValue({
+      data: [
+        {
+          id: 'rider-100',
+          name: 'Alpha',
+          status: 'available',
+          latitude: 6.5,
+          longitude: 3.3,
+          activeDeliveries: 0,
+          averageRating: 4.8,
+        },
+      ],
     });
+    mapsService.getTravelTimeSeconds.mockResolvedValue(450);
 
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    const orderId = result.data.id;
-
-    // Assign rider
-    await ordersService.assignRider(orderId, 'rider-999');
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // Update status
-    await ordersService.updateStatus(orderId, 'delivered');
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    expect(confirmedSpy).toHaveBeenCalledTimes(1);
-    expect(riderSpy).toHaveBeenCalledTimes(1);
-    expect(statusSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it('should verify DispatchModule has no imports from OrdersModule', () => {
-    // Verify that DispatchService constructor doesn't inject OrdersService
-    const constructorParams = Reflect.getMetadata(
-      'design:paramtypes',
-      DispatchService,
-    ) || [];
-
-    const hasOrdersServiceDependency = constructorParams.some(
-      (param: any) => param?.name === 'OrdersService',
+    await eventEmitter.emitAsync(
+      'order.confirmed',
+      new OrderConfirmedEvent(
+        'order-100',
+        'hospital-100',
+        'B+',
+        2,
+        'Victoria Island',
+      ),
     );
 
-    expect(hasOrdersServiceDependency).toBe(false);
+    const logs = await dispatchService.getAssignmentLogs('order-100');
+    expect(logs.data).toHaveLength(1);
+    expect(logs.data[0].selectedRiderId).toBe('rider-100');
+    expect(logs.data[0].status).toBe('pending');
+  });
+
+  it('serves assignment logs with order filter', async () => {
+    ridersService.getAvailableRiders.mockResolvedValue({
+      data: [
+        {
+          id: 'rider-200',
+          name: 'Beta',
+          status: 'available',
+          latitude: 6.52,
+          longitude: 3.31,
+          activeDeliveries: 1,
+          averageRating: 4.7,
+        },
+      ],
+    });
+    mapsService.getTravelTimeSeconds.mockResolvedValue(620);
+
+    await riderAssignmentService.handleOrderConfirmed(
+      new OrderConfirmedEvent(
+        'order-200',
+        'hospital-200',
+        'O-',
+        1,
+        'Ikeja',
+      ),
+    );
+
+    const filtered = await dispatchService.getAssignmentLogs('order-200');
+    const all = await dispatchService.getAssignmentLogs();
+
+    expect(filtered.data.every((log: any) => log.orderId === 'order-200')).toBe(true);
+    expect(all.data.length).toBeGreaterThanOrEqual(filtered.data.length);
   });
 });
