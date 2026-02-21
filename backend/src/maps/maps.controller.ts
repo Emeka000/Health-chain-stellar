@@ -1,10 +1,13 @@
 import { Controller, Get, Post, Body, Query } from '@nestjs/common';
 import { MapsService } from './maps.service';
+import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
+import { Permission } from '../auth/enums/permission.enum';
 
 @Controller('maps')
 export class MapsController {
   constructor(private readonly mapsService: MapsService) {}
 
+  @RequirePermissions(Permission.VIEW_MAPS)
   @Get('directions')
   getDirections(
     @Query('originLat') originLat: string,
@@ -20,6 +23,7 @@ export class MapsController {
     );
   }
 
+  @RequirePermissions(Permission.VIEW_MAPS)
   @Get('distance')
   calculateDistance(
     @Query('originLat') originLat: string,
@@ -35,11 +39,13 @@ export class MapsController {
     );
   }
 
+  @RequirePermissions(Permission.VIEW_MAPS)
   @Post('geocode')
   geocodeAddress(@Body('address') address: string) {
     return this.mapsService.geocodeAddress(address);
   }
 
+  @RequirePermissions(Permission.VIEW_MAPS)
   @Get('reverse-geocode')
   reverseGeocode(
     @Query('latitude') latitude: string,
@@ -51,6 +57,7 @@ export class MapsController {
     );
   }
 
+  @RequirePermissions(Permission.VIEW_MAPS)
   @Get('search')
   searchPlaces(
     @Query('query') query: string,
@@ -62,6 +69,7 @@ export class MapsController {
     return this.mapsService.searchPlaces(query, location);
   }
 
+  @RequirePermissions(Permission.VIEW_MAPS)
   @Get('place-details')
   getPlaceDetails(@Query('placeId') placeId: string) {
     return this.mapsService.getPlaceDetails(placeId);
