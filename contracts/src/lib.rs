@@ -397,17 +397,14 @@ impl HealthChainContract {
     ) -> Result<(), Error> {
         bank_id.require_auth();
 
-        // Verify blood bank is authorized
         if !Self::is_blood_bank(env.clone(), bank_id.clone()) {
             return Err(Error::Unauthorized);
         }
 
-        // Verify hospital is registered
         if !Self::is_hospital(env.clone(), hospital.clone()) {
             return Err(Error::UnauthorizedHospital);
         }
 
-        // Get blood unit
         let mut units: Map<u64, BloodUnit> = env
             .storage()
             .persistent()
@@ -416,21 +413,22 @@ impl HealthChainContract {
 
         let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
 
-        // Check if expired
+        // --- NEW: REQUIREMENT #67 GUARD ---
+        if unit.status == BloodStatus::Expired {
+            return Err(Error::UnitExpired);
+        }
+        // ---------------------------------
+
         let current_time = env.ledger().timestamp();
         if unit.expiration_date <= current_time {
             return Err(Error::UnitExpired);
         }
 
-        // Check status
         if unit.status != BloodStatus::Available {
             return Err(Error::InvalidStatus);
         }
 
-        // Record old status for event
         let old_status = unit.status;
-
-        // Update unit
         unit.status = BloodStatus::Reserved;
         unit.recipient_hospital = Some(hospital.clone());
         unit.allocation_timestamp = Some(current_time);
@@ -438,7 +436,6 @@ impl HealthChainContract {
         units.set(unit_id, unit.clone());
         env.storage().persistent().set(&BLOOD_UNITS, &units);
 
-        // Record status change
         Self::record_status_change(
             &env,
             unit_id,
@@ -447,7 +444,6 @@ impl HealthChainContract {
             bank_id.clone(),
         );
 
-        // Emit event
         env.events().publish(
             (symbol_short!("blood"), symbol_short!("allocate")),
             (unit_id, hospital, current_time),
@@ -591,12 +587,10 @@ impl HealthChainContract {
     pub fn initiate_transfer(env: Env, bank_id: Address, unit_id: u64) -> Result<(), Error> {
         bank_id.require_auth();
 
-        // Verify blood bank is authorized
         if !Self::is_blood_bank(env.clone(), bank_id.clone()) {
             return Err(Error::Unauthorized);
         }
 
-        // Get blood unit
         let mut units: Map<u64, BloodUnit> = env
             .storage()
             .persistent()
@@ -605,27 +599,28 @@ impl HealthChainContract {
 
         let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
 
-        // Check if expired
+        // --- NEW: REQUIREMENT #67 GUARD ---
+        if unit.status == BloodStatus::Expired {
+            return Err(Error::UnitExpired);
+        }
+        // ---------------------------------
+
         let current_time = env.ledger().timestamp();
         if unit.expiration_date <= current_time {
             return Err(Error::UnitExpired);
         }
 
-        // Check status - must be Reserved
         if unit.status != BloodStatus::Reserved {
             return Err(Error::InvalidStatus);
         }
 
         let old_status = unit.status;
-
-        // Update unit
         unit.status = BloodStatus::InTransit;
         unit.transfer_timestamp = Some(current_time);
 
         units.set(unit_id, unit.clone());
         env.storage().persistent().set(&BLOOD_UNITS, &units);
 
-        // Record status change
         Self::record_status_change(
             &env,
             unit_id,
@@ -634,7 +629,6 @@ impl HealthChainContract {
             bank_id.clone(),
         );
 
-        // Emit event
         env.events().publish(
             (symbol_short!("blood"), symbol_short!("transfer")),
             (unit_id, current_time),
@@ -1382,6 +1376,67 @@ impl HealthChainContract {
 
         env.storage().persistent().set(&NEXT_ID, &(id + 1));
         id
+    }
+
+    pub fn expire_unit(env: Env, unit_id: u64) -> Result<(), Error> {
+        let mut units: Map<u64, BloodUnit> = env
+            .storage()
+            .persistent()
+            .get(&BLOOD_UNITS)
+            .unwrap_or(Map::new(&env));
+
+        let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
+
+        // 1. Verify current ledger timestamp is past expiration_date
+        let current_time = env.ledger().timestamp();
+        if current_time < unit.expiration_date {
+            return Err(Error::InvalidExpiration); // Acceptance Criteria: NotYetExpired logic
+        }
+
+        let old_status = unit.status;
+
+        // 2. Transition status to Expired
+        unit.status = BloodStatus::Expired;
+        units.set(unit_id, unit.clone());
+        env.storage().persistent().set(&BLOOD_UNITS, &units);
+
+        // 3. Emit expiry event (Indexed by NestJS)
+        // UnitExpired event emitted with unit_id and expiry_at as topics
+        env.events().publish(
+            (symbol_short!("blood"), symbol_short!("expired"), unit_id),
+            unit.expiration_date,
+        );
+
+        // Record in history
+        Self::record_status_change(
+            &env,
+            unit_id,
+            old_status,
+            BloodStatus::Expired,
+            env.current_contract_address(),
+        );
+
+        Ok(())
+    }
+
+    /// Requirement: check_and_expire_batch enforces max 50 units per call
+    pub fn check_and_expire_batch(env: Env, unit_ids: Vec<u64>) -> Result<Vec<u64>, Error> {
+        // Acceptance Criteria: Enforce max batch size of 50
+        if unit_ids.len() > 50 {
+            return Err(Error::BatchSizeExceeded);
+        }
+
+        let mut expired_ids = vec![&env];
+
+        for unit_id in unit_ids.iter() {
+            // Attempt to expire each unit. If it's ready, it expires.
+            // We use .is_ok() so one non-expired unit doesn't kill the whole batch.
+            if Self::expire_unit(env.clone(), unit_id).is_ok() {
+                expired_ids.push_back(unit_id);
+            }
+        }
+
+        Ok(expired_ids)
     }
 
     /// Helper function to get next request ID
