@@ -1356,7 +1356,7 @@ impl HealthChainContract {
 
     /// Get all blood units registered by a specific bank
     pub fn get_units_by_bank(env: Env, bank_id: Address) -> Vec<BloodUnit> {
-        // 1. Get all units from storage. 
+        // 1. Get all units from storage.
         // We use unwrap_or(Map::new(&env)) so it never panics if storage is empty.
         let units: Map<u64, BloodUnit> = env
             .storage()
