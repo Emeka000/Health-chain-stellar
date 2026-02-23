@@ -53,6 +53,7 @@ export class BloodUnitsService {
       unitId: dto.unitId,
       temperature: dto.temperature,
       timestamp: dto.timestamp || Math.floor(Date.now() / 1000),
+      bloodType: dto.bloodType,
     });
 
     return {

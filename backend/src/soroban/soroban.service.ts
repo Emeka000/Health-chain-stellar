@@ -14,6 +14,12 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BlockchainEvent } from './entities/blockchain-event.entity';
+import {
+  ContractError,
+  TemperatureThreshold,
+  get_threshold_or_default,
+  validate_threshold,
+} from './temperature-threshold.guard';
 
 interface RetryConfig {
   maxRetries: number;
@@ -35,6 +41,7 @@ export class SorobanService implements OnModuleInit {
     maxDelay: 10000,
     backoffMultiplier: 2,
   };
+  private readonly temperatureThresholds = new Map<string, TemperatureThreshold>();
 
   constructor(
     private configService: ConfigService,
@@ -178,8 +185,25 @@ export class SorobanService implements OnModuleInit {
     unitId: number;
     temperature: number;
     timestamp: number;
+    bloodType?: string;
   }): Promise<{ transactionHash: string }> {
     return this.executeWithRetry(async () => {
+      const bloodType = params.bloodType ?? 'O+';
+      const threshold = get_threshold_or_default(this.temperatureThresholds, bloodType);
+      const thresholdValidation = validate_threshold(threshold);
+
+      if (!thresholdValidation.ok) {
+        throw new Error(ContractError.InvalidThreshold);
+      }
+
+      const temperatureX100 = Math.round(params.temperature * 100);
+      if (
+        temperatureX100 < threshold.min_celsius_x100 ||
+        temperatureX100 > threshold.max_celsius_x100
+      ) {
+        throw new Error(ContractError.InvalidThreshold);
+      }
+
       const account = await this.server.getAccount(this.sourceKeypair.publicKey());
       
       // Temperature in Celsius * 10 (e.g., 2.5°C = 25)

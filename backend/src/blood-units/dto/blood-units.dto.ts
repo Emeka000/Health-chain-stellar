@@ -58,4 +58,9 @@ export class LogTemperatureDto {
   @IsNumber()
   @IsOptional()
   timestamp?: number;
+
+  @IsString()
+  @IsOptional()
+  @IsIn(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'])
+  bloodType?: string;
 }
