@@ -5,7 +5,7 @@ import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useRiders } from "@/lib/hooks/useRiders";
 import { StatusBadge } from "@/components/orders/StatusBadge";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
-import { Search, MapPin, Star, MoreHorizontal } from "lucide-react";
+import { Search, MapPin, Star, MoreHorizontal, Users } from "lucide-react";
 import { RiderDetailDrawer } from "@/components/riders/RiderDetailDrawer";
 import { Rider } from "@/lib/types/riders";
 
@@ -17,17 +17,11 @@ const MOCK_RIDERS: Rider[] = [
 
 export default function RiderManagementPage() {
   const searchParams = useSearchParams();
-  const router = useRouter();
   const pathname = usePathname();
-  
   const { data: apiRiders, isLoading } = useRiders();
-  
-  // Initial search from URL - only runs once
   const [searchTerm, setSearchTerm] = useState(searchParams.get("search") || "");
   const [selectedRider, setSelectedRider] = useState<Rider | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  
-  // Prevents infinite loops by tracking if the change is internal
   const isInitialMount = useRef(true);
 
   useEffect(() => {
@@ -35,18 +29,12 @@ export default function RiderManagementPage() {
       isInitialMount.current = false;
       return;
     }
-
     const handler = setTimeout(() => {
       const params = new URLSearchParams(window.location.search);
-      if (searchTerm) {
-        params.set("search", searchTerm);
-      } else {
-        params.delete("search");
-      }
-      // Use window.history to prevent Next.js from re-triggering a full page render
+      if (searchTerm) params.set("search", searchTerm);
+      else params.delete("search");
       window.history.replaceState(null, "", `${pathname}?${params.toString()}`);
-    }, 300); // 300ms debounce
-
+    }, 300);
     return () => clearTimeout(handler);
   }, [searchTerm, pathname]);
 
@@ -57,19 +45,22 @@ export default function RiderManagementPage() {
   );
 
   return (
-    <div className="p-8 max-w-[1600px] mx-auto min-h-screen">
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900 font-poppins">Rider Management</h1>
-          <p className="text-gray-500">Monitor performance and manage logistics zones</p>
+    <div className="p-6 lg:p-10 space-y-10 bg-white min-h-screen font-roboto">
+      {/* Branded Header */}
+      <div className="flex flex-col md:flex-row justify-between items-center border-b border-gray-100 pb-8 gap-4">
+        <div className="text-center md:text-left">
+          <h1 className="text-[36px] font-manrope font-bold text-brand-black leading-tight">
+            Rider Logistics
+          </h1>
+          <p className="text-[16px] text-gray-500 mt-1">Manage delivery personnel and performance zones.</p>
         </div>
         
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+        <div className="relative group">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-brand-black transition-colors" size={20} />
           <input 
             type="text"
-            placeholder="Search riders..."
-            className="pl-10 pr-4 py-2 border border-gray-200 rounded-lg w-80 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+            placeholder="Search by name or phone..."
+            className="pl-12 pr-6 py-3 border-2 border-gray-100 rounded-full w-full md:w-[400px] focus:border-brand-black outline-none transition-all font-medium text-brand-black shadow-sm"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -77,52 +68,64 @@ export default function RiderManagementPage() {
       </div>
 
       {isLoading && !apiRiders ? (
-        <div className="flex justify-center py-20"><LoadingSpinner /></div>
+        <div className="flex flex-col items-center justify-center py-40 gap-4">
+          <LoadingSpinner />
+          <p className="text-gray-400 font-medium animate-pulse">Syncing logistics data...</p>
+        </div>
       ) : (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+        <div className="bg-white rounded-[24px] shadow-card border border-gray-50 overflow-hidden">
+          <table className="min-w-full">
+            <thead className="bg-gray-50/50">
               <tr>
-                <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Rider Details</th>
-                <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Status</th>
-                <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Zone</th>
-                <th className="px-6 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">Today</th>
-                <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Rating</th>
-                <th className="px-6 py-4 text-right"></th>
+                <th className="px-8 py-5 text-left text-[12px] font-manrope font-bold text-gray-400 uppercase tracking-[0.1em]">Rider Details</th>
+                <th className="px-8 py-5 text-left text-[12px] font-manrope font-bold text-gray-400 uppercase tracking-[0.1em]">Status</th>
+                <th className="px-8 py-5 text-left text-[12px] font-manrope font-bold text-gray-400 uppercase tracking-[0.1em]">Zone</th>
+                <th className="px-8 py-5 text-center text-[12px] font-manrope font-bold text-gray-400 uppercase tracking-[0.1em]">Volume</th>
+                <th className="px-8 py-5 text-left text-[12px] font-manrope font-bold text-gray-400 uppercase tracking-[0.1em]">Rating</th>
+                <th className="px-8 py-5 text-right"></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200 bg-white">
+            <tbody className="divide-y divide-gray-50">
               {filteredRiders.map(rider => (
                 <tr 
                   key={rider.id} 
-                  className="hover:bg-blue-50/50 cursor-pointer transition-colors group"
+                  className="hover:bg-gray-50/80 cursor-pointer transition-all group"
                   onClick={() => { setSelectedRider(rider); setIsDrawerOpen(true); }}
                 >
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="font-semibold text-gray-900">{rider.name}</div>
-                    <div className="text-xs text-gray-500 font-mono">{rider.phone}</div>
+                  <td className="px-8 py-6">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-full bg-brand-black flex items-center justify-center text-white font-bold">
+                        {rider.name.charAt(0)}
+                      </div>
+                      <div>
+                        <div className="font-bold text-brand-black text-[16px]">{rider.name}</div>
+                        <div className="text-[13px] text-gray-400">{rider.phone}</div>
+                      </div>
+                    </div>
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="px-8 py-6">
                     <StatusBadge status={rider.status as any} size="sm" />
                   </td>
-                  <td className="px-6 py-4 text-sm text-gray-600">
-                    <div className="flex items-center gap-1">
-                      <MapPin size={14} className="text-gray-400" />
+                  <td className="px-8 py-6">
+                    <div className="flex items-center gap-2 text-[14px] font-medium text-gray-600">
+                      <MapPin size={16} className="text-[#E22A2A]" />
                       {rider.currentZone}
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-sm text-gray-900 text-center font-medium">
-                    {rider.todayDeliveries}
+                  <td className="px-8 py-6 text-center">
+                    <span className="inline-block px-3 py-1 bg-gray-100 rounded-full font-bold text-brand-black text-[14px]">
+                      {rider.todayDeliveries}
+                    </span>
                   </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-1 text-sm font-bold text-gray-700">
-                      <Star size={14} className="text-yellow-400 fill-yellow-400" />
+                  <td className="px-8 py-6">
+                    <div className="flex items-center gap-1.5 font-bold text-brand-black">
+                      <Star size={16} className="text-yellow-400 fill-yellow-400" />
                       {rider.avgRating}
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-right">
-                    <button className="p-2 text-gray-400 group-hover:text-blue-600">
-                      <MoreHorizontal size={20} />
+                  <td className="px-8 py-6 text-right">
+                    <button className="p-2 text-gray-300 group-hover:text-brand-black transition-colors">
+                      <MoreHorizontal size={24} />
                     </button>
                   </td>
                 </tr>
