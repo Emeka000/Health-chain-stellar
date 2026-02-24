@@ -1455,6 +1455,8 @@ impl HealthChainContract {
 #[cfg(test)]
 mod test {
     use super::*;
+    use soroban_sdk::testutils::Ledger;
+    use soroban_sdk::IntoVal;
     use soroban_sdk::{
         symbol_short, testutils::Address as _, testutils::Events, Address, Env, String, Symbol,
         TryFromVal,
@@ -1485,6 +1487,206 @@ mod test {
         (contract_id, admin, hospital, client)
     }
 
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Adversarial Access Control Tests (Privilege Escalation Attempts)
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #1)")]
+    fn test_attack_hospital_spoofs_bank_register_blood_should_fail() {
+        let env = Env::default();
+        let (contract_id, _admin, client) = setup_contract_with_admin(&env);
+
+        // Register a hospital (not a bank)
+        let hospital = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_hospital(&hospital);
+
+        // Hospital attempts to register blood (requires authorized blood bank)
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (7 * 86400);
+
+        env.mock_all_auths();
+        client.register_blood(&hospital, &BloodType::OPositive, &450, &expiration, &None);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #1)")]
+    fn test_attack_unregistered_hospital_create_request_should_fail() {
+        let env = Env::default();
+        let (contract_id, _admin, client) = setup_contract_with_admin(&env);
+
+        // Unregistered hospital tries to create a request
+        let rogue_hospital = Address::generate(&env);
+        let current_time = env.ledger().timestamp();
+        let required_by = current_time + (2 * 86400);
+        let delivery = String::from_slice(&env, "Ward 7B - ICU");
+
+        env.mock_all_auths();
+        client.create_request(
+            &rogue_hospital,
+            &BloodType::APositive,
+            &500,
+            &UrgencyLevel::High,
+            &required_by,
+            &delivery,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #1)")]
+    fn test_attack_unregistered_bank_allocates_blood_should_fail() {
+        let env = Env::default();
+        let (contract_id, _admin, client) = setup_contract_with_admin(&env);
+
+        // Create a unit via legacy add_blood_unit (no bank auth required)
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (10 * 86400);
+        let unit_id = client.add_blood_unit(
+            &BloodType::ONegative,
+            &300,
+            &expiration,
+            &symbol_short!("DONOR"),
+            &symbol_short!("BANK"),
+        );
+
+        // Register a hospital to avoid UnauthorizedHospital being triggered later
+        let hospital = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_hospital(&hospital);
+
+        // Unregistered bank attempts to allocate
+        let rogue_bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.allocate_blood(&rogue_bank, &unit_id, &hospital);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #8)")]
+    fn test_attack_expired_unit_allocated_should_fail() {
+        let env = Env::default();
+        let (_contract_id, _admin, client) = setup_contract_with_admin(&env);
+
+        // Register an authorized bank and hospital
+        let bank = Address::generate(&env);
+        let hospital = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+        env.mock_all_auths();
+        client.register_hospital(&hospital);
+
+        // Create a unit that will expire shortly
+        let now = env.ledger().timestamp();
+        let expiration = now + 100;
+        let unit_id = client.add_blood_unit(
+            &BloodType::BPositive,
+            &250,
+            &expiration,
+            &symbol_short!("DNR"),
+            &symbol_short!("BANK"),
+        );
+
+        // Advance time past expiration and attempt allocation
+        env.ledger().set_timestamp(expiration + 1);
+        env.mock_all_auths();
+        client.allocate_blood(&bank, &unit_id, &hospital);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #1)")]
+    fn test_attack_revoked_bank_immediate_reuse_should_fail() {
+        let env = Env::default();
+        let (contract_id, _admin, client) = setup_contract_with_admin(&env);
+
+        // Register bank and create unit
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+        let now = env.ledger().timestamp();
+        let expiration = now + (5 * 86400);
+        let unit_id = client.add_blood_unit(
+            &BloodType::ABNegative,
+            &200,
+            &expiration,
+            &symbol_short!("DNR2"),
+            &symbol_short!("BANK"),
+        );
+
+        // "Revoke" by clearing BANKS map directly
+        env.as_contract(&contract_id, || {
+            let empty_banks = Map::<Address, bool>::new(&env);
+            env.storage().persistent().set(&BLOOD_BANKS, &empty_banks);
+        });
+
+        // Attempt to register blood using revoked bank (should fail Unauthorized)
+        env.mock_all_auths();
+        client.register_blood(&bank, &BloodType::OPositive, &100, &expiration, &None);
+
+        // Attempt to allocate using revoked bank (should also fail Unauthorized)
+        env.mock_all_auths();
+        let hospital = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_hospital(&hospital);
+        client.allocate_blood(&bank, &unit_id, &hospital);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #1)")]
+    fn test_attack_wrong_hospital_confirm_delivery_should_fail() {
+        let env = Env::default();
+        let (_contract_id, _admin, client) = setup_contract_with_admin(&env);
+
+        // Register bank and two hospitals
+        let bank = Address::generate(&env);
+        let hospital_a = Address::generate(&env);
+        let hospital_b = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+        env.mock_all_auths();
+        client.register_hospital(&hospital_a);
+        env.mock_all_auths();
+        client.register_hospital(&hospital_b);
+
+        // Create unit and allocate to hospital A
+        let now = env.ledger().timestamp();
+        let expiration = now + (7 * 86400);
+        let unit_id = client.add_blood_unit(
+            &BloodType::APositive,
+            &300,
+            &expiration,
+            &symbol_short!("DNR3"),
+            &symbol_short!("BANK"),
+        );
+        env.mock_all_auths();
+        client.allocate_blood(&bank, &unit_id, &hospital_a);
+
+        // Hospital B attempts to confirm delivery for unit allocated to A
+        env.mock_all_auths();
+        client.confirm_delivery(&hospital_b, &unit_id);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #1)")]
+    fn test_attack_withdraw_blood_by_unauthorized_address_should_fail() {
+        let env = Env::default();
+        let (_contract_id, _admin, client) = setup_contract_with_admin(&env);
+
+        // Create a unit
+        let now = env.ledger().timestamp();
+        let expiration = now + (10 * 86400);
+        let unit_id = client.add_blood_unit(
+            &BloodType::ONegative,
+            &400,
+            &expiration,
+            &symbol_short!("DNR4"),
+            &symbol_short!("BANK"),
+        );
+
+        // Rogue address (neither bank nor hospital) attempts to withdraw
+        let attacker = Address::generate(&env);
+        env.mock_all_auths();
+        client.withdraw_blood(&attacker, &unit_id, &WithdrawalReason::Other);
+    }
     #[test]
     fn test_initialize() {
         let env = Env::default();
@@ -2283,7 +2485,7 @@ mod test {
             &500,
             &UrgencyLevel::High,
             &required_by,
-            &symbol_short!("Main_Hosp"),
+            &String::from_str(&env, "Main_Hosp"),
         );
 
         assert_eq!(result, 1);
@@ -2305,7 +2507,7 @@ mod test {
             &400,
             &UrgencyLevel::Medium,
             &(env.ledger().timestamp() + 86400),
-            &symbol_short!("Hosp_1"),
+            &String::from_str(&env, "Hosp_1"),
         );
     }
 
@@ -2345,7 +2547,7 @@ mod test {
             &10, // Below MIN_QUANTITY_ML (50)
             &UrgencyLevel::Low,
             &(env.ledger().timestamp() + 86400),
-            &symbol_short!("Hosp_1"),
+            &String::from_str(&env, "Hosp_1"),
         );
     }
 
@@ -2409,7 +2611,7 @@ mod test {
             &200,
             &UrgencyLevel::High,
             &5000, // Now this is safely in the past (5000 < 10000)
-            &symbol_short!("Hosp_1"),
+            &String::from_str(&env, "Hosp_1"),
         );
     }
 
@@ -2500,7 +2702,7 @@ mod test {
             &300,
             &UrgencyLevel::Critical,
             &(env.ledger().timestamp() + 3600),
-            &symbol_short!("ER_Room"),
+            &String::from_str(&env, "ER_Room"),
         );
 
         // Get the last event
