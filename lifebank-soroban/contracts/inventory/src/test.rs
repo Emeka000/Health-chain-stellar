@@ -267,6 +267,98 @@ fn test_get_blood_unit_not_found() {
     client.get_blood_unit(&999);
 }
 
+/// Simulate the concurrent registration scenario described in issue #97.
+///
+/// In Soroban's ledger model each transaction within a batch sees committed
+/// state from preceding transactions, so the auto-increment counter prevents
+/// ID collisions by design. This test verifies the defense-in-depth guard:
+/// even if an ID slot is manually pre-populated, `register_blood` will
+/// detect the duplicate via `blood_unit_exists` and return DuplicateBloodUnit.
+#[test]
+fn test_duplicate_registration_prevented() {
+    let (env, admin, client, contract_id) = create_test_contract();
+
+    let bank = admin.clone();
+    let current_time = 1000u64;
+    env.ledger().set_timestamp(current_time);
+    let expiration = current_time + (30 * 86400);
+
+    // Register first unit — gets ID 1
+    let id1 = client.register_blood(&bank, &BloodType::APositive, &450u32, &expiration, &None);
+    assert_eq!(id1, 1);
+
+    // Register second unit — gets ID 2 (no collision)
+    let id2 = client.register_blood(&bank, &BloodType::BPositive, &450u32, &expiration, &None);
+    assert_eq!(id2, 2);
+
+    // Both units exist and are distinct
+    let unit1 = client.get_blood_unit(&id1);
+    let unit2 = client.get_blood_unit(&id2);
+    assert_eq!(unit1.blood_type, BloodType::APositive);
+    assert_eq!(unit2.blood_type, BloodType::BPositive);
+
+    // Simulate the race condition: manually write a blood unit at the next
+    // counter position (ID 3), as if a concurrent transaction already stored
+    // a unit there before our counter increment was committed.
+    env.as_contract(&contract_id, || {
+        use crate::types::{DataKey, BloodUnit, BloodStatus};
+        use soroban_sdk::Map;
+
+        let rogue_unit = BloodUnit {
+            id: 3,
+            blood_type: BloodType::ONegative,
+            quantity_ml: 450,
+            bank_id: bank.clone(),
+            donor_id: None,
+            donation_timestamp: current_time,
+            expiration_timestamp: expiration,
+            status: BloodStatus::Available,
+            metadata: Map::new(&env),
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::BloodUnit(3u64), &rogue_unit);
+    });
+
+    // Now register_blood will try to claim ID 3 (counter is at 2, next is 3),
+    // but the slot is already occupied — must return DuplicateBloodUnit (#24).
+    let result = client.try_register_blood(
+        &bank,
+        &BloodType::ABPositive,
+        &450u32,
+        &expiration,
+        &None,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_sequential_registration_no_id_collision() {
+    let (env, admin, client, _contract_id) = create_test_contract();
+
+    let bank = admin.clone();
+    let current_time = 1000u64;
+    env.ledger().set_timestamp(current_time);
+    let expiration = current_time + (30 * 86400);
+
+    // Register 10 units rapidly — simulates multiple registrations in the
+    // same ledger. Each must get a unique, sequential ID.
+    let mut ids = soroban_sdk::Vec::new(&env);
+    for _ in 0..10 {
+        let id =
+            client.register_blood(&bank, &BloodType::APositive, &450u32, &expiration, &None);
+        ids.push_back(id);
+    }
+
+    // All IDs must be unique and sequential (1..=10)
+    for i in 0..10 {
+        let expected_id = (i + 1) as u64;
+        assert_eq!(ids.get(i).unwrap(), expected_id);
+        let unit = client.get_blood_unit(&expected_id);
+        assert_eq!(unit.id, expected_id);
+    }
+}
+
 #[test]
 fn test_register_blood_edge_case_quantities() {
     let (env, admin, client, _contract_id) = create_test_contract();
