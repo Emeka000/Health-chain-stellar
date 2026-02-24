@@ -1,3 +1,4 @@
+"use client";
 import React from 'react';
 import { ConnectionStatus } from '@/lib/utils/websocket-client';
 
@@ -5,6 +6,8 @@ interface ConnectionStatusIndicatorProps {
   status: ConnectionStatus;
 }
 
+// Keep the Record generic on one line or ensure the < is immediately after Record
+const config: Record<ConnectionStatus, { dotColor: string; bannerColor: string; label: string; show: boolean }> = {
 const config: Record<
   ConnectionStatus,
   { dotColor: string; bannerColor: string; label: string; show: boolean }
@@ -29,9 +32,7 @@ const config: Record<
   },
 };
 
-export const ConnectionStatusIndicator: React.FC<ConnectionStatusIndicatorProps> = ({
-  status,
-}) => {
+export const ConnectionStatusIndicator: React.FC<ConnectionStatusIndicatorProps> = ({ status }) => {
   const { dotColor, bannerColor, label, show } = config[status];
 
   if (!show) {
@@ -44,11 +45,7 @@ export const ConnectionStatusIndicator: React.FC<ConnectionStatusIndicatorProps>
   }
 
   return (
-    <div
-      className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm ${bannerColor}`}
-      role="status"
-      aria-live="polite"
-    >
+    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm ${bannerColor}`} role="status" aria-live="polite">
       <span className={`inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 ${dotColor}`} />
       <span>{label}</span>
     </div>
