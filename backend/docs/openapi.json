@@ -1,0 +1,41 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "MedChain API",
+    "description": "API for Healthy-Stellar health donor protocol",
+    "version": "1.0.0"
+  },
+  "tags": [
+    { "name": "Auth", "description": "Authentication module" },
+    { "name": "Records", "description": "Health records management" },
+    { "name": "Access", "description": "Permission and access control" }
+  ],
+  "paths": {
+    "/auth/login": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "User login",
+        "responses": { "200": { "description": "Success" } }
+      }
+    },
+    "/records": {
+      "get": {
+        "tags": ["Records"],
+        "summary": "Get all health records",
+        "responses": { "200": { "description": "Success" } }
+      },
+      "post": {
+        "tags": ["Records"],
+        "summary": "Upload a health record",
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
+    "/access/grant": {
+      "post": {
+        "tags": ["Access"],
+        "summary": "Grant record access",
+        "responses": { "200": { "description": "Access Granted" } }
+      }
+    }
+  }
+}

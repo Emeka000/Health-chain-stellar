@@ -1,0 +1,17 @@
+name: SDK Drift Check
+on: [pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Generate SDK
+        run: |
+          cd packages/sdk
+          npm install
+          npm run generate
+      - name: Verify No Changes
+        run: git diff --exit-code packages/sdk/src
