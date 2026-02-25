@@ -26,6 +26,16 @@ pub struct TemperatureThreshold {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TemperatureSummary {
+    pub count: u32,
+    pub avg_celsius_x100: i32,
+    pub min_celsius_x100: i32,
+    pub max_celsius_x100: i32,
+    pub violation_count: u32,
+}
+
+#[contracttype]
 #[derive(Clone, Eq, PartialEq)]
 pub enum DataKey {
     Admin,
