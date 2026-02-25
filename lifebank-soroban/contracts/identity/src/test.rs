@@ -143,7 +143,11 @@ fn test_role_expiration() {
 
     // After lazy deletion, the role should be removed from storage
     let roles = client.get_roles(&address);
-    assert_eq!(roles.len(), 0, "Expired role should be removed via lazy deletion");
+    assert_eq!(
+        roles.len(),
+        0,
+        "Expired role should be removed via lazy deletion"
+    );
 }
 
 #[test]
@@ -326,7 +330,11 @@ fn test_lazy_deletion_in_has_role() {
 
     // Verify the expired role was deleted from storage (lazy deletion)
     let roles_after = client.get_roles(&address);
-    assert_eq!(roles_after.len(), 0, "Expired role should be deleted from storage");
+    assert_eq!(
+        roles_after.len(),
+        0,
+        "Expired role should be deleted from storage"
+    );
 }
 
 #[test]
@@ -397,7 +405,7 @@ fn test_cleanup_expired_roles_basic() {
     // Verify remaining roles
     let roles = client.get_roles(&address);
     assert_eq!(roles.len(), 2);
-    
+
     // Verify correct roles remain
     assert!(!client.has_role(&address, &Role::Donor)); // expired & removed
     assert!(client.has_role(&address, &Role::Rider)); // not yet expired
@@ -450,7 +458,11 @@ fn test_cleanup_expired_roles_100_roles() {
 
     // Verify storage is empty after cleanup
     let roles_after = client.get_roles(&address);
-    assert_eq!(roles_after.len(), 0, "Storage should be completely empty after cleanup");
+    assert_eq!(
+        roles_after.len(),
+        0,
+        "Storage should be completely empty after cleanup"
+    );
 
     // Verify all roles return false
     assert!(!client.has_role(&address, &Role::Admin));
