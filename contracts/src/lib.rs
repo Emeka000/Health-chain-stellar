@@ -4,6 +4,7 @@ use soroban_sdk::{
     String, Symbol, Vec,
 };
 
+pub mod constants;
 pub mod payments;
 pub mod registry_read;
 pub mod registry_write;
@@ -35,6 +36,8 @@ pub enum Error {
     TransferExpired = 16,
     /// Transfer has not yet exceeded its allowed time window.
     TransferNotExpired = 17,
+    /// Unit ID string exceeds maximum allowed length.
+    UnitIdTooLong = 18,
 }
 
 // Alias for issue/docs terminology.
@@ -275,23 +278,15 @@ pub(crate) const NEXT_REQUEST_ID: Symbol = symbol_short!("NEXT_REQ");
 pub(crate) const REQUEST_KEYS: Symbol = symbol_short!("REQ_KEYS");
 pub(crate) const CUSTODY_EVENTS: Symbol = symbol_short!("CUSTODY");
 
-// Validation constants
-pub(crate) const MIN_QUANTITY_ML: u32 = 50; // Minimum 50ml
-pub(crate) const MAX_QUANTITY_ML: u32 = 500; // Maximum 500ml per unit
-pub(crate) const MIN_SHELF_LIFE_DAYS: u64 = 1; // At least 1 day shelf life
-pub(crate) const MAX_SHELF_LIFE_DAYS: u64 = 42; // Maximum 42 days for whole blood
-pub(crate) const MIN_REQUEST_ML: u32 = 50; // Minimum request amount
-pub(crate) const MAX_REQUEST_ML: u32 = 5000; // Maximum request amount
-pub(crate) const MAX_BATCH_SIZE: u32 = 100; // Maximum batch size for operations
-
-// Transfer expiry window (30 minutes)
-pub(crate) const TRANSFER_EXPIRY_SECONDS: u64 = 1800;
-
-// Custody trail pagination
-pub(crate) const MAX_EVENTS_PER_PAGE: u32 = 20;
-
 // History storage key
 pub(crate) const HISTORY: Symbol = symbol_short!("HISTORY");
+
+// Re-export constants for internal use
+pub(crate) use constants::{
+    MAX_BATCH_SIZE, MAX_BATCH_EXPIRY_SIZE, MAX_EVENTS_PER_PAGE, MAX_QUANTITY_ML, MAX_REQUEST_ML,
+    MAX_SHELF_LIFE_DAYS, MAX_UNIT_ID_LENGTH, MIN_QUANTITY_ML, MIN_REQUEST_ML,
+    MIN_SHELF_LIFE_DAYS, SECONDS_PER_DAY, TRANSFER_EXPIRY_SECONDS, HEX_HASH_LENGTH,
+};
 
 #[contract]
 pub struct HealthChainContract;
@@ -627,6 +622,11 @@ impl HealthChainContract {
         // Derive deterministic event_id
         let event_id = Self::derive_event_id(&env, unit_id, &bank_id, &to_custodian);
 
+        // Validate event_id length (should always be HEX_HASH_LENGTH, but check for safety)
+        if event_id.len() > MAX_UNIT_ID_LENGTH {
+            return Err(Error::UnitIdTooLong);
+        }
+
         // Create custody event
         let custody_event = CustodyEvent {
             event_id: event_id.clone(),
@@ -703,6 +703,11 @@ impl HealthChainContract {
     /// Must be confirmed strictly before `initiated_at + TRANSFER_EXPIRY_SECONDS`.
     /// Callers must compute the same hash (unit_id + from + to + ledger_sequence) to reference the transfer.
     pub fn confirm_transfer(env: Env, hospital: Address, event_id: String) -> Result<(), Error> {
+        // Validate event_id length
+        if event_id.len() > MAX_UNIT_ID_LENGTH {
+            return Err(Error::UnitIdTooLong);
+        }
+
         hospital.require_auth();
 
         // Verify hospital is registered
@@ -819,6 +824,11 @@ impl HealthChainContract {
     /// Transfer is cancellable at/after `initiated_at + TRANSFER_EXPIRY_SECONDS`.
     /// Callers must compute the same hash (unit_id + from + to + ledger_sequence) to reference the transfer.
     pub fn cancel_transfer(env: Env, bank_id: Address, event_id: String) -> Result<(), Error> {
+        // Validate event_id length
+        if event_id.len() > MAX_UNIT_ID_LENGTH {
+            return Err(Error::UnitIdTooLong);
+        }
+
         bank_id.require_auth();
 
         if !Self::is_blood_bank(env.clone(), bank_id.clone()) {
@@ -1208,7 +1218,7 @@ impl HealthChainContract {
 
         // Convert hash to hex string
         let hex_chars = b"0123456789abcdef";
-        let mut hex_array = [0u8; 64];
+        let mut hex_array = [0u8; HEX_HASH_LENGTH];
 
         for i in 0..32u32 {
             let byte = hash.get(i).unwrap();
@@ -1262,7 +1272,7 @@ impl HealthChainContract {
 
         // Convert hash to hex string
         let hex_chars = b"0123456789abcdef";
-        let mut hex_array = [0u8; 64];
+        let mut hex_array = [0u8; HEX_HASH_LENGTH];
 
         for i in 0..32u32 {
             let byte = hash.get(i).unwrap();

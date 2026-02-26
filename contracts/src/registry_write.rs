@@ -14,6 +14,7 @@
 use soroban_sdk::{symbol_short, Address, Env, Map, Symbol, Vec};
 
 use crate::{
+    constants::{MAX_BATCH_EXPIRY_SIZE, MAX_QUANTITY_ML, MAX_SHELF_LIFE_DAYS, MIN_QUANTITY_ML, MIN_SHELF_LIFE_DAYS, SECONDS_PER_DAY},
     get_next_id, record_status_change,
     BloodRegisteredEvent, BloodStatus, BloodType, BloodUnit, Error, BLOOD_UNITS,
 };
@@ -33,8 +34,6 @@ pub fn register_unit(
     expiration_timestamp: u64,
     donor_id: Option<Symbol>,
 ) -> Result<u64, Error> {
-    use crate::{MAX_QUANTITY_ML, MAX_SHELF_LIFE_DAYS, MIN_QUANTITY_ML, MIN_SHELF_LIFE_DAYS};
-
     // Validate quantity
     if !(MIN_QUANTITY_ML..=MAX_QUANTITY_ML).contains(&quantity_ml) {
         return Err(Error::InvalidQuantity);
@@ -42,8 +41,8 @@ pub fn register_unit(
 
     // Validate expiration
     let current_time = env.ledger().timestamp();
-    let min_expiration = current_time + (MIN_SHELF_LIFE_DAYS * 86400);
-    let max_expiration = current_time + (MAX_SHELF_LIFE_DAYS * 86400);
+    let min_expiration = current_time + (MIN_SHELF_LIFE_DAYS * SECONDS_PER_DAY);
+    let max_expiration = current_time + (MAX_SHELF_LIFE_DAYS * SECONDS_PER_DAY);
 
     if expiration_timestamp <= current_time || expiration_timestamp < min_expiration {
         return Err(Error::InvalidExpiration);
@@ -173,7 +172,7 @@ pub fn expire_unit(env: &Env, unit_id: u64) -> Result<(), Error> {
 
 /// Batch check and expire units.
 pub fn check_and_expire_batch(env: &Env, unit_ids: Vec<u64>) -> Result<Vec<u64>, Error> {
-    if unit_ids.len() > 50 {
+    if unit_ids.len() > MAX_BATCH_EXPIRY_SIZE {
         return Err(Error::BatchSizeExceeded);
     }
 
