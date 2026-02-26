@@ -526,13 +526,10 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "DonorUnits"
+                  "symbol": "HISTORY"
                 },
                 {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                },
-                {
-                  "symbol": "donor1"
+                  "u64": 1
                 }
               ]
             },
@@ -549,13 +546,10 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "DonorUnits"
+                      "symbol": "HISTORY"
                     },
                     {
-                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                    },
-                    {
-                      "symbol": "donor1"
+                      "u64": 1
                     }
                   ]
                 },
@@ -563,7 +557,56 @@
                 "val": {
                   "vec": [
                     {
-                      "u64": 1
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "actor"
+                          },
+                          "val": {
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "blood_unit_id"
+                          },
+                          "val": {
+                            "u64": 1
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "new_status"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "symbol": "Available"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "old_status"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "symbol": "Available"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "timestamp"
+                          },
+                          "val": {
+                            "u64": 0
+                          }
+                        }
+                      ]
                     }
                   ]
                 }
@@ -581,13 +624,10 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "DonorUnits"
+                  "symbol": "HISTORY"
                 },
                 {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                },
-                {
-                  "symbol": "donor2"
+                  "u64": 2
                 }
               ]
             },
@@ -604,13 +644,10 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "DonorUnits"
+                      "symbol": "HISTORY"
                     },
                     {
-                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                    },
-                    {
-                      "symbol": "donor2"
+                      "u64": 2
                     }
                   ]
                 },
@@ -618,7 +655,56 @@
                 "val": {
                   "vec": [
                     {
-                      "u64": 2
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "actor"
+                          },
+                          "val": {
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "blood_unit_id"
+                          },
+                          "val": {
+                            "u64": 2
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "new_status"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "symbol": "Available"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "old_status"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "symbol": "Available"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "timestamp"
+                          },
+                          "val": {
+                            "u64": 0
+                          }
+                        }
+                      ]
                     }
                   ]
                 }
@@ -760,6 +846,78 @@
     ]
   },
   "events": [
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "status"
+              },
+              {
+                "symbol": "change"
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "actor"
+                  },
+                  "val": {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "blood_unit_id"
+                  },
+                  "val": {
+                    "u64": 2
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "new_status"
+                  },
+                  "val": {
+                    "vec": [
+                      {
+                        "symbol": "Available"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "old_status"
+                  },
+                  "val": {
+                    "vec": [
+                      {
+                        "symbol": "Available"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "timestamp"
+                  },
+                  "val": {
+                    "u64": 0
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
     {
       "event": {
         "ext": "v0",

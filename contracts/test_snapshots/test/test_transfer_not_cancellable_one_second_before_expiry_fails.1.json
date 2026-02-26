@@ -320,7 +320,7 @@
                   "map": [
                     {
                       "key": {
-                        "string": "78d7c0d12fa67089f21c5f64d43d307d35a998142ea350e33e50e47c7157c1d3"
+                        "string": "c43daf874f7b4cfccebb8b170ec3c6d4f0fd4c209d3904e03fa5219ef991b0e4"
                       },
                       "val": {
                         "map": [
@@ -329,7 +329,7 @@
                               "symbol": "event_id"
                             },
                             "val": {
-                              "string": "78d7c0d12fa67089f21c5f64d43d307d35a998142ea350e33e50e47c7157c1d3"
+                              "string": "c43daf874f7b4cfccebb8b170ec3c6d4f0fd4c209d3904e03fa5219ef991b0e4"
                             }
                           },
                           {
@@ -710,6 +710,58 @@
                 "durability": "persistent",
                 "val": {
                   "vec": [
+                    {
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "actor"
+                          },
+                          "val": {
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "blood_unit_id"
+                          },
+                          "val": {
+                            "u64": 1
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "new_status"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "symbol": "Available"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "old_status"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "symbol": "Available"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "timestamp"
+                          },
+                          "val": {
+                            "u64": 999990
+                          }
+                        }
+                      ]
+                    },
                     {
                       "map": [
                         {

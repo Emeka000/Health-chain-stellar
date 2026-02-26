@@ -10,6 +10,7 @@ pub enum Role {
     Donor,
     Rider,
     BloodBank,
+    Custom(u32),
 }
 
 /// Represents a role grant with metadata
@@ -27,6 +28,8 @@ pub struct RoleGrant {
 pub enum DataKey {
     /// Consolidated storage: one entry per address containing all roles
     AddressRoles(Address),
+    /// Admin address
+    Admin,
 }
 
 #[contract]
@@ -34,14 +37,30 @@ pub struct AccessControlContract;
 
 #[contractimpl]
 impl AccessControlContract {
+    /// Initialize the contract with an administrator
+    pub fn initialize(env: Env, admin: Address) {
+        if env.storage().persistent().has(&DataKey::Admin) {
+            panic!("Already initialized");
+        }
+        env.storage().persistent().set(&DataKey::Admin, &admin);
+    }
+
     /// Grant a role to an address
     ///
     /// # Arguments
     /// * `address` - The address to grant the role to
     /// * `role` - The role to grant
     /// * `expires_at` - Optional expiration timestamp
-    pub fn grant_role(env: Env, address: Address, role: Role, expires_at: Option<u64>) {
-        address.require_auth();
+    pub fn grant_role_with_expiry(env: Env, address: Address, role: Role, expires_at: Option<u64>) {
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("Not initialized");
+        admin.require_auth();
+
+        // Proactive cleanup: remove expired roles for this address first
+        Self::cleanup_expired_roles_internal(&env, &address);
 
         let key = DataKey::AddressRoles(address.clone());
         let mut roles: Vec<RoleGrant> = env
@@ -72,7 +91,12 @@ impl AccessControlContract {
     /// * `address` - The address to revoke the role from
     /// * `role` - The role to revoke
     pub fn revoke_role(env: Env, address: Address, role: Role) {
-        address.require_auth();
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("Not initialized");
+        admin.require_auth();
 
         let key = DataKey::AddressRoles(address.clone());
 
@@ -100,10 +124,13 @@ impl AccessControlContract {
     /// # Returns
     /// `true` if the address has the role and it hasn't expired, `false` otherwise
     ///
-    /// # Implementation Note
-    /// This function implements lazy deletion: if it encounters an expired role grant,
-    /// it will remove that grant from storage before returning false.
+    /// Implementation Note
+    /// This function implements lazy deletion: if it encounters ANY expired role grants
+    /// for the user, it will remove them all from storage before returning.
     pub fn has_role(env: Env, address: Address, role: Role) -> bool {
+        // Full lazy deletion: clean up ALL expired roles for this address
+        Self::cleanup_expired_roles_internal(&env, &address);
+
         let key = DataKey::AddressRoles(address);
 
         if let Some(roles) = env
@@ -111,25 +138,10 @@ impl AccessControlContract {
             .persistent()
             .get::<DataKey, Vec<RoleGrant>>(&key)
         {
-            let current_time = env.ledger().timestamp();
-
             for i in 0..roles.len() {
                 let grant = roles.get(i).unwrap();
                 if grant.role == role {
-                    // Check if the role has expired
-                    if let Some(expires_at) = grant.expires_at {
-                        if current_time >= expires_at {
-                            // Lazy deletion: remove the expired role from storage
-                            let new_roles = Self::remove_role_from_vec(&env, roles, &role);
-                            if new_roles.is_empty() {
-                                env.storage().persistent().remove(&key);
-                            } else {
-                                env.storage().persistent().set(&key, &new_roles);
-                            }
-                            return false;
-                        }
-                        return true;
-                    }
+                    // We already performed cleanup, so if it's here, it's valid
                     return true;
                 }
             }
@@ -161,10 +173,22 @@ impl AccessControlContract {
     /// # Arguments
     /// * `address` - The address to clean up expired roles for
     ///
-    /// # Returns
+    /// Returns
     /// The number of expired roles that were removed
     pub fn cleanup_expired_roles(env: Env, address: Address) -> u32 {
-        let key = DataKey::AddressRoles(address);
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("Not initialized");
+        admin.require_auth();
+
+        Self::cleanup_expired_roles_internal(&env, &address)
+    }
+
+    /// Internal helper for cleaning up expired roles
+    fn cleanup_expired_roles_internal(env: &Env, address: &Address) -> u32 {
+        let key = DataKey::AddressRoles(address.clone());
 
         if let Some(roles) = env
             .storage()
@@ -172,7 +196,7 @@ impl AccessControlContract {
             .get::<DataKey, Vec<RoleGrant>>(&key)
         {
             let current_time = env.ledger().timestamp();
-            let mut new_roles = Vec::new(&env);
+            let mut new_roles = Vec::new(env);
             let mut removed_count = 0u32;
 
             // Filter out expired roles
@@ -192,10 +216,12 @@ impl AccessControlContract {
             }
 
             // Update storage
-            if new_roles.is_empty() {
-                env.storage().persistent().remove(&key);
-            } else if removed_count > 0 {
-                env.storage().persistent().set(&key, &new_roles);
+            if removed_count > 0 {
+                if new_roles.is_empty() {
+                    env.storage().persistent().remove(&key);
+                } else {
+                    env.storage().persistent().set(&key, &new_roles);
+                }
             }
 
             removed_count
