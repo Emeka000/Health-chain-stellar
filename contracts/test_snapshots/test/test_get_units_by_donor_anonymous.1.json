@@ -58,26 +58,25 @@
                 {
                   "vec": [
                     {
-                      "symbol": "OPositive"
+                      "symbol": "ABPositive"
                     }
                   ]
                 },
                 {
-                  "u32": 450
+                  "u32": 300
                 },
                 {
-                  "u64": 3628800
+                  "u64": 604800
                 },
-                {
-                  "symbol": "donor1"
-                }
+                "void"
               ]
             }
           },
           "sub_invocations": []
         }
       ]
-    ]
+    ],
+    []
   ],
   "ledger": {
     "protocol_version": 22,
@@ -276,7 +275,7 @@
                             "val": {
                               "vec": [
                                 {
-                                  "symbol": "OPositive"
+                                  "symbol": "ABPositive"
                                 }
                               ]
                             }
@@ -292,7 +291,7 @@
                               "symbol": "donor_id"
                             },
                             "val": {
-                              "symbol": "donor1"
+                              "symbol": "ANON"
                             }
                           },
                           {
@@ -300,7 +299,7 @@
                               "symbol": "expiration_date"
                             },
                             "val": {
-                              "u64": 3628800
+                              "u64": 604800
                             }
                           },
                           {
@@ -324,7 +323,7 @@
                               "symbol": "quantity"
                             },
                             "val": {
-                              "u32": 450
+                              "u32": 300
                             }
                           },
                           {
@@ -361,61 +360,6 @@
                           }
                         ]
                       }
-                    }
-                  ]
-                }
-              }
-            },
-            "ext": "v0"
-          },
-          4095
-        ]
-      ],
-      [
-        {
-          "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-            "key": {
-              "vec": [
-                {
-                  "symbol": "DonorUnits"
-                },
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                },
-                {
-                  "symbol": "donor1"
-                }
-              ]
-            },
-            "durability": "persistent"
-          }
-        },
-        [
-          {
-            "last_modified_ledger_seq": 0,
-            "data": {
-              "contract_data": {
-                "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-                "key": {
-                  "vec": [
-                    {
-                      "symbol": "DonorUnits"
-                    },
-                    {
-                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                    },
-                    {
-                      "symbol": "donor1"
-                    }
-                  ]
-                },
-                "durability": "persistent",
-                "val": {
-                  "vec": [
-                    {
-                      "u64": 1
                     }
                   ]
                 }
@@ -523,90 +467,5 @@
       ]
     ]
   },
-  "events": [
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
-        "type_": "contract",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "blood"
-              },
-              {
-                "symbol": "register"
-              }
-            ],
-            "data": {
-              "map": [
-                {
-                  "key": {
-                    "symbol": "bank_id"
-                  },
-                  "val": {
-                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "blood_type"
-                  },
-                  "val": {
-                    "vec": [
-                      {
-                        "symbol": "OPositive"
-                      }
-                    ]
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "donor_id"
-                  },
-                  "val": {
-                    "symbol": "donor1"
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "expiration_timestamp"
-                  },
-                  "val": {
-                    "u64": 3628800
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "quantity_ml"
-                  },
-                  "val": {
-                    "u32": 450
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "registration_timestamp"
-                  },
-                  "val": {
-                    "u64": 0
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "unit_id"
-                  },
-                  "val": {
-                    "u64": 1
-                  }
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    }
-  ]
+  "events": []
 }

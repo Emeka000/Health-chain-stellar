@@ -157,7 +157,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "string": "cd07a3af0cfc33d05e838422e02cd67e6f21be48ca75cbbca61748391618ecd0"
+                  "string": "78d7c0d12fa67089f21c5f64d43d307d35a998142ea350e33e50e47c7157c1d3"
                 }
               ]
             }
@@ -342,7 +342,7 @@
                   "map": [
                     {
                       "key": {
-                        "string": "cd07a3af0cfc33d05e838422e02cd67e6f21be48ca75cbbca61748391618ecd0"
+                        "string": "78d7c0d12fa67089f21c5f64d43d307d35a998142ea350e33e50e47c7157c1d3"
                       },
                       "val": {
                         "map": [
@@ -351,7 +351,7 @@
                               "symbol": "event_id"
                             },
                             "val": {
-                              "string": "cd07a3af0cfc33d05e838422e02cd67e6f21be48ca75cbbca61748391618ecd0"
+                              "string": "78d7c0d12fa67089f21c5f64d43d307d35a998142ea350e33e50e47c7157c1d3"
                             }
                           },
                           {
@@ -628,6 +628,61 @@
                           }
                         ]
                       }
+                    }
+                  ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          4095
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "DonorUnits"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                },
+                {
+                  "symbol": "donor"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "DonorUnits"
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                    },
+                    {
+                      "symbol": "donor"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "vec": [
+                    {
+                      "u64": 1
                     }
                   ]
                 }

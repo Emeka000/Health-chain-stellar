@@ -40,7 +40,7 @@ pub use Error as ContractError;
 
 /// Blood type enumeration
 #[contracttype]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BloodType {
     APositive,
     ANegative,
@@ -242,6 +242,14 @@ pub struct RequestStatusChangeEvent {
     pub reason: Option<String>,
 }
 
+/// Storage key enumeration for composite keys
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DataKey {
+    /// Donor units index: (bank_id, donor_id) -> Vec<u64>
+    DonorUnits(Address, Symbol),
+}
+
 /// Storage keys
 const BLOOD_UNITS: Symbol = symbol_short!("UNITS");
 const NEXT_ID: Symbol = symbol_short!("NEXT_ID");
@@ -391,8 +399,20 @@ impl HealthChainContract {
             .get(&BLOOD_UNITS)
             .unwrap_or(Map::new(&env));
 
-        units.set(unit_id, blood_unit);
+        units.set(unit_id, blood_unit.clone());
         env.storage().persistent().set(&BLOOD_UNITS, &units);
+
+        // Update donor index with composite key (bank_id, donor_id)
+        if let Some(ref donor) = donor_id {
+            let donor_key = DataKey::DonorUnits(bank_id.clone(), donor.clone());
+            let mut donor_units: Vec<u64> = env
+                .storage()
+                .persistent()
+                .get(&donor_key)
+                .unwrap_or(vec![&env]);
+            donor_units.push_back(unit_id);
+            env.storage().persistent().set(&donor_key, &donor_units);
+        }
 
         // Emit event
         let event = BloodRegisteredEvent {
@@ -1695,6 +1715,35 @@ impl HealthChainContract {
         }
 
         bank_units
+    }
+
+    /// Get all blood units for a specific donor at a specific bank
+    /// Uses composite key (bank_id, donor_id) to prevent cross-bank collisions
+    pub fn get_units_by_donor(env: Env, bank_id: Address, donor_id: Symbol) -> Vec<BloodUnit> {
+        // Get unit IDs from the donor index using composite key
+        let donor_key = DataKey::DonorUnits(bank_id, donor_id);
+        let unit_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&donor_key)
+            .unwrap_or(vec![&env]);
+
+        // Retrieve the actual blood units
+        let units: Map<u64, BloodUnit> = env
+            .storage()
+            .persistent()
+            .get(&BLOOD_UNITS)
+            .unwrap_or(Map::new(&env));
+
+        let mut donor_units = vec![&env];
+        for i in 0..unit_ids.len() {
+            let unit_id = unit_ids.get(i).unwrap();
+            if let Some(unit) = units.get(unit_id) {
+                donor_units.push_back(unit);
+            }
+        }
+
+        donor_units
     }
 
     /// Helper function to get next ID
@@ -3692,5 +3741,122 @@ mod test {
         // This should return an empty Vec and NOT panic
         let results = client.get_units_by_bank(&empty_bank);
         assert_eq!(results.len(), 0);
+    }
+
+    /// Test for Issue #125: Donor ID collision across different banks
+    /// Verifies that get_units_by_donor uses composite (bank_id, donor_id) key
+    /// to prevent cross-bank data mixing
+    #[test]
+    fn test_donor_id_collision_across_banks() {
+        let env = Env::default();
+        let (_, _admin, client) = setup_contract_with_admin(&env);
+
+        // Register two different blood banks
+        let bank_a = Address::generate(&env);
+        let bank_b = Address::generate(&env);
+        
+        env.mock_all_auths();
+        client.register_blood_bank(&bank_a);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank_b);
+
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (7 * 86400);
+
+        // Bank A registers a unit with donor "001"
+        env.mock_all_auths();
+        let unit_a1 = client.register_blood(
+            &bank_a,
+            &BloodType::OPositive,
+            &450,
+            &expiration,
+            &Some(symbol_short!("001")),
+        );
+
+        // Bank B also registers a unit with donor "001" (different person, same ID)
+        env.mock_all_auths();
+        let unit_b1 = client.register_blood(
+            &bank_b,
+            &BloodType::APositive,
+            &350,
+            &expiration,
+            &Some(symbol_short!("001")),
+        );
+
+        // Get units for donor "001" at Bank A - should only return Bank A's unit
+        let bank_a_units = client.get_units_by_donor(&bank_a, &symbol_short!("001"));
+        assert_eq!(bank_a_units.len(), 1);
+        assert_eq!(bank_a_units.get(0).unwrap().id, unit_a1);
+        assert_eq!(bank_a_units.get(0).unwrap().blood_type, BloodType::OPositive);
+        assert_eq!(bank_a_units.get(0).unwrap().bank_id, bank_a);
+
+        // Get units for donor "001" at Bank B - should only return Bank B's unit
+        let bank_b_units = client.get_units_by_donor(&bank_b, &symbol_short!("001"));
+        assert_eq!(bank_b_units.len(), 1);
+        assert_eq!(bank_b_units.get(0).unwrap().id, unit_b1);
+        assert_eq!(bank_b_units.get(0).unwrap().blood_type, BloodType::APositive);
+        assert_eq!(bank_b_units.get(0).unwrap().bank_id, bank_b);
+
+        // Register another unit for donor "001" at Bank A
+        env.mock_all_auths();
+        let unit_a2 = client.register_blood(
+            &bank_a,
+            &BloodType::ONegative,
+            &400,
+            &expiration,
+            &Some(symbol_short!("001")),
+        );
+
+        // Verify Bank A now has 2 units for donor "001"
+        let bank_a_units_updated = client.get_units_by_donor(&bank_a, &symbol_short!("001"));
+        assert_eq!(bank_a_units_updated.len(), 2);
+        
+        // Verify Bank B still has only 1 unit for donor "001"
+        let bank_b_units_updated = client.get_units_by_donor(&bank_b, &symbol_short!("001"));
+        assert_eq!(bank_b_units_updated.len(), 1);
+    }
+
+    /// Test get_units_by_donor with non-existent donor
+    #[test]
+    fn test_get_units_by_donor_nonexistent() {
+        let env = Env::default();
+        let (_, _, client) = setup_contract_with_admin(&env);
+
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        // Query for a donor that doesn't exist
+        let units = client.get_units_by_donor(&bank, &symbol_short!("NOEXIST"));
+        assert_eq!(units.len(), 0);
+    }
+
+    /// Test get_units_by_donor with anonymous donor
+    #[test]
+    fn test_get_units_by_donor_anonymous() {
+        let env = Env::default();
+        let (_, _, client) = setup_contract_with_admin(&env);
+
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (7 * 86400);
+
+        // Register blood without donor_id (anonymous)
+        env.mock_all_auths();
+        client.register_blood(
+            &bank,
+            &BloodType::ABPositive,
+            &300,
+            &expiration,
+            &None,
+        );
+
+        // Anonymous donors are stored as "ANON" but not indexed
+        // So querying for "ANON" should return empty
+        let units = client.get_units_by_donor(&bank, &symbol_short!("ANON"));
+        assert_eq!(units.len(), 0);
     }
 }

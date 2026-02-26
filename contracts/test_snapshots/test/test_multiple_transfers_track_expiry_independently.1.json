@@ -239,7 +239,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "string": "cd07a3af0cfc33d05e838422e02cd67e6f21be48ca75cbbca61748391618ecd0"
+                  "string": "78d7c0d12fa67089f21c5f64d43d307d35a998142ea350e33e50e47c7157c1d3"
                 }
               ]
             }
@@ -261,7 +261,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                 },
                 {
-                  "string": "dd39d6224c35eb507e4a7ae91a3367cf907787e0e8f8ea5ae10d0073d02505a5"
+                  "string": "bb5f16bb71dfd76c2d6fa4aa45cb3888e888e5b98a83c6b3eebba43e230cbd1e"
                 }
               ]
             }
@@ -447,7 +447,7 @@
                   "map": [
                     {
                       "key": {
-                        "string": "cd07a3af0cfc33d05e838422e02cd67e6f21be48ca75cbbca61748391618ecd0"
+                        "string": "78d7c0d12fa67089f21c5f64d43d307d35a998142ea350e33e50e47c7157c1d3"
                       },
                       "val": {
                         "map": [
@@ -456,7 +456,7 @@
                               "symbol": "event_id"
                             },
                             "val": {
-                              "string": "cd07a3af0cfc33d05e838422e02cd67e6f21be48ca75cbbca61748391618ecd0"
+                              "string": "78d7c0d12fa67089f21c5f64d43d307d35a998142ea350e33e50e47c7157c1d3"
                             }
                           },
                           {
@@ -516,7 +516,7 @@
                     },
                     {
                       "key": {
-                        "string": "dd39d6224c35eb507e4a7ae91a3367cf907787e0e8f8ea5ae10d0073d02505a5"
+                        "string": "bb5f16bb71dfd76c2d6fa4aa45cb3888e888e5b98a83c6b3eebba43e230cbd1e"
                       },
                       "val": {
                         "map": [
@@ -525,7 +525,7 @@
                               "symbol": "event_id"
                             },
                             "val": {
-                              "string": "dd39d6224c35eb507e4a7ae91a3367cf907787e0e8f8ea5ae10d0073d02505a5"
+                              "string": "bb5f16bb71dfd76c2d6fa4aa45cb3888e888e5b98a83c6b3eebba43e230cbd1e"
                             }
                           },
                           {
@@ -923,6 +923,64 @@
                           }
                         ]
                       }
+                    }
+                  ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          4095
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "DonorUnits"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                },
+                {
+                  "symbol": "donor"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "DonorUnits"
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                    },
+                    {
+                      "symbol": "donor"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "vec": [
+                    {
+                      "u64": 1
+                    },
+                    {
+                      "u64": 2
                     }
                   ]
                 }
