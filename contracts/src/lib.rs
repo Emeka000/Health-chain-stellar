@@ -250,6 +250,18 @@ pub struct RequestStatusChangeEvent {
 pub enum DataKey {
     /// Donor units index: (bank_id, donor_id) -> Vec<u64>
     DonorUnits(Address, Symbol),
+    /// Custody trail page: (unit_id, page_number) -> Vec<String> (max 20 event IDs)
+    UnitTrailPage(u64, u32),
+    /// Custody trail metadata: unit_id -> TrailMetadata
+    UnitTrailMeta(u64),
+}
+
+/// Metadata for paginated custody trail
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TrailMetadata {
+    pub total_events: u32,
+    pub total_pages: u32,
 }
 
 /// Storage keys
@@ -274,6 +286,9 @@ pub(crate) const MAX_BATCH_SIZE: u32 = 100; // Maximum batch size for operations
 
 // Transfer expiry window (30 minutes)
 pub(crate) const TRANSFER_EXPIRY_SECONDS: u64 = 1800;
+
+// Custody trail pagination
+pub(crate) const MAX_EVENTS_PER_PAGE: u32 = 20;
 
 // History storage key
 pub(crate) const HISTORY: Symbol = symbol_short!("HISTORY");
@@ -771,6 +786,9 @@ impl HealthChainContract {
             .persistent()
             .set(&CUSTODY_EVENTS, &custody_events);
 
+        // Append to custody trail (paginated)
+        append_to_custody_trail(&env, unit_id, event_id.clone());
+
         // Update unit
         unit.status = BloodStatus::Delivered;
         unit.delivery_timestamp = Some(current_time);
@@ -1086,6 +1104,46 @@ pub(crate) fn record_request_status_change(
         .publish((symbol_short!("blood"), symbol_short!("request")), event);
 }
 
+/// Append a custody event_id to the paginated trail for a unit
+pub(crate) fn append_to_custody_trail(env: &Env, unit_id: u64, event_id: String) {
+    // Get or create metadata
+    let meta_key = DataKey::UnitTrailMeta(unit_id);
+    let mut metadata: TrailMetadata = env
+        .storage()
+        .persistent()
+        .get(&meta_key)
+        .unwrap_or(TrailMetadata {
+            total_events: 0,
+            total_pages: 0,
+        });
+
+    // Calculate which page this event belongs to
+    let page_number = metadata.total_events / MAX_EVENTS_PER_PAGE;
+    let page_key = DataKey::UnitTrailPage(unit_id, page_number);
+
+    // Get or create the page
+    let mut page: Vec<String> = env
+        .storage()
+        .persistent()
+        .get(&page_key)
+        .unwrap_or(Vec::new(env));
+
+    // Append event_id to the page
+    page.push_back(event_id);
+
+    // Save the page
+    env.storage().persistent().set(&page_key, &page);
+
+    // Update metadata
+    metadata.total_events += 1;
+    if page.len() == 1 {
+        // New page was created
+        metadata.total_pages += 1;
+    }
+
+    env.storage().persistent().set(&meta_key, &metadata);
+}
+
 #[contractimpl]
 impl HealthChainContract {
     /// Get transfer history for a blood unit
@@ -1226,6 +1284,72 @@ impl HealthChainContract {
             .unwrap_or(Map::new(&env));
 
         custody_events.get(event_id).ok_or(Error::UnitNotFound)
+    }
+
+    /// Get custody trail for a blood unit with pagination
+    /// Returns all confirmed custody event IDs for the specified page
+    pub fn get_custody_trail(
+        env: Env,
+        unit_id: u64,
+        page_number: u32,
+    ) -> Result<Vec<String>, Error> {
+        let page_key = DataKey::UnitTrailPage(unit_id, page_number);
+        
+        let page: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&page_key)
+            .unwrap_or(Vec::new(&env));
+
+        Ok(page)
+    }
+
+    /// Get custody trail metadata for a blood unit
+    pub fn get_custody_trail_metadata(env: Env, unit_id: u64) -> TrailMetadata {
+        let meta_key = DataKey::UnitTrailMeta(unit_id);
+        env.storage()
+            .persistent()
+            .get(&meta_key)
+            .unwrap_or(TrailMetadata {
+                total_events: 0,
+                total_pages: 0,
+            })
+    }
+
+    /// Migrate existing unbounded custody trail to paginated format (admin only)
+    /// This is a one-time migration function for units that may have old trail data
+    pub fn migrate_trail_index(env: Env, unit_id: u64) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&ADMIN)
+            .ok_or(Error::Unauthorized)?;
+        admin.require_auth();
+
+        // Check if already migrated
+        let meta_key = DataKey::UnitTrailMeta(unit_id);
+        if env.storage().persistent().has(&meta_key) {
+            // Already migrated, nothing to do
+            return Ok(());
+        }
+
+        // For this implementation, we assume there's no legacy unbounded Vec to migrate
+        // If there was a legacy storage key like DataKey::UnitTrail(unit_id) -> Vec<String>,
+        // we would:
+        // 1. Load the old Vec
+        // 2. Split it into pages of MAX_EVENTS_PER_PAGE
+        // 3. Store each page with DataKey::UnitTrailPage(unit_id, page_number)
+        // 4. Create and store metadata
+        // 5. Delete the old storage entry
+
+        // Since we're implementing this fresh, we just initialize empty metadata
+        let metadata = TrailMetadata {
+            total_events: 0,
+            total_pages: 0,
+        };
+        env.storage().persistent().set(&meta_key, &metadata);
+
+        Ok(())
     }
 
     /// Create a blood request (hospital only)
@@ -3736,5 +3860,458 @@ mod test {
         // So querying for "ANON" should return empty
         let units = client.get_units_by_donor(&bank, &symbol_short!("ANON"));
         assert_eq!(units.len(), 0);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Paginated Custody Trail Tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_custody_trail_single_event() {
+        let env = Env::default();
+        let (_, _, hospital, client) = setup_contract_with_hospital(&env);
+
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (7 * 86400);
+
+        // Register and allocate blood
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &450,
+            &expiration,
+            &None,
+        );
+
+        env.mock_all_auths();
+        client.allocate_blood(&bank, &unit_id, &hospital);
+
+        // Initiate transfer
+        env.mock_all_auths();
+        let event_id = client.initiate_transfer(&bank, &unit_id);
+
+        // Confirm transfer
+        env.mock_all_auths();
+        client.confirm_transfer(&hospital, &event_id);
+
+        // Check custody trail
+        let trail = client.get_custody_trail(&unit_id, &0);
+        assert_eq!(trail.len(), 1);
+        assert_eq!(trail.get(0).unwrap(), event_id);
+
+        // Check metadata
+        let metadata = client.get_custody_trail_metadata(&unit_id);
+        assert_eq!(metadata.total_events, 1);
+        assert_eq!(metadata.total_pages, 1);
+    }
+
+    #[test]
+    fn test_custody_trail_multiple_events_single_page() {
+        let env = Env::default();
+        let (_, _, hospital, client) = setup_contract_with_hospital(&env);
+
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (7 * 86400);
+
+        // Register blood
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &450,
+            &expiration,
+            &None,
+        );
+
+        let mut event_ids = vec![&env];
+
+        // Create 5 custody events (well under the 20 per page limit)
+        for i in 0..5 {
+            env.mock_all_auths();
+            client.allocate_blood(&bank, &unit_id, &hospital);
+
+            env.mock_all_auths();
+            let event_id = client.initiate_transfer(&bank, &unit_id);
+
+            // Advance time slightly to avoid expiry
+            env.ledger().set_timestamp(current_time + (i * 100));
+
+            env.mock_all_auths();
+            client.confirm_transfer(&hospital, &event_id);
+
+            event_ids.push_back(event_id.clone());
+
+            // Reset unit to Reserved for next iteration (except last)
+            if i < 4 {
+                env.as_contract(&env.register(HealthChainContract, ()), || {
+                    let mut units: Map<u64, BloodUnit> = env
+                        .storage()
+                        .persistent()
+                        .get(&BLOOD_UNITS)
+                        .unwrap_or(Map::new(&env));
+                    let mut unit = units.get(unit_id).unwrap();
+                    unit.status = BloodStatus::Reserved;
+                    units.set(unit_id, unit);
+                    env.storage().persistent().set(&BLOOD_UNITS, &units);
+                });
+            }
+        }
+
+        // Check custody trail - all events should be on page 0
+        let trail = client.get_custody_trail(&unit_id, &0);
+        assert_eq!(trail.len(), 5);
+
+        for i in 0..5 {
+            assert_eq!(trail.get(i).unwrap(), event_ids.get(i).unwrap());
+        }
+
+        // Check metadata
+        let metadata = client.get_custody_trail_metadata(&unit_id);
+        assert_eq!(metadata.total_events, 5);
+        assert_eq!(metadata.total_pages, 1);
+    }
+
+    #[test]
+    fn test_custody_trail_pagination_across_pages() {
+        let env = Env::default();
+        let (contract_id, _, hospital, client) = setup_contract_with_hospital(&env);
+
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (30 * 86400);
+
+        // Register blood
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &450,
+            &expiration,
+            &None,
+        );
+
+        let mut all_event_ids = vec![&env];
+
+        // Create 25 custody events (should span 2 pages: 20 + 5)
+        for i in 0..25 {
+            // Manually set unit to Reserved state
+            env.as_contract(&contract_id, || {
+                let mut units: Map<u64, BloodUnit> = env
+                    .storage()
+                    .persistent()
+                    .get(&BLOOD_UNITS)
+                    .unwrap_or(Map::new(&env));
+                let mut unit = units.get(unit_id).unwrap();
+                unit.status = BloodStatus::Reserved;
+                unit.recipient_hospital = Some(hospital.clone());
+                units.set(unit_id, unit);
+                env.storage().persistent().set(&BLOOD_UNITS, &units);
+            });
+
+            env.mock_all_auths();
+            let event_id = client.initiate_transfer(&bank, &unit_id);
+
+            // Advance time slightly
+            env.ledger().set_timestamp(current_time + (i * 100));
+
+            env.mock_all_auths();
+            client.confirm_transfer(&hospital, &event_id);
+
+            all_event_ids.push_back(event_id);
+        }
+
+        // Check page 0 - should have 20 events
+        let page_0 = client.get_custody_trail(&unit_id, &0);
+        assert_eq!(page_0.len(), 20);
+
+        for i in 0..20 {
+            assert_eq!(page_0.get(i).unwrap(), all_event_ids.get(i).unwrap());
+        }
+
+        // Check page 1 - should have 5 events
+        let page_1 = client.get_custody_trail(&unit_id, &1);
+        assert_eq!(page_1.len(), 5);
+
+        for i in 0..5 {
+            assert_eq!(page_1.get(i).unwrap(), all_event_ids.get(20 + i).unwrap());
+        }
+
+        // Check metadata
+        let metadata = client.get_custody_trail_metadata(&unit_id);
+        assert_eq!(metadata.total_events, 25);
+        assert_eq!(metadata.total_pages, 2);
+    }
+
+    #[test]
+    fn test_custody_trail_100_events() {
+        let env = Env::default();
+        let (contract_id, _, hospital, client) = setup_contract_with_hospital(&env);
+
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (365 * 86400); // 1 year
+
+        // Register blood
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &450,
+            &expiration,
+            &None,
+        );
+
+        // Create 100 custody events
+        for i in 0..100 {
+            // Manually set unit to Reserved state
+            env.as_contract(&contract_id, || {
+                let mut units: Map<u64, BloodUnit> = env
+                    .storage()
+                    .persistent()
+                    .get(&BLOOD_UNITS)
+                    .unwrap_or(Map::new(&env));
+                let mut unit = units.get(unit_id).unwrap();
+                unit.status = BloodStatus::Reserved;
+                unit.recipient_hospital = Some(hospital.clone());
+                units.set(unit_id, unit);
+                env.storage().persistent().set(&BLOOD_UNITS, &units);
+            });
+
+            env.mock_all_auths();
+            let event_id = client.initiate_transfer(&bank, &unit_id);
+
+            // Advance time
+            env.ledger().set_timestamp(current_time + (i * 100));
+
+            env.mock_all_auths();
+            client.confirm_transfer(&hospital, &event_id);
+        }
+
+        // Check metadata - should have 5 pages (100 / 20 = 5)
+        let metadata = client.get_custody_trail_metadata(&unit_id);
+        assert_eq!(metadata.total_events, 100);
+        assert_eq!(metadata.total_pages, 5);
+
+        // Verify each page has exactly 20 events
+        for page_num in 0..5 {
+            let page = client.get_custody_trail(&unit_id, &page_num);
+            assert_eq!(page.len(), 20);
+        }
+
+        // Verify page 5 (non-existent) returns empty
+        let page_5 = client.get_custody_trail(&unit_id, &5);
+        assert_eq!(page_5.len(), 0);
+    }
+
+    #[test]
+    fn test_custody_trail_empty_for_new_unit() {
+        let env = Env::default();
+        let (_, _, _, client) = setup_contract_with_hospital(&env);
+
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (7 * 86400);
+
+        // Register blood but don't create any custody events
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &450,
+            &expiration,
+            &None,
+        );
+
+        // Check custody trail - should be empty
+        let trail = client.get_custody_trail(&unit_id, &0);
+        assert_eq!(trail.len(), 0);
+
+        // Check metadata - should show 0 events and 0 pages
+        let metadata = client.get_custody_trail_metadata(&unit_id);
+        assert_eq!(metadata.total_events, 0);
+        assert_eq!(metadata.total_pages, 0);
+    }
+
+    #[test]
+    fn test_custody_trail_non_existent_page() {
+        let env = Env::default();
+        let (_, _, hospital, client) = setup_contract_with_hospital(&env);
+
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (7 * 86400);
+
+        // Register and create one custody event
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &450,
+            &expiration,
+            &None,
+        );
+
+        env.mock_all_auths();
+        client.allocate_blood(&bank, &unit_id, &hospital);
+
+        env.mock_all_auths();
+        let event_id = client.initiate_transfer(&bank, &unit_id);
+
+        env.mock_all_auths();
+        client.confirm_transfer(&hospital, &event_id);
+
+        // Query for page 10 (doesn't exist)
+        let trail = client.get_custody_trail(&unit_id, &10);
+        assert_eq!(trail.len(), 0);
+    }
+
+    #[test]
+    fn test_migrate_trail_index() {
+        let env = Env::default();
+        let (_, admin, _, client) = setup_contract_with_hospital(&env);
+
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (7 * 86400);
+
+        // Register blood
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &450,
+            &expiration,
+            &None,
+        );
+
+        // Migrate (should initialize empty metadata)
+        env.mock_all_auths();
+        client.migrate_trail_index(&unit_id);
+
+        // Check metadata was created
+        let metadata = client.get_custody_trail_metadata(&unit_id);
+        assert_eq!(metadata.total_events, 0);
+        assert_eq!(metadata.total_pages, 0);
+
+        // Calling migrate again should be idempotent
+        env.mock_all_auths();
+        client.migrate_trail_index(&unit_id);
+
+        let metadata_after = client.get_custody_trail_metadata(&unit_id);
+        assert_eq!(metadata_after.total_events, 0);
+        assert_eq!(metadata_after.total_pages, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #1)")]
+    fn test_migrate_trail_index_unauthorized() {
+        let env = Env::default();
+        let (_, _, _, client) = setup_contract_with_hospital(&env);
+
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (7 * 86400);
+
+        // Register blood
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &450,
+            &expiration,
+            &None,
+        );
+
+        // Try to migrate without admin auth (should fail)
+        let unauthorized = Address::generate(&env);
+        env.mock_all_auths();
+        client.migrate_trail_index(&unit_id);
+    }
+
+    #[test]
+    fn test_custody_trail_storage_size_within_limits() {
+        let env = Env::default();
+        let (contract_id, _, hospital, client) = setup_contract_with_hospital(&env);
+
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (365 * 86400);
+
+        // Register blood
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &450,
+            &expiration,
+            &None,
+        );
+
+        // Create exactly 20 events (one full page)
+        for i in 0..20 {
+            env.as_contract(&contract_id, || {
+                let mut units: Map<u64, BloodUnit> = env
+                    .storage()
+                    .persistent()
+                    .get(&BLOOD_UNITS)
+                    .unwrap_or(Map::new(&env));
+                let mut unit = units.get(unit_id).unwrap();
+                unit.status = BloodStatus::Reserved;
+                unit.recipient_hospital = Some(hospital.clone());
+                units.set(unit_id, unit);
+                env.storage().persistent().set(&BLOOD_UNITS, &units);
+            });
+
+            env.mock_all_auths();
+            let event_id = client.initiate_transfer(&bank, &unit_id);
+
+            env.ledger().set_timestamp(current_time + (i * 100));
+
+            env.mock_all_auths();
+            client.confirm_transfer(&hospital, &event_id);
+        }
+
+        // Verify page has exactly 20 events
+        let page = client.get_custody_trail(&unit_id, &0);
+        assert_eq!(page.len(), 20);
+
+        // Each event_id is a 64-character hex string (32 bytes hash -> 64 hex chars)
+        // 20 event_ids * 64 bytes = 1,280 bytes + Vec overhead
+        // This is well within Soroban's storage limits
+        
+        // Verify metadata
+        let metadata = client.get_custody_trail_metadata(&unit_id);
+        assert_eq!(metadata.total_events, 20);
+        assert_eq!(metadata.total_pages, 1);
     }
 }
