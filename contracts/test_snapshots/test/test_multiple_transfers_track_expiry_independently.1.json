@@ -239,7 +239,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "string": "cd07a3af0cfc33d05e838422e02cd67e6f21be48ca75cbbca61748391618ecd0"
+                  "string": "c43daf874f7b4cfccebb8b170ec3c6d4f0fd4c209d3904e03fa5219ef991b0e4"
                 }
               ]
             }
@@ -261,7 +261,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                 },
                 {
-                  "string": "dd39d6224c35eb507e4a7ae91a3367cf907787e0e8f8ea5ae10d0073d02505a5"
+                  "string": "a9b655e5b9fa07cd7099fb199b6eac29975d740f9b162f680c849bcc58a3a962"
                 }
               ]
             }
@@ -447,7 +447,7 @@
                   "map": [
                     {
                       "key": {
-                        "string": "cd07a3af0cfc33d05e838422e02cd67e6f21be48ca75cbbca61748391618ecd0"
+                        "string": "a9b655e5b9fa07cd7099fb199b6eac29975d740f9b162f680c849bcc58a3a962"
                       },
                       "val": {
                         "map": [
@@ -456,76 +456,7 @@
                               "symbol": "event_id"
                             },
                             "val": {
-                              "string": "cd07a3af0cfc33d05e838422e02cd67e6f21be48ca75cbbca61748391618ecd0"
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "from_custodian"
-                            },
-                            "val": {
-                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "initiated_at"
-                            },
-                            "val": {
-                              "u64": 1000000
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "ledger_sequence"
-                            },
-                            "val": {
-                              "u32": 0
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "status"
-                            },
-                            "val": {
-                              "vec": [
-                                {
-                                  "symbol": "Cancelled"
-                                }
-                              ]
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "to_custodian"
-                            },
-                            "val": {
-                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "unit_id"
-                            },
-                            "val": {
-                              "u64": 1
-                            }
-                          }
-                        ]
-                      }
-                    },
-                    {
-                      "key": {
-                        "string": "dd39d6224c35eb507e4a7ae91a3367cf907787e0e8f8ea5ae10d0073d02505a5"
-                      },
-                      "val": {
-                        "map": [
-                          {
-                            "key": {
-                              "symbol": "event_id"
-                            },
-                            "val": {
-                              "string": "dd39d6224c35eb507e4a7ae91a3367cf907787e0e8f8ea5ae10d0073d02505a5"
+                              "string": "a9b655e5b9fa07cd7099fb199b6eac29975d740f9b162f680c849bcc58a3a962"
                             }
                           },
                           {
@@ -578,6 +509,75 @@
                             },
                             "val": {
                               "u64": 2
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "string": "c43daf874f7b4cfccebb8b170ec3c6d4f0fd4c209d3904e03fa5219ef991b0e4"
+                      },
+                      "val": {
+                        "map": [
+                          {
+                            "key": {
+                              "symbol": "event_id"
+                            },
+                            "val": {
+                              "string": "c43daf874f7b4cfccebb8b170ec3c6d4f0fd4c209d3904e03fa5219ef991b0e4"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "from_custodian"
+                            },
+                            "val": {
+                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "initiated_at"
+                            },
+                            "val": {
+                              "u64": 1000000
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "ledger_sequence"
+                            },
+                            "val": {
+                              "u32": 0
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "status"
+                            },
+                            "val": {
+                              "vec": [
+                                {
+                                  "symbol": "Cancelled"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "to_custodian"
+                            },
+                            "val": {
+                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "unit_id"
+                            },
+                            "val": {
+                              "u64": 1
                             }
                           }
                         ]
@@ -995,6 +995,58 @@
                           "val": {
                             "vec": [
                               {
+                                "symbol": "Available"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "old_status"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "symbol": "Available"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "timestamp"
+                          },
+                          "val": {
+                            "u64": 999990
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "actor"
+                          },
+                          "val": {
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "blood_unit_id"
+                          },
+                          "val": {
+                            "u64": 1
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "new_status"
+                          },
+                          "val": {
+                            "vec": [
+                              {
                                 "symbol": "Reserved"
                               }
                             ]
@@ -1172,6 +1224,58 @@
                 "durability": "persistent",
                 "val": {
                   "vec": [
+                    {
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "actor"
+                          },
+                          "val": {
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "blood_unit_id"
+                          },
+                          "val": {
+                            "u64": 2
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "new_status"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "symbol": "Available"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "old_status"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "symbol": "Available"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "timestamp"
+                          },
+                          "val": {
+                            "u64": 1000090
+                          }
+                        }
+                      ]
+                    },
                     {
                       "map": [
                         {

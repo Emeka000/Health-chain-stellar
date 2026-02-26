@@ -577,10 +577,10 @@
           "v0": {
             "topics": [
               {
-                "symbol": "request"
+                "symbol": "blood"
               },
               {
-                "symbol": "status"
+                "symbol": "request"
               }
             ],
             "data": {
