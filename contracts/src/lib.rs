@@ -47,6 +47,10 @@ pub enum Error {
     InvalidPaymentStatus = 22,
     /// Unit ID string exceeds maximum allowed length.
     UnitIdTooLong = 18,
+    /// SuperAdmin nomination has expired.
+    NominationExpired = 23,
+    /// A pending nomination already exists.
+    NominationPending = 24,
 }
 
 // Alias for issue/docs terminology.
@@ -339,6 +343,8 @@ pub enum DataKey {
     UnitTrailPage(u64, u32),
     /// Custody trail metadata: unit_id -> TrailMetadata
     UnitTrailMeta(u64),
+    /// Pending SuperAdmin nomination
+    PendingNominee,
 }
 
 /// Metadata for paginated custody trail
@@ -367,8 +373,16 @@ pub(crate) const HISTORY: Symbol = symbol_short!("HISTORY");
 pub(crate) use constants::{
     HEX_HASH_LENGTH, MAX_BATCH_EXPIRY_SIZE, MAX_BATCH_SIZE, MAX_EVENTS_PER_PAGE, MAX_QUANTITY_ML,
     MAX_REQUEST_ML, MAX_SHELF_LIFE_DAYS, MAX_UNIT_ID_LENGTH, MIN_QUANTITY_ML, MIN_REQUEST_ML,
-    MIN_SHELF_LIFE_DAYS, SECONDS_PER_DAY, TRANSFER_EXPIRY_SECONDS,
+    MIN_SHELF_LIFE_DAYS, NOMINATION_EXPIRY_SECONDS, SECONDS_PER_DAY, TRANSFER_EXPIRY_SECONDS,
 };
+
+/// Pending SuperAdmin nomination entry.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct NominationEntry {
+    pub nominee: Address,
+    pub nominated_at: u64,
+}
 
 #[contract]
 pub struct HealthChainContract;
@@ -2110,6 +2124,76 @@ impl HealthChainContract {
 
         let percentage = fulfilled_quantity.saturating_mul(100) / requested_quantity;
         percentage.min(100)
+    }
+
+    // ── SUPER ADMIN TWO-STEP TRANSFER ────────────────────────────────────────────────────
+
+    /// Nominate a new SuperAdmin (current admin only).
+    ///
+    /// Clears any expired pending nomination before checking for an active one.
+    pub fn nominate_super_admin(env: Env, nominee: Address) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&ADMIN)
+            .ok_or(Error::Unauthorized)?;
+        admin.require_auth();
+
+        let now = env.ledger().timestamp();
+
+        // Lazily clear an expired nomination so a new one can be made.
+        if let Some(entry) = env
+            .storage()
+            .instance()
+            .get::<DataKey, NominationEntry>(&DataKey::PendingNominee)
+        {
+            let expired = now > entry.nominated_at.saturating_add(NOMINATION_EXPIRY_SECONDS);
+            if !expired {
+                return Err(Error::NominationPending);
+            }
+            env.storage().instance().remove(&DataKey::PendingNominee);
+        }
+
+        env.storage().instance().set(
+            &DataKey::PendingNominee,
+            &NominationEntry { nominee, nominated_at: now },
+        );
+        Ok(())
+    }
+
+    /// Accept a pending SuperAdmin nomination (nominee only).
+    ///
+    /// Fails with `NominationExpired` if the 24-hour window has passed.
+    pub fn accept_super_admin(env: Env) -> Result<(), Error> {
+        let entry: NominationEntry = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingNominee)
+            .ok_or(Error::Unauthorized)?;
+
+        entry.nominee.require_auth();
+
+        let now = env.ledger().timestamp();
+        if now > entry.nominated_at.saturating_add(NOMINATION_EXPIRY_SECONDS) {
+            return Err(Error::NominationExpired);
+        }
+
+        env.storage().instance().set(&ADMIN, &entry.nominee);
+        env.storage().instance().remove(&DataKey::PendingNominee);
+        Ok(())
+    }
+
+    /// Cancel a pending nomination (current admin only).
+    pub fn cancel_nomination(env: Env) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&ADMIN)
+            .ok_or(Error::Unauthorized)?;
+        admin.require_auth();
+
+        env.storage().instance().remove(&DataKey::PendingNominee);
+        Ok(())
     }
 
     /// Store a health record hash
@@ -4828,5 +4912,110 @@ mod test {
         let metadata = client.get_custody_trail_metadata(&unit_id);
         assert_eq!(metadata.total_events, 20);
         assert_eq!(metadata.total_pages, 1);
+    }
+
+    // ── SUPER ADMIN NOMINATION TESTS (#111) ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_super_admin_successful_transfer() {
+        let env = Env::default();
+        let (_, admin, client) = setup_contract_with_admin(&env);
+        let new_admin = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.nominate_super_admin(&new_admin);
+
+        env.mock_all_auths();
+        client.accept_super_admin();
+
+        // New admin can now register a blood bank (proves they hold the admin role).
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+        assert!(client.is_blood_bank(&bank));
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #23)")]
+    fn test_accept_super_admin_after_expiry_returns_nomination_expired() {
+        let env = Env::default();
+        env.ledger().with_mut(|li| li.timestamp = 1_000_000);
+
+        let (_, _admin, client) = setup_contract_with_admin(&env);
+        let new_admin = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.nominate_super_admin(&new_admin);
+
+        // Advance past the 24-hour expiry window.
+        env.ledger()
+            .with_mut(|li| li.timestamp = 1_000_000 + NOMINATION_EXPIRY_SECONDS + 1);
+
+        env.mock_all_auths();
+        client.accept_super_admin();
+    }
+
+    #[test]
+    fn test_cancel_nomination_allows_immediate_re_nomination() {
+        let env = Env::default();
+        let (_, _admin, client) = setup_contract_with_admin(&env);
+        let nominee_a = Address::generate(&env);
+        let nominee_b = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.nominate_super_admin(&nominee_a);
+
+        // Cancel the pending nomination.
+        env.mock_all_auths();
+        client.cancel_nomination();
+
+        // Should be able to nominate a different address immediately.
+        env.mock_all_auths();
+        client.nominate_super_admin(&nominee_b);
+
+        // nominee_b can accept.
+        env.mock_all_auths();
+        client.accept_super_admin();
+    }
+
+    #[test]
+    fn test_expired_nomination_replaced_by_new_nomination() {
+        let env = Env::default();
+        env.ledger().with_mut(|li| li.timestamp = 1_000_000);
+
+        let (_, _admin, client) = setup_contract_with_admin(&env);
+        let nominee_a = Address::generate(&env);
+        let nominee_b = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.nominate_super_admin(&nominee_a);
+
+        // Let the nomination expire.
+        env.ledger()
+            .with_mut(|li| li.timestamp = 1_000_000 + NOMINATION_EXPIRY_SECONDS + 1);
+
+        // A new nomination should succeed without error (lazy clear of expired entry).
+        env.mock_all_auths();
+        client.nominate_super_admin(&nominee_b);
+
+        // nominee_b can accept.
+        env.mock_all_auths();
+        client.accept_super_admin();
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #24)")]
+    fn test_second_nomination_while_active_returns_nomination_pending() {
+        let env = Env::default();
+        let (_, _admin, client) = setup_contract_with_admin(&env);
+        let nominee_a = Address::generate(&env);
+        let nominee_b = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.nominate_super_admin(&nominee_a);
+
+        // Second nomination while the first is still active must fail.
+        env.mock_all_auths();
+        client.nominate_super_admin(&nominee_b);
     }
 }

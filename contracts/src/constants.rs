@@ -95,3 +95,12 @@ pub const MAX_UNIT_ID_LENGTH: u32 = 64;
 /// SHA256 produces a 32-byte hash, which when hex-encoded becomes 64 characters.
 /// Used for custody event IDs and other cryptographic identifiers.
 pub const HEX_HASH_LENGTH: usize = 64;
+
+// ── SUPER ADMIN NOMINATION ────────────────────────────────────────────────────
+
+/// Nomination expiry window in seconds (24 hours).
+///
+/// A pending SuperAdmin nomination must be accepted within this window.
+/// After expiry the nomination is void and the current SuperAdmin may
+/// nominate a different address.
+pub const NOMINATION_EXPIRY_SECONDS: u64 = 86_400;
