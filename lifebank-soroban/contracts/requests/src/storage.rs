@@ -1,6 +1,5 @@
 use crate::error::ContractError;
 use crate::types::{BloodRequest, ContractMetadata, DataKey};
-use crate::types::{ContractMetadata, DataKey};
 use soroban_sdk::{Address, Env, String};
 
 pub fn is_initialized(env: &Env) -> bool {
@@ -90,29 +89,6 @@ pub fn set_request(env: &Env, request: &BloodRequest) {
 
 pub fn get_request(env: &Env, request_id: u64) -> Option<BloodRequest> {
     env.storage().persistent().get(&DataKey::Request(request_id))
-}
-
-pub fn set_metadata(env: &Env, metadata: &ContractMetadata) {
-    env.storage().instance().set(&DataKey::Metadata, metadata);
-}
-
-pub fn get_metadata(env: &Env) -> ContractMetadata {
-    env.storage()
-        .instance()
-        .get(&DataKey::Metadata)
-        .expect("metadata must be set after initialization")
-}
-
-
-pub fn set_request_counter(env: &Env, value: u64) {
-    env.storage().instance().set(&DataKey::RequestCounter, &value);
-}
-
-pub fn get_request_counter(env: &Env) -> u64 {
-    env.storage()
-        .instance()
-        .get(&DataKey::RequestCounter)
-        .expect("request counter must be set after initialization")
 }
 
 pub fn set_metadata(env: &Env, metadata: &ContractMetadata) {

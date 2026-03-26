@@ -18,7 +18,7 @@ fn make_payment(
 ) -> (u64, Address, Address) {
     let payer = Address::generate(env);
     let payee = Address::generate(env);
-    let id = client.create_payment(&request_id, &payer, &payee, &amount).unwrap();
+    let id = client.create_payment(&request_id, &payer, &payee, &amount);
     (id, payer, payee)
 }
 
@@ -71,9 +71,9 @@ fn test_create_payment_stores_correct_fields() {
     env.ledger().with_mut(|l| l.timestamp = 5000);
     let payer = Address::generate(&env);
     let payee = Address::generate(&env);
-    let id = client.create_payment(&42u64, &payer, &payee, &999i128).unwrap();
+    let id = client.create_payment(&42u64, &payer, &payee, &999i128);
 
-    let p = client.get_payment(&id).unwrap();
+    let p = client.get_payment(&id);
     assert_eq!(p.request_id, 42);
     assert_eq!(p.payer, payer);
     assert_eq!(p.payee, payee);
@@ -97,7 +97,7 @@ fn test_get_payment_returns_correct_payment() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
     let (id, payer, payee) = make_payment(&env, &client, 10, 500);
-    let p = client.get_payment(&id).unwrap();
+    let p = client.get_payment(&id);
     assert_eq!(p.id, id);
     assert_eq!(p.payer, payer);
     assert_eq!(p.payee, payee);
@@ -114,7 +114,7 @@ fn test_get_payment_by_request_finds_correct_payment() {
     let (id2, _, _) = make_payment(&env, &client, 99, 200);
     make_payment(&env, &client, 3, 300);
 
-    let p = client.get_payment_by_request(&99u64).unwrap();
+    let p = client.get_payment_by_request(&99u64);
     assert_eq!(p.id, id2);
     assert_eq!(p.request_id, 99);
 }
@@ -137,8 +137,8 @@ fn test_get_payments_by_payer_returns_only_payer_payments() {
     let payer_a = Address::generate(&env);
     let payee = Address::generate(&env);
 
-    client.create_payment(&1u64, &payer_a, &payee, &100i128).unwrap();
-    client.create_payment(&2u64, &payer_a, &payee, &200i128).unwrap();
+    client.create_payment(&1u64, &payer_a, &payee, &100i128);
+    client.create_payment(&2u64, &payer_a, &payee, &200i128);
     make_payment(&env, &client, 3, 300);
 
     let page = client.get_payments_by_payer(&payer_a, &0u32, &20u32);
@@ -164,7 +164,7 @@ fn test_get_payments_by_payer_pagination() {
     let payee = Address::generate(&env);
 
     for i in 1u64..=5 {
-        client.create_payment(&i, &payer, &payee, &(i as i128 * 100)).unwrap();
+        client.create_payment(&i, &payer, &payee, &(i as i128 * 100));
     }
 
     let page0 = client.get_payments_by_payer(&payer, &0u32, &2u32);
@@ -187,8 +187,8 @@ fn test_get_payments_by_payee_returns_only_payee_payments() {
     let payer = Address::generate(&env);
     let payee_a = Address::generate(&env);
 
-    client.create_payment(&1u64, &payer, &payee_a, &100i128).unwrap();
-    client.create_payment(&2u64, &payer, &payee_a, &200i128).unwrap();
+    client.create_payment(&1u64, &payer, &payee_a, &100i128);
+    client.create_payment(&2u64, &payer, &payee_a, &200i128);
     make_payment(&env, &client, 3, 300);
 
     let page = client.get_payments_by_payee(&payee_a, &0u32, &20u32);
@@ -204,7 +204,7 @@ fn test_get_payments_by_payee_pagination() {
     let payee = Address::generate(&env);
 
     for i in 1u64..=6 {
-        client.create_payment(&i, &payer, &payee, &(i as i128 * 50)).unwrap();
+        client.create_payment(&i, &payer, &payee, &(i as i128 * 50));
     }
 
     let page = client.get_payments_by_payee(&payee, &0u32, &4u32);
@@ -225,8 +225,8 @@ fn test_get_payments_by_status_filters_correctly() {
     let (id2, _, _) = make_payment(&env, &client, 2, 200);
     make_payment(&env, &client, 3, 300);
 
-    client.update_status(&id1, &PaymentStatus::Locked).unwrap();
-    client.update_status(&id2, &PaymentStatus::Locked).unwrap();
+    client.update_status(&id1, &PaymentStatus::Locked);
+    client.update_status(&id2, &PaymentStatus::Locked);
 
     let locked = client.get_payments_by_status(&PaymentStatus::Locked, &0u32, &20u32);
     assert_eq!(locked.items.len(), 2);
@@ -252,7 +252,7 @@ fn test_get_payments_by_status_pagination() {
     let client = PaymentContractClient::new(&env, &cid);
     for i in 1u64..=5 {
         let (id, _, _) = make_payment(&env, &client, i, 100);
-        client.update_status(&id, &PaymentStatus::Refunded).unwrap();
+        client.update_status(&id, &PaymentStatus::Refunded);
     }
 
     let page0 = client.get_payments_by_status(&PaymentStatus::Refunded, &0u32, &3u32);
@@ -289,10 +289,10 @@ fn test_statistics_counts_and_totals_correctly() {
     let (id4, _, _) = make_payment(&env, &client, 4, 750);
     make_payment(&env, &client, 5, 300); // stays Pending
 
-    client.update_status(&id1, &PaymentStatus::Locked).unwrap();
-    client.update_status(&id2, &PaymentStatus::Locked).unwrap();
-    client.update_status(&id3, &PaymentStatus::Released).unwrap();
-    client.update_status(&id4, &PaymentStatus::Refunded).unwrap();
+    client.update_status(&id1, &PaymentStatus::Locked);
+    client.update_status(&id2, &PaymentStatus::Locked);
+    client.update_status(&id3, &PaymentStatus::Released);
+    client.update_status(&id4, &PaymentStatus::Refunded);
 
     let stats = client.get_payment_statistics();
     assert_eq!(stats.count_locked, 2);
@@ -311,8 +311,8 @@ fn test_statistics_ignores_pending_cancelled_disputed() {
     let (id2, _, _) = make_payment(&env, &client, 2, 200);
     make_payment(&env, &client, 3, 300); // stays Pending
 
-    client.update_status(&id1, &PaymentStatus::Cancelled).unwrap();
-    client.update_status(&id2, &PaymentStatus::Disputed).unwrap();
+    client.update_status(&id1, &PaymentStatus::Cancelled);
+    client.update_status(&id2, &PaymentStatus::Disputed);
 
     let stats = client.get_payment_statistics();
     assert_eq!(stats.count_locked, 0);
@@ -396,12 +396,12 @@ fn test_update_status_changes_payment_status() {
     let client = PaymentContractClient::new(&env, &cid);
     let (id, _, _) = make_payment(&env, &client, 1, 500);
 
-    client.update_status(&id, &PaymentStatus::Locked).unwrap();
-    let p = client.get_payment(&id).unwrap();
+    client.update_status(&id, &PaymentStatus::Locked);
+    let p = client.get_payment(&id);
     assert_eq!(p.status, PaymentStatus::Locked);
 
-    client.update_status(&id, &PaymentStatus::Released).unwrap();
-    let p = client.get_payment(&id).unwrap();
+    client.update_status(&id, &PaymentStatus::Released);
+    let p = client.get_payment(&id);
     assert_eq!(p.status, PaymentStatus::Released);
 }
 

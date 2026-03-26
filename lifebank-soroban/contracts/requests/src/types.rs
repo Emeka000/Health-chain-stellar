@@ -1,5 +1,4 @@
 use soroban_sdk::{contracttype, Address, String, Vec};
-use soroban_sdk::{contracttype, String};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
@@ -97,5 +96,4 @@ pub struct RequestCreatedEvent {
     pub quantity_ml: u32,
     pub urgency: u32,
     pub timestamp: u64,
-}
 }

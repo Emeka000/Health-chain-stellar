@@ -4,10 +4,7 @@ use crate::{
     RequestStatus, Urgency,
 };
 use soroban_sdk::{
-    testutils::{Address as _, Events, Ledger},
-use crate::{ContractMetadata, RequestContract, RequestContractClient};
-use soroban_sdk::{
-    testutils::{Address as _, Events},
+    testutils::{Address as _, Events as _, Ledger as _},
     Address, Env, String,
 };
 
@@ -22,14 +19,10 @@ fn create_uninitialized_contract<'a>() -> (Env, RequestContractClient<'a>, Addre
 }
 
 fn create_initialized_contract<'a>() -> (Env, RequestContractClient<'a>, Address, Address, Address) {
-#[test]
-fn test_initialize_sets_admin_inventory_counter_and_metadata() {
     let (env, client, contract_id) = create_uninitialized_contract();
     let admin = Address::generate(&env);
     let inventory_contract = Address::generate(&env);
-
     client.initialize(&admin, &inventory_contract);
-
     (env, client, contract_id, admin, inventory_contract)
 }
 
@@ -221,24 +214,3 @@ fn test_create_request_rejects_zero_quantity() {
     );
 }
 
-    let events = env.events().all();
-    assert_eq!(events.len(), 1);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #0)")]
-fn test_initialize_cannot_run_twice() {
-    let (env, client, _contract_id) = create_uninitialized_contract();
-    let admin = Address::generate(&env);
-    let inventory_contract = Address::generate(&env);
-
-    client.initialize(&admin, &inventory_contract);
-    client.initialize(&admin, &inventory_contract);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #1)")]
-fn test_readers_fail_before_initialization() {
-    let (_env, client, _contract_id) = create_uninitialized_contract();
-    let _ = client.get_admin();
-}

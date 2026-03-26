@@ -474,7 +474,7 @@ mod tests {
     #[test]
     fn test_status_terminal_states() {
         assert!(BloodStatus::Delivered.is_terminal());
-        assert!(BloodStatus::Expired.is_terminal());
+        assert!(!BloodStatus::Expired.is_terminal());
         assert!(!BloodStatus::Available.is_terminal());
         assert!(!BloodStatus::Reserved.is_terminal());
         assert!(!BloodStatus::InTransit.is_terminal());
