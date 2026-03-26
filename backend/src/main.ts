@@ -5,8 +5,17 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { AppErrorFilter } from './common/filters/irrecoverable-error.filter';
 import { ThrottlerExceptionFilter } from './throttler/throttler-exception.filter';
+import { validateEnv } from './config/validate-env';
 
 async function bootstrap() {
+  // Validate env before NestJS initialises any module.
+  // On failure, validateEnv writes a structured report to stderr and throws.
+  try {
+    validateEnv(process.env as Record<string, unknown>);
+  } catch {
+    process.exit(1);
+  }
+
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
   const logger = new Logger('Bootstrap');
