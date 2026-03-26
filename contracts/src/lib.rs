@@ -210,7 +210,6 @@ pub struct RequestKey {
     pub quantity_ml: u32,
     pub urgency: UrgencyLevel,
     pub required_by: u64,
-    pub delivery_address: String,
 }
 
 /// Event data for blood registration
@@ -1495,13 +1494,14 @@ impl HealthChainContract {
             return Err(Error::InvalidRequiredBy);
         }
 
+        // Normalize dedup semantics by excluding free-form delivery address text:
+        // equivalent logical requests should map to one key even if address case/spacing differs.
         let request_key = RequestKey {
             hospital_id: hospital_id.clone(),
             blood_type,
             quantity_ml,
             urgency,
             required_by,
-            delivery_address: delivery_address.clone(),
         };
 
         let mut request_keys: Map<RequestKey, u64> = env
@@ -1600,7 +1600,9 @@ impl HealthChainContract {
 
         payments.set(payment_id, payment);
         env.storage().persistent().set(&PAYMENTS, &payments);
-        env.storage().instance().set(&NEXT_PAYMENT_ID, &(payment_id + 1));
+        env.storage()
+            .instance()
+            .set(&NEXT_PAYMENT_ID, &(payment_id + 1));
 
         Ok(payment_id)
     }
@@ -1656,7 +1658,9 @@ impl HealthChainContract {
 
         disputes.set(dispute_id, dispute);
         env.storage().persistent().set(&DISPUTES, &disputes);
-        env.storage().instance().set(&NEXT_DISPUTE_ID, &(dispute_id + 1));
+        env.storage()
+            .instance()
+            .set(&NEXT_DISPUTE_ID, &(dispute_id + 1));
 
         // Update Request Status if possible
         let mut requests: Map<u64, BloodRequest> = env
@@ -1717,7 +1721,9 @@ impl HealthChainContract {
             .get(&PAYMENTS)
             .ok_or(Error::PaymentNotFound)?;
 
-        let mut payment = payments.get(dispute.payment_id).ok_or(Error::PaymentNotFound)?;
+        let mut payment = payments
+            .get(dispute.payment_id)
+            .ok_or(Error::PaymentNotFound)?;
 
         dispute.status = resolution;
         dispute.resolved_at = Some(env.ledger().timestamp());
@@ -1725,7 +1731,7 @@ impl HealthChainContract {
         env.storage().persistent().set(&DISPUTES, &disputes);
 
         payment.status = PaymentStatus::Resolved;
-        
+
         // Handle funds based on resolution
         match resolution {
             DisputeStatus::ResolvedInFavorOfPayer => {
@@ -2156,7 +2162,10 @@ impl HealthChainContract {
 
         env.storage().instance().set(
             &DataKey::PendingNominee,
-            &NominationEntry { nominee, nominated_at: now },
+            &NominationEntry {
+                nominee,
+                nominated_at: now,
+            },
         );
         Ok(())
     }
@@ -3553,6 +3562,36 @@ mod test {
             &UrgencyLevel::Urgent,
             &required_by,
             &address,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #13)")]
+    fn test_create_request_duplicate_request_with_delivery_case_and_spacing_variations() {
+        let env = Env::default();
+        let (_, _, hospital, client) = setup_contract_with_hospital(&env);
+
+        env.mock_all_auths();
+        let current_time = env.ledger().timestamp();
+        let required_by = current_time + 7200;
+
+        client.create_request(
+            &hospital,
+            &BloodType::APositive,
+            &400,
+            &UrgencyLevel::High,
+            &required_by,
+            &String::from_str(&env, " Ward   7B, ICU "),
+        );
+
+        // Same logical request, delivery text variant only.
+        client.create_request(
+            &hospital,
+            &BloodType::APositive,
+            &400,
+            &UrgencyLevel::High,
+            &required_by,
+            &String::from_str(&env, "ward 7b, icu"),
         );
     }
 
