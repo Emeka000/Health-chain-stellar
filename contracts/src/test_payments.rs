@@ -305,6 +305,74 @@ fn escrow_fails_release_without_conditions() {
     assert!(!escrow.can_release(200, None));
 }
 
+#[test]
+fn escrow_release_integration_rejects_premature_and_unauthorized_attempts() {
+    let env = Env::default();
+    let authorized_approver = Address::generate(&env);
+    let unauthorized_approver = Address::generate(&env);
+
+    let payment = Payment {
+        id: 42,
+        request_id: 101,
+        payer: Address::generate(&env),
+        payee: Address::generate(&env),
+        amount: 5_000,
+        asset: Address::generate(&env),
+        status: PaymentStatus::Escrowed,
+        escrow_released_at: None,
+    };
+
+    let escrow = EscrowAccount {
+        payment_id: payment.id,
+        locked_amount: payment.amount,
+        release_conditions: ReleaseConditions {
+            medical_records_verified: true,
+            min_timestamp: 1_000,
+            authorized_approver: Some(authorized_approver.clone()),
+        },
+    };
+
+    // Premature release attempt (before min_timestamp) must fail even if approver is correct.
+    assert!(!escrow.can_release(999, Some(&authorized_approver)));
+
+    // Unauthorized release attempt at/after min_timestamp must fail.
+    assert!(!escrow.can_release(1_000, Some(&unauthorized_approver)));
+
+    // Missing required approver at/after min_timestamp must fail.
+    assert!(!escrow.can_release(1_000, None));
+}
+
+#[test]
+fn escrow_release_integration_allows_release_only_when_all_guards_pass() {
+    let env = Env::default();
+    let authorized_approver = Address::generate(&env);
+
+    let payment = Payment {
+        id: 43,
+        request_id: 102,
+        payer: Address::generate(&env),
+        payee: Address::generate(&env),
+        amount: 7_500,
+        asset: Address::generate(&env),
+        status: PaymentStatus::Escrowed,
+        escrow_released_at: None,
+    };
+
+    let escrow = EscrowAccount {
+        payment_id: payment.id,
+        locked_amount: payment.amount,
+        release_conditions: ReleaseConditions {
+            medical_records_verified: true,
+            min_timestamp: 2_000,
+            authorized_approver: Some(authorized_approver.clone()),
+        },
+    };
+
+    assert!(!escrow.can_release(1_999, Some(&authorized_approver)));
+    assert!(escrow.can_release(2_000, Some(&authorized_approver)));
+    assert!(escrow.can_release(2_001, Some(&authorized_approver)));
+}
+
 // ======================================================
 // FeeStructure Tests
 // ======================================================
