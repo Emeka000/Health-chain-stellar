@@ -9,10 +9,12 @@ import {
   Delete,
   Param,
   Patch,
+  UseInterceptors,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 
 import { AuthService } from './auth.service';
+import { IdempotencyInterceptor } from '../common/idempotency/idempotency.interceptor';
 import { Public } from './decorators/public.decorator';
 import { RequirePermissions } from './decorators/require-permissions.decorator';
 import {
@@ -31,12 +33,14 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Public()
+  @UseInterceptors(IdempotencyInterceptor)
   @Post('register')
   async register(@Body() registerDto: RegisterDto) {
     return this.authService.register(registerDto);
   }
 
   @Public()
+  @UseInterceptors(IdempotencyInterceptor)
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(@Body() loginDto: LoginDto) {
@@ -44,12 +48,14 @@ export class AuthController {
   }
 
   @Public()
+  @UseInterceptors(IdempotencyInterceptor)
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   async refresh(@Body() refreshTokenDto: RefreshTokenDto) {
     return this.authService.refreshToken(refreshTokenDto.refreshToken);
   }
 
+  @UseInterceptors(IdempotencyInterceptor)
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   async logout(@Request() req: any) {
@@ -73,6 +79,7 @@ export class AuthController {
     return this.authService.revokeSession(req.user.id, sessionId);
   }
 
+  @UseInterceptors(IdempotencyInterceptor)
   @Post('change-password')
   @HttpCode(HttpStatus.OK)
   async changePassword(@Request() req: any, @Body() dto: ChangePasswordDto) {
@@ -84,6 +91,7 @@ export class AuthController {
   }
 
   @RequirePermissions(Permission.MANAGE_USERS)
+  @UseInterceptors(IdempotencyInterceptor)
   @Patch('unlock')
   @HttpCode(HttpStatus.OK)
   async unlockAccount(@Body() dto: UnlockAccountDto) {
