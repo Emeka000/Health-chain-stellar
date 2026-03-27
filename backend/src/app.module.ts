@@ -20,6 +20,7 @@ import { BlockchainModule } from './blockchain/blockchain.module';
 import { BloodRequestsModule } from './blood-requests/blood-requests.module';
 import { BloodUnitsModule } from './blood-units/blood-units.module';
 import { DispatchModule } from './dispatch/dispatch.module';
+import { EventsModule } from './events/events.module';
 import { HospitalsModule } from './hospitals/hospitals.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { MapsModule } from './maps/maps.module';
@@ -113,6 +114,7 @@ import type Redis from 'ioredis';
     OrganizationsModule,
     BloodRequestsModule,
     UserActivityModule,
+    EventsModule,
   ],
   controllers: [AppController],
   providers: [
