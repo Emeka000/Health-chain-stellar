@@ -223,4 +223,104 @@ export class SorobanService {
     const delay = Math.min(exponentialDelay + jitter, this.MAX_DELAY);
     return Math.floor(delay);
   }
+
+  /**
+   * Replay failed jobs from DLQ with safety guardrails.
+   * Admin-only operation with batch limits and dry-run support.
+   *
+   * @param options - Replay options (dryRun, batchSize, offset)
+   * @returns Replay result with metrics
+   */
+  async replayDlqJobs(options: {
+    dryRun?: boolean;
+    batchSize?: number;
+    offset?: number;
+  }): Promise<{
+    dryRun: boolean;
+    totalInspected: number;
+    replayable: number;
+    replayed: number;
+    skipped: number;
+    errors: Array<{ jobId: string; reason: string }>;
+  }> {
+    const { dryRun = false, batchSize = 10, offset = 0 } = options;
+
+    this.logger.log(
+      `[DLQ Replay] Starting ${dryRun ? 'DRY RUN' : 'LIVE'} replay: batchSize=${batchSize}, offset=${offset}`,
+    );
+
+    // Fetch failed jobs from DLQ
+    const failedJobs = await this.dlq.getJobs(['failed'], offset, offset + batchSize - 1);
+
+    const result = {
+      dryRun,
+      totalInspected: failedJobs.length,
+      replayable: 0,
+      replayed: 0,
+      skipped: 0,
+      errors: [] as Array<{ jobId: string; reason: string }>,
+    };
+
+    for (const job of failedJobs) {
+      const jobId = String(job.id);
+
+      // Check if job is replayable (has valid data)
+      if (!job.data || !job.data.contractMethod || !job.data.idempotencyKey) {
+        result.skipped++;
+        result.errors.push({
+          jobId,
+          reason: 'Invalid job data - missing required fields',
+        });
+        continue;
+      }
+
+      result.replayable++;
+
+      if (dryRun) {
+        this.logger.log(
+          `[DLQ Replay DRY RUN] Would replay job=${jobId} method=${job.data.contractMethod}`,
+        );
+        continue;
+      }
+
+      try {
+        // Clear old idempotency key to allow resubmission
+        await this.idempotencyService.clearIdempotencyKey(
+          job.data.idempotencyKey,
+        );
+
+        // Resubmit to main queue
+        await this.submitTransaction({
+          ...job.data,
+          metadata: {
+            ...job.data.metadata,
+            replayedFrom: jobId,
+            replayedAt: new Date().toISOString(),
+          },
+        });
+
+        // Remove from DLQ after successful resubmission
+        await job.remove();
+
+        result.replayed++;
+        this.logger.log(
+          `[DLQ Replay] Successfully replayed job=${jobId} method=${job.data.contractMethod}`,
+        );
+      } catch (error) {
+        result.errors.push({
+          jobId,
+          reason: error instanceof Error ? error.message : 'Unknown error',
+        });
+        this.logger.error(
+          `[DLQ Replay] Failed to replay job=${jobId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `[DLQ Replay] Complete: inspected=${result.totalInspected}, replayable=${result.replayable}, replayed=${result.replayed}, skipped=${result.skipped}, errors=${result.errors.length}`,
+    );
+
+    return result;
+  }
 }

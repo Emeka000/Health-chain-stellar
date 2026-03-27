@@ -38,6 +38,11 @@ export class IdempotencyService {
     return exists === 1;
   }
 
+  async clearIdempotencyKey(key: string): Promise<void> {
+    const fullKey = `${this.IDEMPOTENCY_PREFIX}${key}`;
+    await this.redis.del(fullKey);
+  }
+
   async onModuleDestroy() {
     await this.redis.quit();
   }
