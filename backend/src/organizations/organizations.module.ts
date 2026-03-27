@@ -11,6 +11,7 @@ import { OrganizationEntity } from './entities/organization.entity';
 import { OrganizationsController } from './organizations.controller';
 import { OrganizationsService } from './organizations.service';
 import { OrganizationReviewsService } from './services/organization-reviews.service';
+import { OrgStatsModule } from './stats/org-stats.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { OrganizationReviewsService } from './services/organization-reviews.serv
     ]),
     BlockchainModule,
     NotificationsModule,
+    OrgStatsModule,
   ],
   controllers: [OrganizationsController],
   providers: [OrganizationsService, OrganizationReviewsService],
