@@ -1,11 +1,13 @@
+import { NotFoundException, ConflictException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+
 import { Repository } from 'typeorm';
-import { RidersService } from './riders.service';
+
 import { RiderEntity } from './entities/rider.entity';
 import { RiderStatus } from './enums/rider-status.enum';
 import { VehicleType } from './enums/vehicle-type.enum';
-import { NotFoundException, ConflictException } from '@nestjs/common';
+import { RidersService } from './riders.service';
 
 describe('RidersService', () => {
   let service: RidersService;
@@ -31,7 +33,9 @@ describe('RidersService', () => {
     }).compile();
 
     service = module.get<RidersService>(RidersService);
-    repository = module.get<Repository<RiderEntity>>(getRepositoryToken(RiderEntity));
+    repository = module.get<Repository<RiderEntity>>(
+      getRepositoryToken(RiderEntity),
+    );
     jest.clearAllMocks();
   });
 
@@ -50,8 +54,15 @@ describe('RidersService', () => {
 
     it('should register a new rider', async () => {
       mockRiderRepository.findOne.mockResolvedValue(null);
-      mockRiderRepository.create.mockReturnValue({ ...registerDto, userId: 'user-1' });
-      mockRiderRepository.save.mockResolvedValue({ id: 'rider-1', ...registerDto, userId: 'user-1' });
+      mockRiderRepository.create.mockReturnValue({
+        ...registerDto,
+        userId: 'user-1',
+      });
+      mockRiderRepository.save.mockResolvedValue({
+        id: 'rider-1',
+        ...registerDto,
+        userId: 'user-1',
+      });
 
       const result = await service.register('user-1', registerDto);
 
@@ -62,15 +73,25 @@ describe('RidersService', () => {
     it('should throw ConflictException if rider already exists', async () => {
       mockRiderRepository.findOne.mockResolvedValue({ id: 'rider-1' });
 
-      await expect(service.register('user-1', registerDto)).rejects.toThrow(ConflictException);
+      await expect(service.register('user-1', registerDto)).rejects.toThrow(
+        ConflictException,
+      );
     });
   });
 
   describe('verify', () => {
     it('should verify a rider', async () => {
-      const rider = { id: 'rider-1', isVerified: false, status: RiderStatus.OFFLINE };
+      const rider = {
+        id: 'rider-1',
+        isVerified: false,
+        status: RiderStatus.OFFLINE,
+      };
       mockRiderRepository.findOne.mockResolvedValue(rider);
-      mockRiderRepository.save.mockResolvedValue({ ...rider, isVerified: true, status: RiderStatus.AVAILABLE });
+      mockRiderRepository.save.mockResolvedValue({
+        ...rider,
+        isVerified: true,
+        status: RiderStatus.AVAILABLE,
+      });
 
       const result = await service.verify('rider-1');
 
@@ -81,7 +102,9 @@ describe('RidersService', () => {
     it('should throw NotFoundException if rider not found', async () => {
       mockRiderRepository.findOne.mockResolvedValue(null);
 
-      await expect(service.verify('non-existent')).rejects.toThrow(NotFoundException);
+      await expect(service.verify('non-existent')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
@@ -129,9 +152,15 @@ describe('RidersService', () => {
     it('should update rider status', async () => {
       const rider = { id: 'rider-1', status: RiderStatus.OFFLINE };
       mockRiderRepository.findOne.mockResolvedValue(rider);
-      mockRiderRepository.save.mockResolvedValue({ ...rider, status: RiderStatus.AVAILABLE });
+      mockRiderRepository.save.mockResolvedValue({
+        ...rider,
+        status: RiderStatus.AVAILABLE,
+      });
 
-      const result = await service.updateStatus('rider-1', RiderStatus.AVAILABLE);
+      const result = await service.updateStatus(
+        'rider-1',
+        RiderStatus.AVAILABLE,
+      );
 
       expect(result.data.status).toBe(RiderStatus.AVAILABLE);
     });
@@ -141,7 +170,11 @@ describe('RidersService', () => {
     it('should update rider location', async () => {
       const rider = { id: 'rider-1', latitude: 0, longitude: 0 };
       mockRiderRepository.findOne.mockResolvedValue(rider);
-      mockRiderRepository.save.mockResolvedValue({ ...rider, latitude: 1.23, longitude: 4.56 });
+      mockRiderRepository.save.mockResolvedValue({
+        ...rider,
+        latitude: 1.23,
+        longitude: 4.56,
+      });
 
       const result = await service.updateLocation('rider-1', 1.23, 4.56);
 
@@ -167,9 +200,27 @@ describe('RidersService', () => {
   describe('getNearbyRiders', () => {
     it('should filter riders by distance', async () => {
       const riders = [
-        { id: 'near', latitude: 1.0, longitude: 1.0, status: RiderStatus.AVAILABLE, isVerified: true },
-        { id: 'far', latitude: 2.0, longitude: 2.0, status: RiderStatus.AVAILABLE, isVerified: true },
-        { id: 'no-coords', latitude: null, longitude: null, status: RiderStatus.AVAILABLE, isVerified: true },
+        {
+          id: 'near',
+          latitude: 1.0,
+          longitude: 1.0,
+          status: RiderStatus.AVAILABLE,
+          isVerified: true,
+        },
+        {
+          id: 'far',
+          latitude: 2.0,
+          longitude: 2.0,
+          status: RiderStatus.AVAILABLE,
+          isVerified: true,
+        },
+        {
+          id: 'no-coords',
+          latitude: null,
+          longitude: null,
+          status: RiderStatus.AVAILABLE,
+          isVerified: true,
+        },
       ];
       mockRiderRepository.find.mockResolvedValue(riders);
 

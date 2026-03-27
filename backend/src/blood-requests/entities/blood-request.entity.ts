@@ -8,10 +8,11 @@ import {
   Index,
 } from 'typeorm';
 
-import { BloodRequestStatus } from '../enums/blood-request-status.enum';
-import { BloodRequestItemEntity } from './blood-request-item.entity';
-import { BloodType } from '../../blood-units/enums/blood-type.enum';
 import { BloodComponent } from '../../blood-units/enums/blood-component.enum';
+import { BloodType } from '../../blood-units/enums/blood-type.enum';
+import { BloodRequestStatus } from '../enums/blood-request-status.enum';
+
+import { BloodRequestItemEntity } from './blood-request-item.entity';
 
 export enum Urgency {
   CRITICAL = 'CRITICAL', // < 2 hours
@@ -220,9 +221,10 @@ export class BloodRequestEntity {
    */
   getFulfillmentProgress(): FulfillmentProgress {
     const remainingMl = Math.max(0, this.quantityMl - this.fulfilledQuantityMl);
-    const percentage = this.quantityMl > 0
-      ? Math.min(100, (this.fulfilledQuantityMl / this.quantityMl) * 100)
-      : 0;
+    const percentage =
+      this.quantityMl > 0
+        ? Math.min(100, (this.fulfilledQuantityMl / this.quantityMl) * 100)
+        : 0;
 
     return {
       requestedMl: this.quantityMl,
@@ -238,7 +240,7 @@ export class BloodRequestEntity {
   addFulfilledQuantity(quantityMl: number): void {
     this.fulfilledQuantityMl = Math.min(
       this.quantityMl,
-      this.fulfilledQuantityMl + quantityMl
+      this.fulfilledQuantityMl + quantityMl,
     );
   }
 
@@ -259,7 +261,7 @@ export class BloodRequestEntity {
    */
   removeUnit(unitId: string): void {
     if (this.assignedUnits) {
-      this.assignedUnits = this.assignedUnits.filter(id => id !== unitId);
+      this.assignedUnits = this.assignedUnits.filter((id) => id !== unitId);
     }
   }
 

@@ -1,15 +1,16 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { InjectRepository } from '@nestjs/typeorm';
+
 import { LessThan, Repository } from 'typeorm';
 
-import { LocationHistoryEntity } from './entities/location-history.entity';
 import {
   BatchSaveLocationsDto,
   LocationQueryDto,
   RouteQueryDto,
   SaveLocationDto,
 } from './dto/location-history.dto';
+import { LocationHistoryEntity } from './entities/location-history.entity';
 
 export interface LatLng {
   latitude: number;
@@ -63,7 +64,10 @@ export class LocationHistoryService {
 
   // ── Write operations ────────────────────────────────────────────────
 
-  async saveLocation(riderId: string, dto: SaveLocationDto): Promise<LocationHistoryEntity> {
+  async saveLocation(
+    riderId: string,
+    dto: SaveLocationDto,
+  ): Promise<LocationHistoryEntity> {
     const entity = this.locationRepository.create({
       riderId,
       orderId: dto.orderId ?? null,
@@ -131,14 +135,19 @@ export class LocationHistoryService {
         select: ['id'],
       });
       if (!exists) {
-        throw new NotFoundException(`No location history found for delivery ${orderId}`);
+        throw new NotFoundException(
+          `No location history found for delivery ${orderId}`,
+        );
       }
     }
 
     return results;
   }
 
-  async reconstructRoute(orderId: string, query: RouteQueryDto = {}): Promise<RoutePoint[]> {
+  async reconstructRoute(
+    orderId: string,
+    query: RouteQueryDto = {},
+  ): Promise<RoutePoint[]> {
     const points = await this.getLocationsByDelivery(orderId, query);
     const epsilon = query.epsilon ?? DEFAULT_DP_EPSILON;
 
@@ -151,7 +160,10 @@ export class LocationHistoryService {
     return douglasPeucker(routePoints, epsilon);
   }
 
-  async getPlaybackData(orderId: string, query: LocationQueryDto = {}): Promise<{
+  async getPlaybackData(
+    orderId: string,
+    query: LocationQueryDto = {},
+  ): Promise<{
     orderId: string;
     points: PlaybackPoint[];
     totalDistanceKm: number;
@@ -204,7 +216,10 @@ export class LocationHistoryService {
     });
 
     const totalDistanceKm = computeTotalDistance(
-      points.map((p) => ({ latitude: Number(p.latitude), longitude: Number(p.longitude) })),
+      points.map((p) => ({
+        latitude: Number(p.latitude),
+        longitude: Number(p.longitude),
+      })),
     );
     const durationSeconds =
       points.length >= 2
@@ -216,7 +231,10 @@ export class LocationHistoryService {
     return { orderId, points: playback, totalDistanceKm, durationSeconds };
   }
 
-  async getVisualizationData(orderId: string, query: RouteQueryDto = {}): Promise<GeoJsonFeature> {
+  async getVisualizationData(
+    orderId: string,
+    query: RouteQueryDto = {},
+  ): Promise<GeoJsonFeature> {
     const points = await this.reconstructRoute(orderId, query);
 
     const totalDistanceKm = computeTotalDistance(points);
@@ -232,13 +250,17 @@ export class LocationHistoryService {
         riderId: await this.getRiderIdForOrder(orderId),
         pointCount: points.length,
         startTime: points.length > 0 ? points[0].recordedAt : null,
-        endTime: points.length > 0 ? points[points.length - 1].recordedAt : null,
+        endTime:
+          points.length > 0 ? points[points.length - 1].recordedAt : null,
         totalDistanceKm,
       },
     };
   }
 
-  async getLocationsByRider(riderId: string, query: LocationQueryDto = {}): Promise<LocationHistoryEntity[]> {
+  async getLocationsByRider(
+    riderId: string,
+    query: LocationQueryDto = {},
+  ): Promise<LocationHistoryEntity[]> {
     const qb = this.locationRepository
       .createQueryBuilder('loc')
       .where('loc.rider_id = :riderId', { riderId })
@@ -342,7 +364,10 @@ export function computeTotalDistance(points: LatLng[]): number {
  * Reduces the number of route points while preserving shape.
  * epsilon is in degrees (1° ≈ 111 km; 0.0001° ≈ 11 m).
  */
-export function douglasPeucker<T extends LatLng>(points: T[], epsilon: number): T[] {
+export function douglasPeucker<T extends LatLng>(
+  points: T[],
+  epsilon: number,
+): T[] {
   if (points.length <= 2) return points;
 
   let maxDist = 0;
@@ -374,16 +399,21 @@ function perpendicularDistanceDeg(p: LatLng, a: LatLng, b: LatLng): number {
   const dy = b.latitude - a.latitude;
 
   if (dx === 0 && dy === 0) {
-    return Math.sqrt((p.longitude - a.longitude) ** 2 + (p.latitude - a.latitude) ** 2);
+    return Math.sqrt(
+      (p.longitude - a.longitude) ** 2 + (p.latitude - a.latitude) ** 2,
+    );
   }
 
-  const t = ((p.longitude - a.longitude) * dx + (p.latitude - a.latitude) * dy) /
+  const t =
+    ((p.longitude - a.longitude) * dx + (p.latitude - a.latitude) * dy) /
     (dx * dx + dy * dy);
   const tClamped = Math.max(0, Math.min(1, t));
   const closestX = a.longitude + tClamped * dx;
   const closestY = a.latitude + tClamped * dy;
 
-  return Math.sqrt((p.longitude - closestX) ** 2 + (p.latitude - closestY) ** 2);
+  return Math.sqrt(
+    (p.longitude - closestX) ** 2 + (p.latitude - closestY) ** 2,
+  );
 }
 
 function toRad(deg: number): number {

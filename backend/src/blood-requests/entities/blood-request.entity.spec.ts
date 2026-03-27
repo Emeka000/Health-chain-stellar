@@ -1,7 +1,8 @@
-import { BloodRequestEntity, Urgency } from './blood-request.entity';
-import { BloodRequestStatus } from '../enums/blood-request-status.enum';
-import { BloodType } from '../../blood-units/enums/blood-type.enum';
 import { BloodComponent } from '../../blood-units/enums/blood-component.enum';
+import { BloodType } from '../../blood-units/enums/blood-type.enum';
+import { BloodRequestStatus } from '../enums/blood-request-status.enum';
+
+import { BloodRequestEntity, Urgency } from './blood-request.entity';
 
 describe('BloodRequestEntity', () => {
   let bloodRequest: BloodRequestEntity;
@@ -16,7 +17,8 @@ describe('BloodRequestEntity', () => {
     bloodRequest.quantityMl = 500;
     bloodRequest.urgency = Urgency.ROUTINE;
     bloodRequest.createdTimestamp = Math.floor(Date.now() / 1000);
-    bloodRequest.requiredByTimestamp = bloodRequest.createdTimestamp + 24 * 60 * 60; // 24 hours later
+    bloodRequest.requiredByTimestamp =
+      bloodRequest.createdTimestamp + 24 * 60 * 60; // 24 hours later
     bloodRequest.status = BloodRequestStatus.PENDING;
     bloodRequest.assignedUnits = [];
     bloodRequest.fulfilledQuantityMl = 0;
@@ -81,22 +83,30 @@ describe('BloodRequestEntity', () => {
   describe('getUrgencyLevel', () => {
     it('should return CRITICAL when less than 2 hours remaining', () => {
       const currentTimestamp = bloodRequest.requiredByTimestamp - 1 * 60 * 60; // 1 hour remaining
-      expect(bloodRequest.getUrgencyLevel(currentTimestamp)).toBe(Urgency.CRITICAL);
+      expect(bloodRequest.getUrgencyLevel(currentTimestamp)).toBe(
+        Urgency.CRITICAL,
+      );
     });
 
     it('should return URGENT when 2-6 hours remaining', () => {
       const currentTimestamp = bloodRequest.requiredByTimestamp - 4 * 60 * 60; // 4 hours remaining
-      expect(bloodRequest.getUrgencyLevel(currentTimestamp)).toBe(Urgency.URGENT);
+      expect(bloodRequest.getUrgencyLevel(currentTimestamp)).toBe(
+        Urgency.URGENT,
+      );
     });
 
     it('should return ROUTINE when 6-24 hours remaining', () => {
       const currentTimestamp = bloodRequest.requiredByTimestamp - 12 * 60 * 60; // 12 hours remaining
-      expect(bloodRequest.getUrgencyLevel(currentTimestamp)).toBe(Urgency.ROUTINE);
+      expect(bloodRequest.getUrgencyLevel(currentTimestamp)).toBe(
+        Urgency.ROUTINE,
+      );
     });
 
     it('should return SCHEDULED when more than 24 hours remaining', () => {
       const currentTimestamp = bloodRequest.requiredByTimestamp - 48 * 60 * 60; // 48 hours remaining
-      expect(bloodRequest.getUrgencyLevel(currentTimestamp)).toBe(Urgency.SCHEDULED);
+      expect(bloodRequest.getUrgencyLevel(currentTimestamp)).toBe(
+        Urgency.SCHEDULED,
+      );
     });
   });
 
@@ -125,7 +135,9 @@ describe('BloodRequestEntity', () => {
       bloodRequest.requiredByTimestamp = bloodRequest.createdTimestamp - 1000;
       const result = bloodRequest.validate();
       expect(result.isValid).toBe(false);
-      expect(result.errors).toContain('Required by timestamp must be after creation timestamp');
+      expect(result.errors).toContain(
+        'Required by timestamp must be after creation timestamp',
+      );
     });
 
     it('should return invalid for invalid blood type', () => {
@@ -167,7 +179,9 @@ describe('BloodRequestEntity', () => {
       bloodRequest.fulfilledQuantityMl = 600;
       const result = bloodRequest.validate();
       expect(result.isValid).toBe(false);
-      expect(result.errors).toContain('Fulfilled quantity cannot exceed requested quantity');
+      expect(result.errors).toContain(
+        'Fulfilled quantity cannot exceed requested quantity',
+      );
     });
   });
 
@@ -305,14 +319,20 @@ describe('BloodRequestEntity', () => {
       const currentTimestamp = bloodRequest.createdTimestamp + 12 * 60 * 60;
       const summary = bloodRequest.getSummary(currentTimestamp);
       expect(summary).toHaveProperty('id', bloodRequest.id);
-      expect(summary).toHaveProperty('requestNumber', bloodRequest.requestNumber);
+      expect(summary).toHaveProperty(
+        'requestNumber',
+        bloodRequest.requestNumber,
+      );
       expect(summary).toHaveProperty('hospitalId', bloodRequest.hospitalId);
       expect(summary).toHaveProperty('bloodType', bloodRequest.bloodType);
       expect(summary).toHaveProperty('component', bloodRequest.component);
       expect(summary).toHaveProperty('quantityMl', bloodRequest.quantityMl);
       expect(summary).toHaveProperty('urgency', bloodRequest.urgency);
       expect(summary).toHaveProperty('status', bloodRequest.status);
-      expect(summary).toHaveProperty('requiredByTimestamp', bloodRequest.requiredByTimestamp);
+      expect(summary).toHaveProperty(
+        'requiredByTimestamp',
+        bloodRequest.requiredByTimestamp,
+      );
       expect(summary).toHaveProperty('timeRemainingSeconds');
       expect(summary).toHaveProperty('isOverdue');
       expect(summary).toHaveProperty('isFulfilled');
@@ -346,15 +366,33 @@ describe('BloodRequestEntity', () => {
       expect(json).toHaveProperty('component', bloodRequest.component);
       expect(json).toHaveProperty('quantityMl', bloodRequest.quantityMl);
       expect(json).toHaveProperty('urgency', bloodRequest.urgency);
-      expect(json).toHaveProperty('createdTimestamp', bloodRequest.createdTimestamp);
-      expect(json).toHaveProperty('requiredByTimestamp', bloodRequest.requiredByTimestamp);
+      expect(json).toHaveProperty(
+        'createdTimestamp',
+        bloodRequest.createdTimestamp,
+      );
+      expect(json).toHaveProperty(
+        'requiredByTimestamp',
+        bloodRequest.requiredByTimestamp,
+      );
       expect(json).toHaveProperty('status', bloodRequest.status);
       expect(json).toHaveProperty('assignedUnits', bloodRequest.assignedUnits);
-      expect(json).toHaveProperty('fulfilledQuantityMl', bloodRequest.fulfilledQuantityMl);
-      expect(json).toHaveProperty('deliveryAddress', bloodRequest.deliveryAddress);
+      expect(json).toHaveProperty(
+        'fulfilledQuantityMl',
+        bloodRequest.fulfilledQuantityMl,
+      );
+      expect(json).toHaveProperty(
+        'deliveryAddress',
+        bloodRequest.deliveryAddress,
+      );
       expect(json).toHaveProperty('notes', bloodRequest.notes);
-      expect(json).toHaveProperty('blockchainTxHash', bloodRequest.blockchainTxHash);
-      expect(json).toHaveProperty('createdByUserId', bloodRequest.createdByUserId);
+      expect(json).toHaveProperty(
+        'blockchainTxHash',
+        bloodRequest.blockchainTxHash,
+      );
+      expect(json).toHaveProperty(
+        'createdByUserId',
+        bloodRequest.createdByUserId,
+      );
       expect(json).toHaveProperty('createdAt');
       expect(json).toHaveProperty('updatedAt');
     });

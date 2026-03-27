@@ -36,13 +36,21 @@ export class AlertPreferenceEntity {
   @Column({ name: 'enable_expired_alerts', type: 'boolean', default: true })
   enableExpiredAlerts: boolean;
 
-  @Column({ name: 'enable_email_notifications', type: 'boolean', default: true })
+  @Column({
+    name: 'enable_email_notifications',
+    type: 'boolean',
+    default: true,
+  })
   enableEmailNotifications: boolean;
 
   @Column({ name: 'enable_sms_notifications', type: 'boolean', default: false })
   enableSmsNotifications: boolean;
 
-  @Column({ name: 'enable_in_app_notifications', type: 'boolean', default: true })
+  @Column({
+    name: 'enable_in_app_notifications',
+    type: 'boolean',
+    default: true,
+  })
   enableInAppNotifications: boolean;
 
   @Column({ name: 'notification_emails', type: 'simple-array', nullable: true })

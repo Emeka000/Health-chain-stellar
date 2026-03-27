@@ -1,10 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+
 import { Repository, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
 
-import { BloodUnitEntity } from '../../blood-units/entities/blood-unit.entity';
-import { BloodRequestEntity } from '../../blood-requests/entities/blood-request.entity';
 import { BloodRequestItemEntity } from '../../blood-requests/entities/blood-request-item.entity';
+import { BloodRequestEntity } from '../../blood-requests/entities/blood-request.entity';
+import { BloodUnitEntity } from '../../blood-units/entities/blood-unit.entity';
 import { InventoryStockEntity } from '../../inventory/entities/inventory-stock.entity';
 
 export interface BloodTypeCompatibility {
@@ -118,10 +119,7 @@ export class BloodMatchingService {
     );
 
     // Score and rank matches
-    const scoredMatches = await this.scoreMatches(
-      availableUnits,
-      request,
-    );
+    const scoredMatches = await this.scoreMatches(availableUnits, request);
 
     // Sort by score (highest first)
     scoredMatches.sort((a, b) => b.matchScore - a.matchScore);
@@ -152,9 +150,7 @@ export class BloodMatchingService {
   async findMatchesForMultipleRequests(
     requests: MatchingRequest[],
   ): Promise<MatchingResponse[]> {
-    this.logger.log(
-      `Finding matches for ${requests.length} requests`,
-    );
+    this.logger.log(`Finding matches for ${requests.length} requests`);
 
     const responses: MatchingResponse[] = [];
 

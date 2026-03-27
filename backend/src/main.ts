@@ -5,8 +5,8 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 
 import { AppModule } from './app.module';
 import { AppErrorFilter } from './common/filters/irrecoverable-error.filter';
-import { ThrottlerExceptionFilter } from './throttler/throttler-exception.filter';
 import { validateEnv } from './config/validate-env';
+import { ThrottlerExceptionFilter } from './throttler/throttler-exception.filter';
 
 async function bootstrap() {
   // Validate env before NestJS initialises any module.

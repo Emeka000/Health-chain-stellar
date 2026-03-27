@@ -1,5 +1,13 @@
-import { IsNumber, IsArray, IsOptional, IsBoolean, IsEnum, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
+import {
+  IsNumber,
+  IsArray,
+  IsOptional,
+  IsBoolean,
+  IsEnum,
+  Min,
+  Max,
+} from 'class-validator';
 
 export class WaypointDto {
   @IsNumber()
@@ -16,7 +24,7 @@ export class WaypointDto {
   @IsOptional()
   @IsNumber()
   @Type(() => Number)
- 停留时间秒?: number; // Dwell time in seconds
+  停留时间秒?: number; // Dwell time in seconds
 }
 
 export class RouteRequestDto {

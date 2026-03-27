@@ -34,9 +34,7 @@ describe('AppController (e2e)', () => {
     });
 
     it('should return 404 for routes without v1 prefix', () => {
-      return request(app.getHttpServer())
-        .get('/blood-requests')
-        .expect(404);
+      return request(app.getHttpServer()).get('/blood-requests').expect(404);
     });
 
     it('should return 200 for versioned auth endpoint', () => {

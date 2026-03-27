@@ -18,7 +18,9 @@ describe('validateEnv', () => {
   let stderrSpy: jest.SpyInstance;
 
   beforeEach(() => {
-    stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    stderrSpy = jest
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(() => true);
   });
 
   afterEach(() => {
@@ -56,7 +58,9 @@ describe('validateEnv', () => {
 
     it('accepts all valid NODE_ENV values', () => {
       for (const env of ['development', 'staging', 'production', 'test']) {
-        expect(() => validateEnv({ ...validConfig, NODE_ENV: env })).not.toThrow();
+        expect(() =>
+          validateEnv({ ...validConfig, NODE_ENV: env }),
+        ).not.toThrow();
       }
     });
   });
@@ -104,7 +108,12 @@ describe('validateEnv', () => {
     });
 
     it('reports all missing fields in a single error report', () => {
-      const { DATABASE_NAME: _a, JWT_SECRET: _b, MAPS_API_KEY: _c, ...rest } = validConfig;
+      const {
+        DATABASE_NAME: _a,
+        JWT_SECRET: _b,
+        MAPS_API_KEY: _c,
+        ...rest
+      } = validConfig;
       expect(() => validateEnv(rest)).toThrow();
       const output = stderrSpy.mock.calls[0][0] as string;
       expect(output).toContain('DATABASE_NAME');
@@ -115,7 +124,9 @@ describe('validateEnv', () => {
 
   describe('invalid formats and types', () => {
     it('throws when PORT is not a number', () => {
-      expect(() => validateEnv({ ...validConfig, PORT: 'not-a-port' })).toThrow();
+      expect(() =>
+        validateEnv({ ...validConfig, PORT: 'not-a-port' }),
+      ).toThrow();
       expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('PORT'));
     });
 
@@ -124,8 +135,12 @@ describe('validateEnv', () => {
     });
 
     it('throws when NODE_ENV is an invalid value', () => {
-      expect(() => validateEnv({ ...validConfig, NODE_ENV: 'local' })).toThrow();
-      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('NODE_ENV'));
+      expect(() =>
+        validateEnv({ ...validConfig, NODE_ENV: 'local' }),
+      ).toThrow();
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining('NODE_ENV'),
+      );
     });
 
     it('throws when SOROBAN_RPC_URL is not a valid URL', () => {

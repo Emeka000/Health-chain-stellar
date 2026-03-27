@@ -8,6 +8,8 @@ export class AddVersionToOrders1790000000000 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`ALTER TABLE "orders" DROP COLUMN IF EXISTS "version"`);
+    await queryRunner.query(
+      `ALTER TABLE "orders" DROP COLUMN IF EXISTS "version"`,
+    );
   }
 }

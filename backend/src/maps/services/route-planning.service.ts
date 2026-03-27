@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+
 import { Redis } from 'ioredis';
-import { Inject } from '@nestjs/common';
+
 import { REDIS_CLIENT } from '../../redis/redis.constants';
 import {
   RouteRequestDto,
@@ -49,9 +50,7 @@ export class RoutePlanningService {
     }
 
     // Build Google Maps Directions API URL
-    const url = new URL(
-      'https://maps.googleapis.com/maps/api/directions/json',
-    );
+    const url = new URL('https://maps.googleapis.com/maps/api/directions/json');
 
     const origin = `${originLat},${originLng}`;
     const destination = `${destLat},${destLng}`;
@@ -101,7 +100,7 @@ export class RoutePlanningService {
       throw new Error(`Directions API request failed: ${response.status}`);
     }
 
-    const body = (await response.json()) as any;
+    const body = await response.json();
 
     if (body.status !== 'OK') {
       throw new Error(`Directions API error: ${body.status}`);
@@ -172,9 +171,7 @@ export class RoutePlanningService {
     destLng: number,
     departureTime?: Date,
   ): Promise<ETAResponse> {
-    const url = new URL(
-      'https://maps.googleapis.com/maps/api/directions/json',
-    );
+    const url = new URL('https://maps.googleapis.com/maps/api/directions/json');
 
     const origin = `${originLat},${originLng}`;
     const destination = `${destLat},${destLng}`;
@@ -200,7 +197,7 @@ export class RoutePlanningService {
       throw new Error(`Directions API request failed: ${response.status}`);
     }
 
-    const body = (await response.json()) as any;
+    const body = await response.json();
 
     if (body.status !== 'OK') {
       throw new Error(`Directions API error: ${body.status}`);
@@ -431,9 +428,8 @@ export class RoutePlanningService {
       travelMode,
     } = routeDto;
 
-    const waypointStr = waypoints
-      ?.map((wp) => `${wp.latitude},${wp.longitude}`)
-      .join('|') || '';
+    const waypointStr =
+      waypoints?.map((wp) => `${wp.latitude},${wp.longitude}`).join('|') || '';
 
     return `route:${originLat},${originLng}:${destLat},${destLng}:${waypointStr}:${avoidTolls}:${avoidHighways}:${optimizeWaypoints}:${travelMode}`;
   }
@@ -474,7 +470,9 @@ export class RoutePlanningService {
   /**
    * Decode polyline string to coordinates
    */
-  decodePolyline(encoded: string): Array<{ latitude: number; longitude: number }> {
+  decodePolyline(
+    encoded: string,
+  ): Array<{ latitude: number; longitude: number }> {
     const points: Array<{ latitude: number; longitude: number }> = [];
     let index = 0;
     let lat = 0;

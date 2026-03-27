@@ -1,3 +1,5 @@
+import { createHmac, timingSafeEqual } from 'crypto';
+
 import {
   Controller,
   Get,
@@ -13,13 +15,13 @@ import {
   ConflictException,
   Req,
 } from '@nestjs/common';
-import { Request } from 'express';
-import { createHmac, timingSafeEqual } from 'crypto';
 
+import { Request } from 'express';
+
+import { BlockchainCallbackDto } from '../dto/blockchain-callback.dto';
 import { AdminGuard } from '../guards/admin.guard';
 import { QueueMetricsService } from '../services/queue-metrics.service';
 import { SorobanService } from '../services/soroban.service';
-import { BlockchainCallbackDto } from '../dto/blockchain-callback.dto';
 
 import type {
   SorobanTxJob,
@@ -110,7 +112,10 @@ export class BlockchainController {
     @Body() callback: BlockchainCallbackDto,
     @Req() request: Request,
   ): Promise<{ success: boolean }> {
-    this.verifyWebhookSignature(callback, request.headers['x-webhook-signature'] as string);
+    this.verifyWebhookSignature(
+      callback,
+      request.headers['x-webhook-signature'] as string,
+    );
 
     const eventTime = Date.parse(callback.timestamp);
     if (isNaN(eventTime)) {
@@ -129,9 +134,10 @@ export class BlockchainController {
       throw new BadRequestException('Callback is stale');
     }
 
-    const replayAllowed = await this.sorobanService.checkAndSetCallbackIdempotency(
-      callback.eventId,
-    );
+    const replayAllowed =
+      await this.sorobanService.checkAndSetCallbackIdempotency(
+        callback.eventId,
+      );
 
     if (!replayAllowed) {
       this.logger.warn('Blockchain callback replay detected', {

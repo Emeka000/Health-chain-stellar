@@ -1,14 +1,16 @@
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { OrdersService } from './orders.service';
-import { Order, BloodType, OrderStatus } from './types/order.types';
-import { OrdersGateway } from './gateways/orders.gateway';
-import { OrderEntity } from './entities/order.entity';
-import { OrderEventStoreService } from './services/order-event-store.service';
-import { OrderStateMachine } from './state-machine/order-state-machine';
+
 import { InventoryService } from '../inventory/inventory.service';
+
+import { OrderEntity } from './entities/order.entity';
+import { OrdersGateway } from './gateways/orders.gateway';
+import { OrdersService } from './orders.service';
+import { OrderEventStoreService } from './services/order-event-store.service';
 import { RequestStatusService } from './services/request-status.service';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { OrderStateMachine } from './state-machine/order-state-machine';
+import { Order, BloodType, OrderStatus } from './types/order.types';
 
 describe('OrdersService', () => {
   let service: OrdersService;
@@ -84,8 +86,16 @@ describe('OrdersService', () => {
           id: 'ORD-001',
           bloodType: 'A+',
           quantity: 5,
-          bloodBank: { id: 'BB-001', name: 'Central Blood Bank', location: 'Lagos' },
-          hospital: { id: 'HOSP-001', name: 'General Hospital', location: 'Ikeja' },
+          bloodBank: {
+            id: 'BB-001',
+            name: 'Central Blood Bank',
+            location: 'Lagos',
+          },
+          hospital: {
+            id: 'HOSP-001',
+            name: 'General Hospital',
+            location: 'Ikeja',
+          },
           status: 'pending',
           rider: null,
           placedAt: new Date('2024-01-15T10:00:00Z'),
@@ -99,8 +109,16 @@ describe('OrdersService', () => {
           id: 'ORD-002',
           bloodType: 'O-',
           quantity: 3,
-          bloodBank: { id: 'BB-002', name: 'City Blood Bank', location: 'Abuja' },
-          hospital: { id: 'HOSP-001', name: 'General Hospital', location: 'Ikeja' },
+          bloodBank: {
+            id: 'BB-002',
+            name: 'City Blood Bank',
+            location: 'Abuja',
+          },
+          hospital: {
+            id: 'HOSP-001',
+            name: 'General Hospital',
+            location: 'Ikeja',
+          },
           status: 'delivered',
           rider: { id: 'RIDER-001', name: 'John Doe', phone: '+234-XXX-XXXX' },
           placedAt: new Date('2024-01-10T10:00:00Z'),
@@ -114,8 +132,16 @@ describe('OrdersService', () => {
           id: 'ORD-003',
           bloodType: 'B+',
           quantity: 2,
-          bloodBank: { id: 'BB-001', name: 'Central Blood Bank', location: 'Lagos' },
-          hospital: { id: 'HOSP-002', name: 'City Hospital', location: 'Lagos' },
+          bloodBank: {
+            id: 'BB-001',
+            name: 'Central Blood Bank',
+            location: 'Lagos',
+          },
+          hospital: {
+            id: 'HOSP-002',
+            name: 'City Hospital',
+            location: 'Lagos',
+          },
           status: 'confirmed',
           rider: null,
           placedAt: new Date('2024-01-20T10:00:00Z'),
@@ -139,7 +165,9 @@ describe('OrdersService', () => {
       });
 
       expect(result.data).toHaveLength(2);
-      expect(result.data.every(order => order.hospital.id === 'HOSP-001')).toBe(true);
+      expect(
+        result.data.every((order) => order.hospital.id === 'HOSP-001'),
+      ).toBe(true);
       expect(result.pagination.totalCount).toBe(2);
     });
 
@@ -177,7 +205,7 @@ describe('OrdersService', () => {
       });
 
       expect(result.data).toHaveLength(2);
-      expect(result.data.map(o => o.bloodType).sort()).toEqual(['A+', 'O-']);
+      expect(result.data.map((o) => o.bloodType).sort()).toEqual(['A+', 'O-']);
     });
 
     it('should filter orders by status', async () => {
@@ -271,8 +299,12 @@ describe('OrdersService', () => {
       });
 
       expect(result.data).toHaveLength(2);
-      expect(result.data.every(o => ['A+', 'O-'].includes(o.bloodType))).toBe(true);
-      expect(result.data.every(o => ['pending', 'delivered'].includes(o.status))).toBe(true);
+      expect(result.data.every((o) => ['A+', 'O-'].includes(o.bloodType))).toBe(
+        true,
+      );
+      expect(
+        result.data.every((o) => ['pending', 'delivered'].includes(o.status)),
+      ).toBe(true);
     });
   });
 });

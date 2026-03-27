@@ -38,7 +38,9 @@ describe('AppError hierarchy', () => {
 
   describe('BlockchainTxIrrecoverableError', () => {
     it('has correct domain and compensations', () => {
-      const err = new BlockchainTxIrrecoverableError('tx failed', { jobId: '1' });
+      const err = new BlockchainTxIrrecoverableError('tx failed', {
+        jobId: '1',
+      });
       expect(err.domain).toBe(FailureDomain.BLOCKCHAIN);
       expect(err.compensations).toContain(CompensationAction.PERSIST_DLQ);
       expect(err.compensations).toContain(CompensationAction.NOTIFY_ADMIN);
@@ -49,17 +51,24 @@ describe('AppError hierarchy', () => {
 
   describe('BloodRequestIrrecoverableError', () => {
     it('includes inventory revert and user notification', () => {
-      const err = new BloodRequestIrrecoverableError('chain fail', { requestNumber: 'BR-1' });
+      const err = new BloodRequestIrrecoverableError('chain fail', {
+        requestNumber: 'BR-1',
+      });
       expect(err.domain).toBe(FailureDomain.BLOOD_REQUEST);
       expect(err.compensations).toContain(CompensationAction.REVERT_INVENTORY);
       expect(err.compensations).toContain(CompensationAction.NOTIFY_USER);
-      expect(err.compensations).toContain(CompensationAction.CANCEL_BLOOD_REQUEST);
+      expect(err.compensations).toContain(
+        CompensationAction.CANCEL_BLOOD_REQUEST,
+      );
     });
   });
 
   describe('InventoryReservationIrrecoverableError', () => {
     it('has inventory domain', () => {
-      const err = new InventoryReservationIrrecoverableError('corrupt stock', {});
+      const err = new InventoryReservationIrrecoverableError(
+        'corrupt stock',
+        {},
+      );
       expect(err.domain).toBe(FailureDomain.INVENTORY);
       expect(err.compensations).toContain(CompensationAction.REVERT_INVENTORY);
     });
@@ -67,7 +76,9 @@ describe('AppError hierarchy', () => {
 
   describe('DispatchIrrecoverableError', () => {
     it('has dispatch domain and cancel order', () => {
-      const err = new DispatchIrrecoverableError('no riders', { orderId: 'o1' });
+      const err = new DispatchIrrecoverableError('no riders', {
+        orderId: 'o1',
+      });
       expect(err.domain).toBe(FailureDomain.DISPATCH);
       expect(err.compensations).toContain(CompensationAction.CANCEL_ORDER);
     });

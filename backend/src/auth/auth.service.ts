@@ -27,8 +27,6 @@ import { JwtPayload } from './jwt.strategy';
 import { hashPassword, verifyPassword } from './utils/password.util';
 import { AuthSessionRepository } from './repositories/auth-session.repository';
 
-const MAX_FAILED_LOGIN_ATTEMPTS = 5;
-const ACCOUNT_LOCK_MINUTES = 15;
 const PASSWORD_HISTORY_LIMIT = 3;
 
 @Injectable()
@@ -36,6 +34,8 @@ export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly circuitBreaker: RedisCircuitBreaker;
   private readonly fallbackStore: AuthSessionFallbackStore;
+  private readonly maxFailedLoginAttempts: number;
+  private readonly accountLockMinutes: number;
 
   constructor(
     private readonly jwtService: JwtService,
@@ -47,6 +47,8 @@ export class AuthService {
   ) {
     this.circuitBreaker = new RedisCircuitBreaker();
     this.fallbackStore = new AuthSessionFallbackStore();
+    this.maxFailedLoginAttempts = this.configService.get<number>('MAX_FAILED_LOGIN_ATTEMPTS', 5);
+    this.accountLockMinutes = this.configService.get<number>('ACCOUNT_LOCK_MINUTES', 15);
   }
 
   async validateUser(
@@ -170,7 +172,6 @@ export class AuthService {
         : this.getRefreshTokenExpirySeconds();
       const ttl = Math.max(expiresAt, 0);
 
-      // Use circuit breaker for Redis operation
       const consumed = await this.circuitBreaker.execute(
         async () => {
           const result = await this.redis.set(
@@ -183,7 +184,6 @@ export class AuthService {
           return result;
         },
         async () => {
-          // Fallback: use in-memory token tracking
           return (await this.fallbackStore.markTokenConsumed(tokenKey))
             ? 'OK'
             : null;
@@ -466,9 +466,9 @@ export class AuthService {
 
   private async recordFailedLoginAttempt(user: UserEntity) {
     user.failedLoginAttempts = (user.failedLoginAttempts ?? 0) + 1;
-    if (user.failedLoginAttempts >= MAX_FAILED_LOGIN_ATTEMPTS) {
+    if (user.failedLoginAttempts >= this.maxFailedLoginAttempts) {
       const lockedUntil = new Date();
-      lockedUntil.setMinutes(lockedUntil.getMinutes() + ACCOUNT_LOCK_MINUTES);
+      lockedUntil.setMinutes(lockedUntil.getMinutes() + this.accountLockMinutes);
       user.lockedUntil = lockedUntil;
     }
     await this.userRepository.save(user);
@@ -486,145 +486,4 @@ export class AuthService {
   private async createSession(
     user: UserEntity,
     sessionId: string,
-    ttlSeconds: number,
-  ): Promise<void> {
-    const now = Date.now();
-    const expiresAt = new Date(now + ttlSeconds * 1000).toISOString();
-    const sessionData = {
-      userId: user.id,
-      email: user.email,
-      role: user.role ?? 'donor',
-      createdAt: new Date(now).toISOString(),
-      expiresAt,
-    };
-
-    await this.circuitBreaker.execute(
-      async () => {
-        await this.redis.hmset(this.sessionKey(sessionId), sessionData);
-        await this.redis.expire(this.sessionKey(sessionId), ttlSeconds);
-        await this.redis.zadd(this.userSessionsKey(user.id), now, sessionId);
-      },
-      async () => {
-        // Fallback: use in-memory storage
-        await this.fallbackStore.setSession(
-          sessionId,
-          sessionData,
-          ttlSeconds,
-        );
-        await this.fallbackStore.addUserSession(user.id, sessionId);
-      },
-    );
-
-    // Persist to database for audit trail
-    try {
-      await this.authSessionRepository.create({
-        sessionId,
-        userId: user.id,
-        email: user.email,
-        role: user.role ?? 'donor',
-        expiresAt: new Date(expiresAt),
-        ipAddress: undefined, // Can be populated from request context
-        userAgent: undefined, // Can be populated from request context
-      });
-    } catch (error) {
-      this.logger.warn(
-        `Failed to persist session to database: ${error.message}`,
-      );
-      // Don't fail login if database persistence fails
-    }
-  }
-
-  private async touchSession(
-    userId: string,
-    sessionId: string,
-    ttlSeconds: number,
-  ): Promise<void> {
-    const key = this.sessionKey(sessionId);
-    const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
-
-    await this.circuitBreaker.execute(
-      async () => {
-        await this.redis.hset(key, 'expiresAt', expiresAt);
-        await this.redis.expire(key, ttlSeconds);
-        await this.redis.zadd(this.userSessionsKey(userId), Date.now(), sessionId);
-      },
-      async () => {
-        // Fallback: update in-memory session
-        const session = await this.fallbackStore.getSession(sessionId);
-        if (session) {
-          session.expiresAt = expiresAt;
-        }
-      },
-    );
-  }
-
-  private async getSessionById(
-    sessionId: string,
-  ): Promise<Record<string, string> | null> {
-    return this.circuitBreaker.execute(
-      async () => {
-        const session = await this.redis.hgetall(this.sessionKey(sessionId));
-        if (!session || Object.keys(session).length === 0) {
-          return null;
-        }
-        return session;
-      },
-      async () => {
-        // Fallback: use in-memory storage
-        return this.fallbackStore.getSession(sessionId);
-      },
-    );
-  }
-
-  private async enforceConcurrentSessionLimit(userId: string): Promise<void> {
-    const maxSessions = this.configService.get<number>(
-      'MAX_CONCURRENT_SESSIONS',
-      3,
-    );
-    const sessionCount = await this.redis.zcard(this.userSessionsKey(userId));
-    if (sessionCount <= maxSessions) {
-      return;
-    }
-
-    const sessionsToEvict = await this.redis.zrange(
-      this.userSessionsKey(userId),
-      0,
-      sessionCount - maxSessions - 1,
-    );
-    for (const sessionId of sessionsToEvict) {
-      await this.redis.del(this.sessionKey(sessionId));
-      await this.redis.zrem(this.userSessionsKey(userId), sessionId);
-    }
-  }
-
-  private sessionKey(sessionId: string): string {
-    return `auth:session:${sessionId}`;
-  }
-
-  private userSessionsKey(userId: string): string {
-    return `auth:user-sessions:${userId}`;
-  }
-
-  private getRefreshTokenExpirySeconds(): number {
-    const refreshExpiresIn =
-      this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') ?? '7d';
-    return this.parseDurationToSeconds(refreshExpiresIn);
-  }
-
-  private parseDurationToSeconds(value: string): number {
-    const match = /^(\d+)([smhd])$/.exec(value.trim());
-    if (!match) {
-      return 7 * 24 * 60 * 60;
-    }
-
-    const amount = Number(match[1]);
-    const unit = match[2];
-    const multipliers: Record<string, number> = {
-      s: 1,
-      m: 60,
-      h: 60 * 60,
-      d: 24 * 60 * 60,
-    };
-    return amount * multipliers[unit];
-  }
-}
+    ttlSeconds

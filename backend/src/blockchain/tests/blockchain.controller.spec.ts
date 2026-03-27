@@ -18,7 +18,14 @@ const BASE_METRICS: QueueMetrics = {
   failedJobs: 2,
   dlqCount: 1,
   processingRate: 0,
-  counters: { queued: 10, processing: 1, success: 7, failure: 2, retries: 3, dlq: 1 },
+  counters: {
+    queued: 10,
+    processing: 1,
+    success: 7,
+    failure: 2,
+    retries: 3,
+    dlq: 1,
+  },
   timings: { avgMs: 120, minMs: 80, maxMs: 300, samples: 7 },
 };
 
@@ -45,7 +52,14 @@ describe('BlockchainController', () => {
 
     mockQueueMetricsService = {
       getDetailedMetrics: jest.fn().mockResolvedValue({
-        counters: { queued: 10, processing: 1, success: 7, failure: 2, retries: 3, dlq: 1 },
+        counters: {
+          queued: 10,
+          processing: 1,
+          success: 7,
+          failure: 2,
+          retries: 3,
+          dlq: 1,
+        },
         timings: { avgMs: 120, minMs: 80, maxMs: 300, samples: 7 },
         live: { waiting: 3, active: 1, failed: 2, delayed: 0, dlqDepth: 1 },
         since: '2026-01-01T00:00:00.000Z',

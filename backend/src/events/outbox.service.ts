@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+
 import { Repository, LessThan } from 'typeorm';
+
 import { OutboxEventEntity, OutboxEventType } from './outbox-event.entity';
 
 @Injectable()
@@ -30,7 +32,9 @@ export class OutboxService {
     return this.outboxRepository.save(event);
   }
 
-  async getUnpublishedEvents(limit: number = 100): Promise<OutboxEventEntity[]> {
+  async getUnpublishedEvents(
+    limit: number = 100,
+  ): Promise<OutboxEventEntity[]> {
     return this.outboxRepository.find({
       where: { published: false },
       order: { createdAt: 'ASC' },

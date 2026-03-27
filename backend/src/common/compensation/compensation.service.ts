@@ -1,9 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-import {
-  CompensationAction,
-  IrrecoverableError,
-} from '../errors/app-errors';
+import { CompensationAction, IrrecoverableError } from '../errors/app-errors';
 import { FailureRecordService } from '../failure-record/failure-record.service';
 
 export interface CompensationHandler {

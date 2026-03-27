@@ -17,8 +17,8 @@ import { EmailProvider } from '../notifications/providers/email.provider';
 import { RegisterOrganizationDto } from './dto/register-organization.dto';
 import { RejectOrganizationDto } from './dto/reject-organization.dto';
 import { OrganizationEntity } from './entities/organization.entity';
-import { OrganizationRepository } from './organizations.repository';
 import { OrganizationVerificationStatus } from './enums/organization-verification-status.enum';
+import { OrganizationRepository } from './organizations.repository';
 
 const ALLOWED_MIME = new Set([
   'application/pdf',
@@ -152,7 +152,8 @@ export class OrganizationsService {
   }
 
   async listPending(): Promise<OrganizationEntity[]> {
-    return this.orgRepo.createActiveQueryBuilder('org')
+    return this.orgRepo
+      .createActiveQueryBuilder('org')
       .where('org.status = :status', {
         status: OrganizationVerificationStatus.PENDING_VERIFICATION,
       })

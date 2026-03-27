@@ -53,4 +53,20 @@ export class OrderEntity {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
+
+  @Column({ type: 'jsonb', nullable: true })
+  feeBreakdown: {
+    deliveryFee: number;
+    platformFee: number;
+    performanceFee: number;
+    fixedFee: number;
+    totalFee: number;
+    baseAmount: number;
+    appliedPolicyId: string;
+    auditHash: string;
+  } | null;
+
+  @Column({ name: 'applied_policy_id', type: 'uuid', nullable: true })
+  appliedPolicyId: string | null;
 }
+

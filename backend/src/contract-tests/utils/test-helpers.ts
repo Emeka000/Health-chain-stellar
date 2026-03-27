@@ -7,8 +7,8 @@
  * - Test data builders
  */
 
-import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
 
 /**
  * Create a mock provider for contract testing
@@ -23,11 +23,7 @@ export function createMockProvider() {
     /**
      * Mock a response for a specific route
      */
-    mockResponse: (
-      method: string,
-      path: string,
-      response: any,
-    ) => {
+    mockResponse: (method: string, path: string, response: any) => {
       responses.set(`${method}:${path}`, response);
     },
 
@@ -69,9 +65,7 @@ export function createMockProvider() {
     verifyNotCalled: (method: string, path: string) => {
       const found = calls.find((c) => c.method === method && c.path === path);
       if (found) {
-        throw new Error(
-          `Provider unexpectedly called with ${method} ${path}`,
-        );
+        throw new Error(`Provider unexpectedly called with ${method} ${path}`);
       }
     },
 
@@ -190,8 +184,7 @@ export function assertSchemaStable(
       if (
         expectedType === 'object' &&
         actualType === 'object' &&
-        Array.isArray(expectedSchema[key]) !==
-          Array.isArray(actual[key])
+        Array.isArray(expectedSchema[key]) !== Array.isArray(actual[key])
       ) {
         throw new Error(
           `BREAKING: Field '${key}' array-ness changed in ${context}`,

@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import {
   IsString,
   IsOptional,
@@ -8,7 +9,6 @@ import {
   Min,
   Max,
 } from 'class-validator';
-import { Type } from 'class-transformer';
 
 import { BloodRequestStatus } from '../enums/blood-request-status.enum';
 

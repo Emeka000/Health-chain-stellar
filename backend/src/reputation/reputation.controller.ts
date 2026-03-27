@@ -1,9 +1,14 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
-import { ReputationService } from './reputation.service';
+
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
-import { Permission } from '../auth/enums/permission.enum';
 import { User } from '../auth/decorators/user.decorator';
-import { LeaderboardQueryDto, ReputationHistoryQueryDto } from './dto/reputation-query.dto';
+import { Permission } from '../auth/enums/permission.enum';
+
+import {
+  LeaderboardQueryDto,
+  ReputationHistoryQueryDto,
+} from './dto/reputation-query.dto';
+import { ReputationService } from './reputation.service';
 
 @Controller('reputation')
 export class ReputationController {
@@ -34,7 +39,10 @@ export class ReputationController {
   /** GET /reputation/me/history */
   @RequirePermissions(Permission.VIEW_RIDERS)
   @Get('me/history')
-  getMyHistory(@User('id') userId: string, @Query() query: ReputationHistoryQueryDto) {
+  getMyHistory(
+    @User('id') userId: string,
+    @Query() query: ReputationHistoryQueryDto,
+  ) {
     return this.reputationService.getHistory(userId, query);
   }
 
@@ -62,7 +70,10 @@ export class ReputationController {
   /** GET /reputation/:riderId/history */
   @RequirePermissions(Permission.MANAGE_RIDERS)
   @Get(':riderId/history')
-  getHistory(@Param('riderId') riderId: string, @Query() query: ReputationHistoryQueryDto) {
+  getHistory(
+    @Param('riderId') riderId: string,
+    @Query() query: ReputationHistoryQueryDto,
+  ) {
     return this.reputationService.getHistory(riderId, query);
   }
 

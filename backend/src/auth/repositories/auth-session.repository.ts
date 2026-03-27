@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+
 import { Repository, LessThan } from 'typeorm';
+
 import { AuthSessionEntity } from '../entities/auth-session.entity';
 
 @Injectable()
@@ -10,7 +12,9 @@ export class AuthSessionRepository {
     private readonly repository: Repository<AuthSessionEntity>,
   ) {}
 
-  async create(sessionData: Partial<AuthSessionEntity>): Promise<AuthSessionEntity> {
+  async create(
+    sessionData: Partial<AuthSessionEntity>,
+  ): Promise<AuthSessionEntity> {
     const session = this.repository.create(sessionData);
     return this.repository.save(session);
   }
@@ -21,7 +25,9 @@ export class AuthSessionRepository {
     });
   }
 
-  async findActiveSessionsByUserId(userId: string): Promise<AuthSessionEntity[]> {
+  async findActiveSessionsByUserId(
+    userId: string,
+  ): Promise<AuthSessionEntity[]> {
     return this.repository.find({
       where: { userId, isActive: true },
       order: { createdAt: 'DESC' },
@@ -29,16 +35,10 @@ export class AuthSessionRepository {
   }
 
   async updateLastActivity(sessionId: string): Promise<void> {
-    await this.repository.update(
-      { sessionId },
-      { lastActivityAt: new Date() },
-    );
+    await this.repository.update({ sessionId }, { lastActivityAt: new Date() });
   }
 
-  async revokeSession(
-    sessionId: string,
-    reason?: string,
-  ): Promise<void> {
+  async revokeSession(sessionId: string, reason?: string): Promise<void> {
     await this.repository.update(
       { sessionId },
       {

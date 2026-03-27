@@ -1,6 +1,8 @@
 import { Test } from '@nestjs/testing';
-import { CorrelationIdMiddleware } from './correlation-id.middleware';
+
 import { Request, Response } from 'express';
+
+import { CorrelationIdMiddleware } from './correlation-id.middleware';
 
 describe('CorrelationIdMiddleware', () => {
   let middleware: CorrelationIdMiddleware;

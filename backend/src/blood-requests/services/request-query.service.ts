@@ -1,16 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+
 import { Repository, SelectQueryBuilder } from 'typeorm';
 
-import { BloodRequestEntity } from '../entities/blood-request.entity';
-import { BloodRequestItemEntity } from '../entities/blood-request-item.entity';
-import { BloodRequestStatus } from '../enums/blood-request-status.enum';
 import {
   QueryRequestsDto,
   SortField,
   SortOrder,
   UrgencyLevel,
 } from '../dto/query-requests.dto';
+import { BloodRequestItemEntity } from '../entities/blood-request-item.entity';
+import { BloodRequestEntity } from '../entities/blood-request.entity';
+import { BloodRequestStatus } from '../enums/blood-request-status.enum';
 
 export interface RequestStatistics {
   totalRequests: number;
@@ -45,9 +46,7 @@ export class RequestQueryService {
     private readonly bloodRequestItemRepository: Repository<BloodRequestItemEntity>,
   ) {}
 
-  async queryRequests(
-    queryDto: QueryRequestsDto,
-  ): Promise<{
+  async queryRequests(queryDto: QueryRequestsDto): Promise<{
     data: BloodRequestEntity[];
     total: number;
     limit: number;
@@ -65,8 +64,11 @@ export class RequestQueryService {
     };
   }
 
-  private buildQuery(queryDto: QueryRequestsDto): SelectQueryBuilder<BloodRequestEntity> {
-    const queryBuilder = this.bloodRequestRepository.createQueryBuilder('request');
+  private buildQuery(
+    queryDto: QueryRequestsDto,
+  ): SelectQueryBuilder<BloodRequestEntity> {
+    const queryBuilder =
+      this.bloodRequestRepository.createQueryBuilder('request');
 
     // Join with items for blood type filtering
     queryBuilder.leftJoinAndSelect('request.items', 'items');
@@ -133,7 +135,8 @@ export class RequestQueryService {
     startDate?: Date,
     endDate?: Date,
   ): Promise<RequestStatistics> {
-    const queryBuilder = this.bloodRequestRepository.createQueryBuilder('request');
+    const queryBuilder =
+      this.bloodRequestRepository.createQueryBuilder('request');
 
     if (hospitalId) {
       queryBuilder.andWhere('request.hospitalId = :hospitalId', { hospitalId });
@@ -174,11 +177,11 @@ export class RequestQueryService {
     let averageFulfillmentTime = 0;
     if (fulfilledWithTime.length > 0) {
       const totalTime = fulfilledWithTime.reduce((sum, r) => {
-        const fulfillmentTime =
-          r.updatedAt.getTime() - r.createdAt.getTime();
+        const fulfillmentTime = r.updatedAt.getTime() - r.createdAt.getTime();
         return sum + fulfillmentTime;
       }, 0);
-      averageFulfillmentTime = totalTime / fulfilledWithTime.length / (1000 * 60 * 60); // Convert to hours
+      averageFulfillmentTime =
+        totalTime / fulfilledWithTime.length / (1000 * 60 * 60); // Convert to hours
     }
 
     // Calculate SLA compliance rate
@@ -233,7 +236,8 @@ export class RequestQueryService {
     startDate?: Date,
     endDate?: Date,
   ): Promise<SLAComplianceReport> {
-    const queryBuilder = this.bloodRequestRepository.createQueryBuilder('request');
+    const queryBuilder =
+      this.bloodRequestRepository.createQueryBuilder('request');
 
     if (hospitalId) {
       queryBuilder.andWhere('request.hospitalId = :hospitalId', { hospitalId });
@@ -255,11 +259,13 @@ export class RequestQueryService {
     );
 
     const onTimeFulfillments = fulfilledRequests.filter(
-      (r) => r.requiredByTimestamp && r.updatedAt.getTime() <= r.requiredByTimestamp,
+      (r) =>
+        r.requiredByTimestamp && r.updatedAt.getTime() <= r.requiredByTimestamp,
     ).length;
 
     const lateFulfillments = fulfilledRequests.filter(
-      (r) => r.requiredByTimestamp && r.updatedAt.getTime() > r.requiredByTimestamp,
+      (r) =>
+        r.requiredByTimestamp && r.updatedAt.getTime() > r.requiredByTimestamp,
     ).length;
 
     const complianceRate =
@@ -269,7 +275,8 @@ export class RequestQueryService {
 
     // Calculate average delay for late fulfillments
     const lateRequests = fulfilledRequests.filter(
-      (r) => r.requiredByTimestamp && r.updatedAt.getTime() > r.requiredByTimestamp,
+      (r) =>
+        r.requiredByTimestamp && r.updatedAt.getTime() > r.requiredByTimestamp,
     );
 
     let averageDelayHours = 0;
@@ -298,9 +305,7 @@ export class RequestQueryService {
     };
   }
 
-  async exportToCSV(
-    queryDto: QueryRequestsDto,
-  ): Promise<string> {
+  async exportToCSV(queryDto: QueryRequestsDto): Promise<string> {
     const { data } = await this.queryRequests(queryDto);
 
     const headers = [
@@ -316,31 +321,32 @@ export class RequestQueryService {
     ];
 
     const rows = data.map((request) => {
-      const bloodTypes = request.items
-        ?.map((item) => item.bloodType)
-        .join(', ') || '';
-      const totalQuantity = request.items
-        ?.reduce((sum, item) => sum + item.quantity, 0) || 0;
+      const bloodTypes =
+        request.items?.map((item) => item.bloodType).join(', ') || '';
+      const totalQuantity =
+        request.items?.reduce((sum, item) => sum + item.quantity, 0) || 0;
 
       return [
         request.requestNumber,
         request.hospitalId,
         request.status,
-        request.requiredByTimestamp ? new Date(request.requiredByTimestamp).toISOString() : '',
+        request.requiredByTimestamp
+          ? new Date(request.requiredByTimestamp).toISOString()
+          : '',
         request.createdAt.toISOString(),
         request.updatedAt.toISOString(),
         bloodTypes,
         totalQuantity.toString(),
         request.notes || '',
-      ].map((field) => `"${field}"`).join(',');
+      ]
+        .map((field) => `"${field}"`)
+        .join(',');
     });
 
     return [headers.join(','), ...rows].join('\n');
   }
 
-  async exportToPDF(
-    queryDto: QueryRequestsDto,
-  ): Promise<Buffer> {
+  async exportToPDF(queryDto: QueryRequestsDto): Promise<Buffer> {
     // PDF export would require a PDF library like pdfkit or puppeteer
     // For now, return a placeholder
     this.logger.warn('PDF export not yet implemented');

@@ -1,8 +1,9 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { RidersService } from './riders.service';
-import { RidersController } from './riders.controller';
+
 import { RiderEntity } from './entities/rider.entity';
+import { RidersController } from './riders.controller';
+import { RidersService } from './riders.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([RiderEntity])],

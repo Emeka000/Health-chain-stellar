@@ -1,11 +1,9 @@
 import { Controller, Get, Post, Body, Query } from '@nestjs/common';
-import { RiderSearchService } from '../services/rider-search.service';
-import {
-  RiderSearchDto,
-  RiderAssignmentDto,
-} from '../dto/rider-search.dto';
+
 import { RequirePermissions } from '../../auth/decorators/require-permissions.decorator';
 import { Permission } from '../../auth/enums/permission.enum';
+import { RiderSearchDto, RiderAssignmentDto } from '../dto/rider-search.dto';
+import { RiderSearchService } from '../services/rider-search.service';
 
 @Controller('riders')
 export class RiderSearchController {

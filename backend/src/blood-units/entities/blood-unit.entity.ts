@@ -107,7 +107,11 @@ export class BloodUnit extends BaseEntity {
   @Column({ name: 'test_results', type: 'jsonb', nullable: true })
   testResults: Record<string, unknown> | null;
 
-  @Column({ name: 'storage_temperature_celsius', type: 'float', nullable: true })
+  @Column({
+    name: 'storage_temperature_celsius',
+    type: 'float',
+    nullable: true,
+  })
   storageTemperatureCelsius: number | null;
 
   @Column({ name: 'storage_location', type: 'varchar', nullable: true })
@@ -223,7 +227,8 @@ export class BloodUnit extends BaseEntity {
    * Get the remaining shelf life as a percentage
    */
   getRemainingShelfLifePercentage(): number {
-    const totalShelfLifeMs = this.expiresAt.getTime() - this.collectedAt.getTime();
+    const totalShelfLifeMs =
+      this.expiresAt.getTime() - this.collectedAt.getTime();
     const remainingMs = this.expiresAt.getTime() - new Date().getTime();
     return Math.max(0, Math.min(100, (remainingMs / totalShelfLifeMs) * 100));
   }
@@ -233,11 +238,35 @@ export class BloodUnit extends BaseEntity {
    */
   isCompatibleWith(bloodType: BloodType): boolean {
     const compatibilityMap: Record<BloodType, BloodType[]> = {
-      [BloodType.O_NEGATIVE]: [BloodType.O_NEGATIVE, BloodType.O_POSITIVE, BloodType.A_NEGATIVE, BloodType.A_POSITIVE, BloodType.B_NEGATIVE, BloodType.B_POSITIVE, BloodType.AB_NEGATIVE, BloodType.AB_POSITIVE],
-      [BloodType.O_POSITIVE]: [BloodType.O_POSITIVE, BloodType.A_POSITIVE, BloodType.B_POSITIVE, BloodType.AB_POSITIVE],
-      [BloodType.A_NEGATIVE]: [BloodType.A_NEGATIVE, BloodType.A_POSITIVE, BloodType.AB_NEGATIVE, BloodType.AB_POSITIVE],
+      [BloodType.O_NEGATIVE]: [
+        BloodType.O_NEGATIVE,
+        BloodType.O_POSITIVE,
+        BloodType.A_NEGATIVE,
+        BloodType.A_POSITIVE,
+        BloodType.B_NEGATIVE,
+        BloodType.B_POSITIVE,
+        BloodType.AB_NEGATIVE,
+        BloodType.AB_POSITIVE,
+      ],
+      [BloodType.O_POSITIVE]: [
+        BloodType.O_POSITIVE,
+        BloodType.A_POSITIVE,
+        BloodType.B_POSITIVE,
+        BloodType.AB_POSITIVE,
+      ],
+      [BloodType.A_NEGATIVE]: [
+        BloodType.A_NEGATIVE,
+        BloodType.A_POSITIVE,
+        BloodType.AB_NEGATIVE,
+        BloodType.AB_POSITIVE,
+      ],
       [BloodType.A_POSITIVE]: [BloodType.A_POSITIVE, BloodType.AB_POSITIVE],
-      [BloodType.B_NEGATIVE]: [BloodType.B_NEGATIVE, BloodType.B_POSITIVE, BloodType.AB_NEGATIVE, BloodType.AB_POSITIVE],
+      [BloodType.B_NEGATIVE]: [
+        BloodType.B_NEGATIVE,
+        BloodType.B_POSITIVE,
+        BloodType.AB_NEGATIVE,
+        BloodType.AB_POSITIVE,
+      ],
       [BloodType.B_POSITIVE]: [BloodType.B_POSITIVE, BloodType.AB_POSITIVE],
       [BloodType.AB_NEGATIVE]: [BloodType.AB_NEGATIVE, BloodType.AB_POSITIVE],
       [BloodType.AB_POSITIVE]: [BloodType.AB_POSITIVE],

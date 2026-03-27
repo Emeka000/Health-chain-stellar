@@ -1,5 +1,6 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
+import { Test, TestingModule } from '@nestjs/testing';
+
 import { RoutePlanningService } from './route-planning.service';
 
 describe('RoutePlanningService', () => {
@@ -43,7 +44,12 @@ describe('RoutePlanningService', () => {
       const lat2 = 9.0579;
       const lon2 = 7.4951;
 
-      const distance = service['calculateHaversineDistance'](lat1, lon1, lat2, lon2);
+      const distance = service['calculateHaversineDistance'](
+        lat1,
+        lon1,
+        lat2,
+        lon2,
+      );
 
       // Distance between Lagos and Abuja is approximately 535 km
       expect(distance).toBeGreaterThan(500);
@@ -51,7 +57,12 @@ describe('RoutePlanningService', () => {
     });
 
     it('should return 0 for same coordinates', () => {
-      const distance = service['calculateHaversineDistance'](6.5244, 3.3792, 6.5244, 3.3792);
+      const distance = service['calculateHaversineDistance'](
+        6.5244,
+        3.3792,
+        6.5244,
+        3.3792,
+      );
       expect(distance).toBe(0);
     });
 
@@ -61,7 +72,12 @@ describe('RoutePlanningService', () => {
       const lat2 = 6.5245;
       const lon2 = 3.3793;
 
-      const distance = service['calculateHaversineDistance'](lat1, lon1, lat2, lon2);
+      const distance = service['calculateHaversineDistance'](
+        lat1,
+        lon1,
+        lat2,
+        lon2,
+      );
       expect(distance).toBeGreaterThan(0);
       expect(distance).toBeLessThan(1); // Less than 1 km
     });

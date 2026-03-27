@@ -1,6 +1,6 @@
-import { Injectable, Scope } from '@nestjs/common';
+import { Injectable, Scope, Inject } from '@nestjs/common';
 import { REQUEST } from '@nestjs/core';
-import { Inject } from '@nestjs/common';
+
 import { Request } from 'express';
 
 @Injectable({ scope: Scope.REQUEST })

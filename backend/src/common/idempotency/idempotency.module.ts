@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
-import { IdempotencyService } from './idempotency.service';
-import { IdempotencyInterceptor } from './idempotency.interceptor';
+
 import { RedisModule } from '../redis/redis.module';
+
+import { IdempotencyInterceptor } from './idempotency.interceptor';
+import { IdempotencyService } from './idempotency.service';
 
 @Module({
   imports: [RedisModule],

@@ -1,7 +1,11 @@
 import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
-import { RATE_LIMIT_KEY, RateLimitConfig } from '../decorators/rate-limit.decorator';
+
+import {
+  RATE_LIMIT_KEY,
+  RateLimitConfig,
+} from '../decorators/rate-limit.decorator';
 
 @Injectable()
 export class EndpointRateLimitGuard extends ThrottlerGuard {

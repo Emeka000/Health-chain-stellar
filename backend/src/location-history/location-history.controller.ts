@@ -26,7 +26,9 @@ import { LocationHistoryService } from './location-history.service';
 
 @Controller('location-history')
 export class LocationHistoryController {
-  constructor(private readonly locationHistoryService: LocationHistoryService) {}
+  constructor(
+    private readonly locationHistoryService: LocationHistoryService,
+  ) {}
 
   /**
    * POST /location-history/riders/:riderId

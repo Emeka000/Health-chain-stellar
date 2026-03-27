@@ -1,17 +1,19 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+
 import { Repository } from 'typeorm';
 
-import { InventoryAlertService } from './inventory-alert.service';
+import { NotificationsService } from '../../notifications/notifications.service';
+import { AlertPreferenceEntity } from '../entities/alert-preference.entity';
 import {
   InventoryAlertEntity,
   AlertType,
   AlertSeverity,
   AlertStatus,
 } from '../entities/inventory-alert.entity';
-import { AlertPreferenceEntity } from '../entities/alert-preference.entity';
 import { InventoryStockEntity } from '../entities/inventory-stock.entity';
-import { NotificationsService } from '../../notifications/notifications.service';
+
+import { InventoryAlertService } from './inventory-alert.service';
 
 describe('InventoryAlertService', () => {
   let service: InventoryAlertService;
@@ -114,7 +116,8 @@ describe('InventoryAlertService', () => {
     inventoryRepository = module.get<Repository<InventoryStockEntity>>(
       getRepositoryToken(InventoryStockEntity),
     );
-    notificationsService = module.get<NotificationsService>(NotificationsService);
+    notificationsService =
+      module.get<NotificationsService>(NotificationsService);
   });
 
   afterEach(() => {

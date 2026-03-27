@@ -5,7 +5,10 @@ import { Repository } from 'typeorm';
 
 import { CompensationAction, IrrecoverableError } from '../errors/app-errors';
 
-import { FailureRecordEntity, FailureRecordStatus } from './failure-record.entity';
+import {
+  FailureRecordEntity,
+  FailureRecordStatus,
+} from './failure-record.entity';
 
 export interface CreateFailureRecordInput {
   error: IrrecoverableError;
@@ -27,7 +30,9 @@ export class FailureRecordService {
    * Persist an irrecoverable failure for audit trail and manual review.
    * This method must never throw — a failure here would mask the original error.
    */
-  async persist(input: CreateFailureRecordInput): Promise<FailureRecordEntity | null> {
+  async persist(
+    input: CreateFailureRecordInput,
+  ): Promise<FailureRecordEntity | null> {
     try {
       const record = this.repo.create({
         message: input.error.message,

@@ -13,15 +13,15 @@ import {
 } from '@nestjs/common';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
+import { User } from '../auth/decorators/user.decorator';
 import { Permission } from '../auth/enums/permission.enum';
 import { PaginatedResponse, PaginationQueryDto } from '../common/pagination';
-import { CreateRiderDto } from './dto/create-rider.dto';
-import { UpdateRiderDto } from './dto/update-rider.dto';
-import { RegisterRiderDto } from './dto/register-rider.dto';
-import { RiderStatus } from './enums/rider-status.enum';
-import { User } from '../auth/decorators/user.decorator';
-import { RiderEntity } from './entities/rider.entity';
 
+import { CreateRiderDto } from './dto/create-rider.dto';
+import { RegisterRiderDto } from './dto/register-rider.dto';
+import { UpdateRiderDto } from './dto/update-rider.dto';
+import { RiderEntity } from './entities/rider.entity';
+import { RiderStatus } from './enums/rider-status.enum';
 import { RidersService } from './riders.service';
 
 @Controller('riders')
@@ -71,7 +71,10 @@ export class RidersController {
   }
 
   @Post('register')
-  register(@User('id') userId: string, @Body() registerRiderDto: RegisterRiderDto) {
+  register(
+    @User('id') userId: string,
+    @Body() registerRiderDto: RegisterRiderDto,
+  ) {
     return this.ridersService.register(userId, registerRiderDto);
   }
 

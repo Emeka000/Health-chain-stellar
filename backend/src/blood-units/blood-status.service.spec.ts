@@ -13,8 +13,8 @@ import {
   ALLOWED_TRANSITIONS,
   BloodStatusService,
 } from './blood-status.service';
-import { BloodUnit } from './entities/blood-unit.entity';
 import { BloodStatusHistory } from './entities/blood-status-history.entity';
+import { BloodUnit } from './entities/blood-unit.entity';
 import { BloodStatus } from './enums/blood-status.enum';
 
 const makeUnit = (overrides: Partial<BloodUnit> = {}): BloodUnit =>
@@ -75,39 +75,66 @@ describe('BloodStatusService', () => {
 
   describe('isValidTransition', () => {
     it('allows AVAILABLE → RESERVED', () => {
-      expect(service.isValidTransition(BloodStatus.AVAILABLE, BloodStatus.RESERVED)).toBe(true);
+      expect(
+        service.isValidTransition(BloodStatus.AVAILABLE, BloodStatus.RESERVED),
+      ).toBe(true);
     });
 
     it('allows RESERVED → IN_TRANSIT', () => {
-      expect(service.isValidTransition(BloodStatus.RESERVED, BloodStatus.IN_TRANSIT)).toBe(true);
+      expect(
+        service.isValidTransition(BloodStatus.RESERVED, BloodStatus.IN_TRANSIT),
+      ).toBe(true);
     });
 
     it('allows RESERVED → AVAILABLE (release)', () => {
-      expect(service.isValidTransition(BloodStatus.RESERVED, BloodStatus.AVAILABLE)).toBe(true);
+      expect(
+        service.isValidTransition(BloodStatus.RESERVED, BloodStatus.AVAILABLE),
+      ).toBe(true);
     });
 
     it('allows IN_TRANSIT → DELIVERED', () => {
-      expect(service.isValidTransition(BloodStatus.IN_TRANSIT, BloodStatus.DELIVERED)).toBe(true);
+      expect(
+        service.isValidTransition(
+          BloodStatus.IN_TRANSIT,
+          BloodStatus.DELIVERED,
+        ),
+      ).toBe(true);
     });
 
     it('allows QUARANTINED → AVAILABLE', () => {
-      expect(service.isValidTransition(BloodStatus.QUARANTINED, BloodStatus.AVAILABLE)).toBe(true);
+      expect(
+        service.isValidTransition(
+          BloodStatus.QUARANTINED,
+          BloodStatus.AVAILABLE,
+        ),
+      ).toBe(true);
     });
 
     it('allows EXPIRED → DISCARDED', () => {
-      expect(service.isValidTransition(BloodStatus.EXPIRED, BloodStatus.DISCARDED)).toBe(true);
+      expect(
+        service.isValidTransition(BloodStatus.EXPIRED, BloodStatus.DISCARDED),
+      ).toBe(true);
     });
 
     it('rejects DELIVERED → AVAILABLE (terminal state)', () => {
-      expect(service.isValidTransition(BloodStatus.DELIVERED, BloodStatus.AVAILABLE)).toBe(false);
+      expect(
+        service.isValidTransition(BloodStatus.DELIVERED, BloodStatus.AVAILABLE),
+      ).toBe(false);
     });
 
     it('rejects DISCARDED → AVAILABLE (terminal state)', () => {
-      expect(service.isValidTransition(BloodStatus.DISCARDED, BloodStatus.AVAILABLE)).toBe(false);
+      expect(
+        service.isValidTransition(BloodStatus.DISCARDED, BloodStatus.AVAILABLE),
+      ).toBe(false);
     });
 
     it('rejects IN_TRANSIT → AVAILABLE (skipping steps)', () => {
-      expect(service.isValidTransition(BloodStatus.IN_TRANSIT, BloodStatus.AVAILABLE)).toBe(false);
+      expect(
+        service.isValidTransition(
+          BloodStatus.IN_TRANSIT,
+          BloodStatus.AVAILABLE,
+        ),
+      ).toBe(false);
     });
 
     it('covers all statuses in the transition map', () => {
@@ -127,8 +154,12 @@ describe('BloodStatusService', () => {
 
       (bloodUnitRepository.findOne as jest.Mock).mockResolvedValue(unit);
       (bloodUnitRepository.save as jest.Mock).mockResolvedValue(unit);
-      (statusHistoryRepository.create as jest.Mock).mockReturnValue(historyEntry);
-      (statusHistoryRepository.save as jest.Mock).mockResolvedValue(historyEntry);
+      (statusHistoryRepository.create as jest.Mock).mockReturnValue(
+        historyEntry,
+      );
+      (statusHistoryRepository.save as jest.Mock).mockResolvedValue(
+        historyEntry,
+      );
       (blockchainEventRepository.create as jest.Mock).mockReturnValue({});
       (blockchainEventRepository.save as jest.Mock).mockResolvedValue({});
       (notificationsService.send as jest.Mock).mockResolvedValue([]);
@@ -192,13 +223,19 @@ describe('BloodStatusService', () => {
 
       (bloodUnitRepository.findOne as jest.Mock).mockResolvedValue(unit);
       (bloodUnitRepository.save as jest.Mock).mockResolvedValue(unit);
-      (statusHistoryRepository.create as jest.Mock).mockReturnValue(historyEntry);
-      (statusHistoryRepository.save as jest.Mock).mockResolvedValue(historyEntry);
+      (statusHistoryRepository.create as jest.Mock).mockReturnValue(
+        historyEntry,
+      );
+      (statusHistoryRepository.save as jest.Mock).mockResolvedValue(
+        historyEntry,
+      );
       (blockchainEventRepository.create as jest.Mock).mockReturnValue({});
       (blockchainEventRepository.save as jest.Mock).mockResolvedValue({});
       (notificationsService.send as jest.Mock).mockResolvedValue([]);
 
-      await service.updateStatus('unit-uuid-1', { status: BloodStatus.IN_TRANSIT });
+      await service.updateStatus('unit-uuid-1', {
+        status: BloodStatus.IN_TRANSIT,
+      });
 
       expect(bloodUnitRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({ reservedFor: null, reservedUntil: null }),
@@ -211,10 +248,16 @@ describe('BloodStatusService', () => {
 
       (bloodUnitRepository.findOne as jest.Mock).mockResolvedValue(unit);
       (bloodUnitRepository.save as jest.Mock).mockResolvedValue(unit);
-      (statusHistoryRepository.create as jest.Mock).mockReturnValue(historyEntry);
-      (statusHistoryRepository.save as jest.Mock).mockResolvedValue(historyEntry);
+      (statusHistoryRepository.create as jest.Mock).mockReturnValue(
+        historyEntry,
+      );
+      (statusHistoryRepository.save as jest.Mock).mockResolvedValue(
+        historyEntry,
+      );
       (blockchainEventRepository.create as jest.Mock).mockReturnValue({});
-      (blockchainEventRepository.save as jest.Mock).mockRejectedValue(new Error('DB error'));
+      (blockchainEventRepository.save as jest.Mock).mockRejectedValue(
+        new Error('DB error'),
+      );
       (notificationsService.send as jest.Mock).mockResolvedValue([]);
 
       const result = await service.updateStatus('unit-uuid-1', {
@@ -230,11 +273,17 @@ describe('BloodStatusService', () => {
 
       (bloodUnitRepository.findOne as jest.Mock).mockResolvedValue(unit);
       (bloodUnitRepository.save as jest.Mock).mockResolvedValue(unit);
-      (statusHistoryRepository.create as jest.Mock).mockReturnValue(historyEntry);
-      (statusHistoryRepository.save as jest.Mock).mockResolvedValue(historyEntry);
+      (statusHistoryRepository.create as jest.Mock).mockReturnValue(
+        historyEntry,
+      );
+      (statusHistoryRepository.save as jest.Mock).mockResolvedValue(
+        historyEntry,
+      );
       (blockchainEventRepository.create as jest.Mock).mockReturnValue({});
       (blockchainEventRepository.save as jest.Mock).mockResolvedValue({});
-      (notificationsService.send as jest.Mock).mockRejectedValue(new Error('SMTP down'));
+      (notificationsService.send as jest.Mock).mockRejectedValue(
+        new Error('SMTP down'),
+      );
 
       const result = await service.updateStatus('unit-uuid-1', {
         status: BloodStatus.EXPIRED,
@@ -248,15 +297,13 @@ describe('BloodStatusService', () => {
 
   describe('bulkUpdateStatus', () => {
     it('updates multiple units successfully', async () => {
-      const updateSpy = jest
-        .spyOn(service, 'updateStatus')
-        .mockResolvedValue({
-          success: true,
-          unitId: 'unit-uuid-1',
-          previousStatus: BloodStatus.AVAILABLE,
-          newStatus: BloodStatus.QUARANTINED,
-          historyId: 'hist-1',
-        });
+      const updateSpy = jest.spyOn(service, 'updateStatus').mockResolvedValue({
+        success: true,
+        unitId: 'unit-uuid-1',
+        previousStatus: BloodStatus.AVAILABLE,
+        newStatus: BloodStatus.QUARANTINED,
+        historyId: 'hist-1',
+      });
 
       const result = await service.bulkUpdateStatus({
         unitIds: ['unit-uuid-1', 'unit-uuid-2'],
@@ -281,7 +328,9 @@ describe('BloodStatusService', () => {
           newStatus: BloodStatus.EXPIRED,
           historyId: 'hist-1',
         })
-        .mockRejectedValueOnce(new NotFoundException('Blood unit unit-uuid-2 not found'));
+        .mockRejectedValueOnce(
+          new NotFoundException('Blood unit unit-uuid-2 not found'),
+        );
 
       const result = await service.bulkUpdateStatus({
         unitIds: ['unit-uuid-1', 'unit-uuid-2'],
@@ -306,8 +355,12 @@ describe('BloodStatusService', () => {
 
       (bloodUnitRepository.findOne as jest.Mock).mockResolvedValue(unit);
       (bloodUnitRepository.save as jest.Mock).mockResolvedValue(unit);
-      (statusHistoryRepository.create as jest.Mock).mockReturnValue(historyEntry);
-      (statusHistoryRepository.save as jest.Mock).mockResolvedValue(historyEntry);
+      (statusHistoryRepository.create as jest.Mock).mockReturnValue(
+        historyEntry,
+      );
+      (statusHistoryRepository.save as jest.Mock).mockResolvedValue(
+        historyEntry,
+      );
       (blockchainEventRepository.create as jest.Mock).mockReturnValue({});
       (blockchainEventRepository.save as jest.Mock).mockResolvedValue({});
 
@@ -360,7 +413,9 @@ describe('BloodStatusService', () => {
         { id: 'h2', newStatus: BloodStatus.AVAILABLE } as BloodStatusHistory,
       ];
 
-      (bloodUnitRepository.findOne as jest.Mock).mockResolvedValue({ id: 'unit-uuid-1' });
+      (bloodUnitRepository.findOne as jest.Mock).mockResolvedValue({
+        id: 'unit-uuid-1',
+      });
       (statusHistoryRepository.find as jest.Mock).mockResolvedValue(history);
 
       const result = await service.getStatusHistory('unit-uuid-1');
@@ -424,8 +479,16 @@ describe('BloodStatusService', () => {
     });
 
     it('continues processing remaining units when one fails', async () => {
-      const unit1 = makeUnit({ id: 'unit-1', status: BloodStatus.RESERVED, reservedUntil: new Date(Date.now() - 1000) });
-      const unit2 = makeUnit({ id: 'unit-2', status: BloodStatus.RESERVED, reservedUntil: new Date(Date.now() - 1000) });
+      const unit1 = makeUnit({
+        id: 'unit-1',
+        status: BloodStatus.RESERVED,
+        reservedUntil: new Date(Date.now() - 1000),
+      });
+      const unit2 = makeUnit({
+        id: 'unit-2',
+        status: BloodStatus.RESERVED,
+        reservedUntil: new Date(Date.now() - 1000),
+      });
 
       (bloodUnitRepository.find as jest.Mock).mockResolvedValue([unit1, unit2]);
       (bloodUnitRepository.save as jest.Mock)

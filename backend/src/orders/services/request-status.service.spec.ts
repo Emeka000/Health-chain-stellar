@@ -1,15 +1,16 @@
 import { BadRequestException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
-import { RequestStatusService } from './request-status.service';
-import { OrderStatus } from '../enums/order-status.enum';
-import { RequestStatusAction } from '../enums/request-status-action.enum';
-import { OrderStateMachine } from '../state-machine/order-state-machine';
-import { OrderEventStoreService } from './order-event-store.service';
-import { OrdersGateway } from '../gateways/orders.gateway';
 import { InventoryService } from '../../inventory/inventory.service';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { OrderEntity } from '../entities/order.entity';
+import { OrderStatus } from '../enums/order-status.enum';
+import { RequestStatusAction } from '../enums/request-status-action.enum';
+import { OrdersGateway } from '../gateways/orders.gateway';
+import { OrderStateMachine } from '../state-machine/order-state-machine';
+
+import { OrderEventStoreService } from './order-event-store.service';
+import { RequestStatusService } from './request-status.service';
 
 describe('RequestStatusService', () => {
   let service: RequestStatusService;
@@ -138,11 +139,17 @@ describe('RequestStatusService', () => {
     );
 
     expect(order.status).toBe(OrderStatus.CANCELLED);
-    expect(inventoryService.restoreStockOrThrow).toHaveBeenCalledWith('bank-1', 'O+', 2);
+    expect(inventoryService.restoreStockOrThrow).toHaveBeenCalledWith(
+      'bank-1',
+      'O+',
+      2,
+    );
   });
 
   it('handles blockchain sync failure without aborting transition', async () => {
-    blockchainEventRepo.save = jest.fn().mockRejectedValue(new Error('sync failed'));
+    blockchainEventRepo.save = jest
+      .fn()
+      .mockRejectedValue(new Error('sync failed'));
 
     const order = createOrder(OrderStatus.CONFIRMED);
     await service.applyStatusUpdate(

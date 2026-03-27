@@ -1,7 +1,15 @@
-import { IsNumber, IsOptional, IsEnum, IsBoolean, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
-import { VehicleType } from '../enums/vehicle-type.enum';
+import {
+  IsNumber,
+  IsOptional,
+  IsEnum,
+  IsBoolean,
+  Min,
+  Max,
+} from 'class-validator';
+
 import { RiderStatus } from '../enums/rider-status.enum';
+import { VehicleType } from '../enums/vehicle-type.enum';
 
 export class RiderSearchDto {
   @IsNumber()

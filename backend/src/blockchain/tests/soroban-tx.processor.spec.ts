@@ -1,8 +1,8 @@
 /// <reference types="jest" />
 import { Test, TestingModule } from '@nestjs/testing';
 
-import { QueueMetricsService } from '../services/queue-metrics.service';
 import { SorobanTxProcessor } from '../processors/soroban-tx.processor';
+import { QueueMetricsService } from '../services/queue-metrics.service';
 import { SorobanTxJob } from '../types/soroban-tx.types';
 
 const mockQueueMetricsService = {
@@ -81,7 +81,9 @@ describe('SorobanTxProcessor', () => {
         .spyOn(processor as any, 'executeContractCall')
         .mockRejectedValueOnce(new Error('RPC timeout'));
 
-      await expect(processor.handleTransaction(mockJob as any)).rejects.toThrow();
+      await expect(
+        processor.handleTransaction(mockJob as any),
+      ).rejects.toThrow();
       expect(mockQueueMetricsService.incrementRetry).toHaveBeenCalledTimes(1);
     });
 
@@ -101,7 +103,9 @@ describe('SorobanTxProcessor', () => {
         .spyOn(processor as any, 'executeContractCall')
         .mockRejectedValueOnce(new Error('final failure'));
 
-      await expect(processor.handleTransaction(mockJob as any)).rejects.toThrow();
+      await expect(
+        processor.handleTransaction(mockJob as any),
+      ).rejects.toThrow();
       expect(mockQueueMetricsService.incrementRetry).not.toHaveBeenCalled();
     });
 

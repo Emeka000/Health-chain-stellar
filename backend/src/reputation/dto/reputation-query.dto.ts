@@ -1,5 +1,6 @@
-import { IsEnum, IsInt, IsOptional, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
+import { IsEnum, IsInt, IsOptional, Min, Max } from 'class-validator';
+
 import { ReputationEventType } from '../enums/reputation-event-type.enum';
 
 export class LeaderboardQueryDto {

@@ -16,15 +16,20 @@ import { PermissionsGuard } from './auth/guards/permissions.guard';
 import { BlockchainModule } from './blockchain/blockchain.module';
 import { BloodRequestsModule } from './blood-requests/blood-requests.module';
 import { BloodUnitsModule } from './blood-units/blood-units.module';
+import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
+import { CorrelationIdService } from './common/middleware/correlation-id.service';
 import { AppConfigModule } from './config/config.module';
+import { DatabaseSyncGuard } from './config/database-sync.guard';
 import { DispatchModule } from './dispatch/dispatch.module';
 import { DonorImpactModule } from './donor-impact/donor-impact.module';
 import { LocationHistoryModule } from './location-history/location-history.module';
 import { HospitalsModule } from './hospitals/hospitals.module';
 import { InventoryModule } from './inventory/inventory.module';
+import { LocationHistoryModule } from './location-history/location-history.module';
 import { MapsModule } from './maps/maps.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { OrdersModule } from './orders/orders.module';
+import { FeePolicyModule } from './fee-policy/fee-policy.module';
 import { OrganizationsModule } from './organizations/organizations.module';
 import { REDIS_CLIENT } from './redis/redis.constants';
 import { RedisModule } from './redis/redis.module';
@@ -34,9 +39,6 @@ import { throttleGetTracker } from './throttler/throttle-tracker.util';
 import { ActivityLoggingInterceptor } from './user-activity/interceptors/activity-logging.interceptor';
 import { UserActivityModule } from './user-activity/user-activity.module';
 import { UsersModule } from './users/users.module';
-import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
-import { CorrelationIdService } from './common/middleware/correlation-id.service';
-import { DatabaseSyncGuard } from './config/database-sync.guard';
 
 import type Redis from 'ioredis';
 
@@ -116,7 +118,8 @@ import type Redis from 'ioredis';
     UserActivityModule,
     EventsModule,
     RetentionModule,
-  ],
+    FeePolicyModule,
+  ]
   controllers: [AppController],
   providers: [
     AppService,

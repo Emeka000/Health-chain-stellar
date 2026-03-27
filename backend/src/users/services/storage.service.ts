@@ -1,7 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
 import { v4 as uuidv4 } from 'uuid';
 
 export interface StorageResult {
@@ -17,7 +19,10 @@ export class StorageService {
   private readonly uploadDir: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.storageType = this.configService.get<string>('STORAGE_TYPE', 'local') as 'local' | 's3';
+    this.storageType = this.configService.get<string>(
+      'STORAGE_TYPE',
+      'local',
+    ) as 'local' | 's3';
     this.uploadDir = this.configService.get<string>('UPLOAD_DIR', './uploads');
   }
 
@@ -64,7 +69,9 @@ export class StorageService {
   ): Promise<StorageResult> {
     // S3 implementation would go here
     // For now, we'll use local storage as fallback
-    this.logger.warn('S3 storage not implemented, falling back to local storage');
+    this.logger.warn(
+      'S3 storage not implemented, falling back to local storage',
+    );
     return this.uploadToLocal(file, key, 'avatars');
   }
 

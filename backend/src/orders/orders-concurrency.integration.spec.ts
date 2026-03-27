@@ -1,19 +1,22 @@
 import { INestApplication } from '@nestjs/common';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { Test, TestingModule } from '@nestjs/testing';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { EventEmitterModule } from '@nestjs/event-emitter';
+
 import request from 'supertest';
 import { App } from 'supertest/types';
+
+import { InventoryStockEntity } from '../inventory/entities/inventory-stock.entity';
+import { InventoryService } from '../inventory/inventory.service';
+
+import { OrderEventEntity } from './entities/order-event.entity';
+import { OrderEntity } from './entities/order.entity';
+import { OrdersGateway } from './gateways/orders.gateway';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
-import { OrderEntity } from './entities/order.entity';
-import { OrderEventEntity } from './entities/order-event.entity';
-import { OrderStateMachine } from './state-machine/order-state-machine';
 import { OrderEventStoreService } from './services/order-event-store.service';
 import { RequestStatusService } from './services/request-status.service';
-import { OrdersGateway } from './gateways/orders.gateway';
-import { InventoryService } from '../inventory/inventory.service';
-import { InventoryStockEntity } from '../inventory/entities/inventory-stock.entity';
+import { OrderStateMachine } from './state-machine/order-state-machine';
 
 describe('Orders Inventory Concurrency Integration', () => {
   let app: INestApplication<App>;
@@ -29,7 +32,11 @@ describe('Orders Inventory Concurrency Integration', () => {
           entities: [OrderEntity, OrderEventEntity, InventoryStockEntity],
           synchronize: true,
         }),
-        TypeOrmModule.forFeature([OrderEntity, OrderEventEntity, InventoryStockEntity]),
+        TypeOrmModule.forFeature([
+          OrderEntity,
+          OrderEventEntity,
+          InventoryStockEntity,
+        ]),
         EventEmitterModule.forRoot(),
       ],
       controllers: [OrdersController],

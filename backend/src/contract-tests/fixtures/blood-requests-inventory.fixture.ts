@@ -27,69 +27,71 @@ export const BloodRequestInventoryItemFixture = {
 /**
  * Reserve stock request contract
  */
-export const ReserveStockRequestInteraction: ServiceInteraction = createInteraction(
-  'Reserve blood stock',
-  'BloodRequests',
-  'Inventory',
-  {
-    method: 'POST',
-    path: '/inventory/reserve',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: 'Bearer valid-jwt-token',
+export const ReserveStockRequestInteraction: ServiceInteraction =
+  createInteraction(
+    'Reserve blood stock',
+    'BloodRequests',
+    'Inventory',
+    {
+      method: 'POST',
+      path: '/inventory/reserve',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer valid-jwt-token',
+      },
+      body: {
+        bloodType: 'A+',
+        quantity: 5,
+        bloodBankId: 'bank-001',
+        requestId: 'BR-12345-ABC',
+      },
     },
-    body: {
-      bloodType: 'A+',
-      quantity: 5,
-      bloodBankId: 'bank-001',
-      requestId: 'BR-12345-ABC',
+    {
+      status: 200,
+      body: {
+        success: true,
+        reservationId: 'RES-12345',
+        bloodType: 'A+',
+        quantity: 5,
+        availableUnits: 45, // 50 - 5 reserved
+        bloodBankId: 'bank-001',
+      },
     },
-  },
-  {
-    status: 200,
-    body: {
-      success: true,
-      reservationId: 'RES-12345',
-      bloodType: 'A+',
-      quantity: 5,
-      availableUnits: 45, // 50 - 5 reserved
-      bloodBankId: 'bank-001',
-    },
-  },
-);
+  );
 
 /**
  * Release stock (rollback) contract
  */
-export const ReleaseStockRequestInteraction: ServiceInteraction = createInteraction(
-  'Release blood stock on failure',
-  'BloodRequests',
-  'Inventory',
-  {
-    method: 'POST',
-    path: '/inventory/release',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: 'Bearer valid-jwt-token',
+export const ReleaseStockRequestInteraction: ServiceInteraction =
+  createInteraction(
+    'Release blood stock on failure',
+    'BloodRequests',
+    'Inventory',
+    {
+      method: 'POST',
+      path: '/inventory/release',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer valid-jwt-token',
+      },
+      body: {
+        bloodType: 'A+',
+        quantity: 5,
+        bloodBankId: 'bank-001',
+        reservationId: 'RES-12345',
+      },
     },
-    body: {
-      bloodType: 'A+',
-      quantity: 5,
-      bloodBankId: 'bank-001',
-      reservationId: 'RES-12345',
+    {
+      status: 200,
+      body: {
+        success: true,
+        bloodType: 'A+',
+        quantity: 5,
+        availableUnits: 50, // Back to original
+        bloodBankId: 'bank-001',
+      },
     },
-  },
-  {
-    status: 200,
-    body: {
-      success: true,
-      bloodType: 'A+',
-      quantity: 5,
-      availableUnits: 50, // Back to original
-      bloodBankId: 'bank-001',
-    },
-  },
-);
+  );
 
 /**
  * Insufficient stock error contract

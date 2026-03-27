@@ -5,10 +5,19 @@ import {
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+
 import { Repository } from 'typeorm';
-import { FEE_POLICY_ERRORS, PAYMENT_AMOUNT_MIN_STROOPS } from './fee-policy.constants';
+
+import {
+  FEE_POLICY_ERRORS,
+  PAYMENT_AMOUNT_MIN_STROOPS,
+} from './fee-policy.constants';
 import { QuotePaymentDto } from './fee-policy.dto';
-import { FeePolicyEntity, FeeRecipientType, FeePolicyStatus } from './fee-policy.entity';
+import {
+  FeePolicyEntity,
+  FeeRecipientType,
+  FeePolicyStatus,
+} from './fee-policy.entity';
 import { FeePolicyService } from './fee-policy.service';
 
 // ─── Factory helpers ──────────────────────────────────────────────────────────
@@ -177,7 +186,10 @@ describe('FeePolicyService', () => {
       const policy = makePolicy({ status: FeePolicyStatus.DRAFT });
       repo.findOneBy.mockResolvedValue(policy);
       repo.merge.mockReturnValue({ ...policy, status: FeePolicyStatus.ACTIVE });
-      repo.save.mockResolvedValue({ ...policy, status: FeePolicyStatus.ACTIVE });
+      repo.save.mockResolvedValue({
+        ...policy,
+        status: FeePolicyStatus.ACTIVE,
+      });
 
       const result = await service.activate(policy.id);
       expect(result.status).toBe(FeePolicyStatus.ACTIVE);
@@ -217,7 +229,9 @@ describe('FeePolicyService', () => {
       const breakdown = await service.quotePayment(quoteDto);
 
       expect(breakdown.grossAmountStroops).toBe(quoteDto.grossAmountStroops);
-      expect(breakdown.netAmountStroops).toBeLessThan(quoteDto.grossAmountStroops);
+      expect(breakdown.netAmountStroops).toBeLessThan(
+        quoteDto.grossAmountStroops,
+      );
       expect(breakdown.totalFeeStroops).toBeGreaterThan(0);
       expect(breakdown.effectiveFeePercent).toMatch(/%$/);
     });

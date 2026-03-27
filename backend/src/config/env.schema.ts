@@ -170,13 +170,7 @@ export class EnvironmentVariables {
 
   @IsOptional()
   @IsString()
-  SMTP_PASSWORD: string = '';
-
-  @IsOptional()
-  @IsString()
-  SMTP_FROM: string = 'noreply@example.com';
-
-  // ─── Rate Limiting ────────────────────────────────────────────────────────
+  SMTP_PASSWORD: string = ''; \n\n  @IsOptional() \n  @IsString() \n  SMTP_FROM: string = 'noreply@example.com'; \n\n  // ─── Account Lockout ─────────────────────────────────────────────────────\n\n  @IsOptional()\n  @Type(() => Number)\n  @IsInt()\n  @Min(3)\n  @Max(10)\n  MAX_FAILED_LOGIN_ATTEMPTS: number = 5;\n\n  @IsOptional()\n  @Type(() => Number)\n  @IsInt()\n  @Min(5)\n  @Max(60)\n  ACCOUNT_LOCK_MINUTES: number = 15;\n\n  // ─── Rate Limiting ────────────────────────────────────────────────────────
 
   @IsOptional()
   @Type(() => Number)

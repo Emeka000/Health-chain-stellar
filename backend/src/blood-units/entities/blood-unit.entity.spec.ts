@@ -1,7 +1,8 @@
-import { BloodUnit } from './blood-unit.entity';
-import { BloodType } from '../enums/blood-type.enum';
-import { BloodStatus } from '../enums/blood-status.enum';
 import { BloodComponent } from '../enums/blood-component.enum';
+import { BloodStatus } from '../enums/blood-status.enum';
+import { BloodType } from '../enums/blood-type.enum';
+
+import { BloodUnit } from './blood-unit.entity';
 
 describe('BloodUnit Entity', () => {
   let bloodUnit: BloodUnit;
@@ -128,7 +129,9 @@ describe('BloodUnit Entity', () => {
       bloodUnit.collectedAt = new Date('2024-01-01T00:00:00Z');
       const result = bloodUnit.validate();
       expect(result.isValid).toBe(false);
-      expect(result.errors).toContain('Expiration date must be after collection date');
+      expect(result.errors).toContain(
+        'Expiration date must be after collection date',
+      );
     });
 
     it('should return invalid when blood unit is expired', () => {
@@ -172,7 +175,9 @@ describe('BloodUnit Entity', () => {
     it('should return correct remaining hours', () => {
       const now = new Date();
       const hoursInFuture = 48;
-      bloodUnit.expiresAt = new Date(now.getTime() + hoursInFuture * 60 * 60 * 1000);
+      bloodUnit.expiresAt = new Date(
+        now.getTime() + hoursInFuture * 60 * 60 * 1000,
+      );
       const remaining = bloodUnit.getRemainingShelfLifeHours();
       expect(remaining).toBeCloseTo(hoursInFuture, 0);
     });
@@ -201,8 +206,12 @@ describe('BloodUnit Entity', () => {
     it('should return approximately 50% when half expired', () => {
       const now = new Date();
       const totalDays = 30;
-      bloodUnit.collectedAt = new Date(now.getTime() - (totalDays / 2) * 24 * 60 * 60 * 1000);
-      bloodUnit.expiresAt = new Date(now.getTime() + (totalDays / 2) * 24 * 60 * 60 * 1000);
+      bloodUnit.collectedAt = new Date(
+        now.getTime() - (totalDays / 2) * 24 * 60 * 60 * 1000,
+      );
+      bloodUnit.expiresAt = new Date(
+        now.getTime() + (totalDays / 2) * 24 * 60 * 60 * 1000,
+      );
       const percentage = bloodUnit.getRemainingShelfLifePercentage();
       expect(percentage).toBeCloseTo(50, 0);
     });
@@ -289,7 +298,10 @@ describe('BloodUnit Entity', () => {
       expect(summary).toHaveProperty('isExpired');
       expect(summary).toHaveProperty('isAvailable');
       expect(summary).toHaveProperty('remainingShelfLifeHours');
-      expect(summary).toHaveProperty('organizationId', bloodUnit.organizationId);
+      expect(summary).toHaveProperty(
+        'organizationId',
+        bloodUnit.organizationId,
+      );
     });
   });
 

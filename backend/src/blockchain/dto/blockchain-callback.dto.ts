@@ -1,4 +1,10 @@
-import { IsISO8601, IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import {
+  IsISO8601,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class BlockchainCallbackDto {
   @IsString()

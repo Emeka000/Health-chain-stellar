@@ -12,13 +12,16 @@ import {
 
 import { RequirePermissions } from '../../auth/decorators/require-permissions.decorator';
 import { Permission } from '../../auth/enums/permission.enum';
-
+import {
+  AlertType,
+  AlertStatus,
+  AlertSeverity,
+} from '../entities/inventory-alert.entity';
 import {
   InventoryAlertService,
   DismissAlertParams,
   ResolveAlertParams,
 } from '../services/inventory-alert.service';
-import { AlertType, AlertStatus, AlertSeverity } from '../entities/inventory-alert.entity';
 
 @Controller('inventory/alerts')
 export class InventoryAlertController {
@@ -61,10 +64,7 @@ export class InventoryAlertController {
   @RequirePermissions(Permission.MANAGE_INVENTORY)
   @Post(':id/dismiss')
   @HttpCode(HttpStatus.OK)
-  dismissAlert(
-    @Param('id') id: string,
-    @Request() req: any,
-  ) {
+  dismissAlert(@Param('id') id: string, @Request() req: any) {
     const params: DismissAlertParams = {
       alertId: id,
       dismissedBy: req.user?.id,
@@ -75,10 +75,7 @@ export class InventoryAlertController {
   @RequirePermissions(Permission.MANAGE_INVENTORY)
   @Post(':id/resolve')
   @HttpCode(HttpStatus.OK)
-  resolveAlert(
-    @Param('id') id: string,
-    @Request() req: any,
-  ) {
+  resolveAlert(@Param('id') id: string, @Request() req: any) {
     const params: ResolveAlertParams = {
       alertId: id,
       resolvedBy: req.user?.id,

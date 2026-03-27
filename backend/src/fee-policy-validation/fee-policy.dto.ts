@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
+
 import {
   IsEnum,
   IsInt,
@@ -8,6 +9,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+
 import {
   FLAT_FEE_MAX_STROOPS,
   FLAT_FEE_MIN_STROOPS,

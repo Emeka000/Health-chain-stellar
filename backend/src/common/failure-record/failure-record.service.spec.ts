@@ -6,7 +6,10 @@ import {
   CompensationAction,
 } from '../errors/app-errors';
 
-import { FailureRecordEntity, FailureRecordStatus } from './failure-record.entity';
+import {
+  FailureRecordEntity,
+  FailureRecordStatus,
+} from './failure-record.entity';
 import { FailureRecordService } from './failure-record.service';
 
 const mockRepo = {
@@ -24,7 +27,10 @@ describe('FailureRecordService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FailureRecordService,
-        { provide: getRepositoryToken(FailureRecordEntity), useValue: mockRepo },
+        {
+          provide: getRepositoryToken(FailureRecordEntity),
+          useValue: mockRepo,
+        },
       ],
     }).compile();
 
@@ -33,7 +39,9 @@ describe('FailureRecordService', () => {
 
   describe('persist', () => {
     it('saves a failure record and returns it', async () => {
-      const error = new BlockchainTxIrrecoverableError('tx failed', { jobId: 'j1' });
+      const error = new BlockchainTxIrrecoverableError('tx failed', {
+        jobId: 'j1',
+      });
       const saved = { id: 'rec-1', status: FailureRecordStatus.PENDING_REVIEW };
       mockRepo.create.mockReturnValue(saved);
       mockRepo.save.mockResolvedValue(saved);
@@ -77,7 +85,9 @@ describe('FailureRecordService', () => {
       mockRepo.find.mockResolvedValue([{ id: 'r1' }]);
       const result = await service.findPendingReview();
       expect(mockRepo.find).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { status: FailureRecordStatus.PENDING_REVIEW } }),
+        expect.objectContaining({
+          where: { status: FailureRecordStatus.PENDING_REVIEW },
+        }),
       );
       expect(result).toHaveLength(1);
     });

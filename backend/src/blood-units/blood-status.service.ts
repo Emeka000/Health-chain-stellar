@@ -5,8 +5,9 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { InjectRepository } from '@nestjs/typeorm';
+
 import { LessThan, Repository } from 'typeorm';
 
 import { NotificationChannel } from '../notifications/enums/notification-channel.enum';
@@ -18,8 +19,8 @@ import {
   ReserveBloodUnitDto,
   UpdateBloodStatusDto,
 } from './dto/update-blood-status.dto';
-import { BloodUnit } from './entities/blood-unit.entity';
 import { BloodStatusHistory } from './entities/blood-status-history.entity';
+import { BloodUnit } from './entities/blood-unit.entity';
 import { BloodStatus } from './enums/blood-status.enum';
 
 interface AuthenticatedUserContext {
@@ -73,7 +74,9 @@ export class BloodStatusService {
     dto: UpdateBloodStatusDto,
     user?: AuthenticatedUserContext,
   ) {
-    const unit = await this.bloodUnitRepository.findOne({ where: { id: unitId } });
+    const unit = await this.bloodUnitRepository.findOne({
+      where: { id: unitId },
+    });
     if (!unit) {
       throw new NotFoundException(`Blood unit ${unitId} not found`);
     }
@@ -83,7 +86,10 @@ export class BloodStatusService {
     const previousStatus = unit.status;
     unit.status = dto.status;
 
-    if (previousStatus === BloodStatus.RESERVED && dto.status !== BloodStatus.RESERVED) {
+    if (
+      previousStatus === BloodStatus.RESERVED &&
+      dto.status !== BloodStatus.RESERVED
+    ) {
       unit.reservedFor = null;
       unit.reservedUntil = null;
     }
@@ -99,7 +105,12 @@ export class BloodStatusService {
     });
     await this.statusHistoryRepository.save(historyEntry);
 
-    await this.syncStatusToBlockchain(unit, previousStatus, dto.status, user?.id ?? null);
+    await this.syncStatusToBlockchain(
+      unit,
+      previousStatus,
+      dto.status,
+      user?.id ?? null,
+    );
     await this.sendStatusChangeNotification(unit, previousStatus, dto.status);
 
     return {
@@ -115,7 +126,10 @@ export class BloodStatusService {
     dto: BulkUpdateBloodStatusDto,
     user?: AuthenticatedUserContext,
   ) {
-    const updateDto: UpdateBloodStatusDto = { status: dto.status, reason: dto.reason };
+    const updateDto: UpdateBloodStatusDto = {
+      status: dto.status,
+      reason: dto.reason,
+    };
 
     const results = await Promise.allSettled(
       dto.unitIds.map((unitId) => this.updateStatus(unitId, updateDto, user)),
@@ -142,7 +156,9 @@ export class BloodStatusService {
     dto: ReserveBloodUnitDto,
     user?: AuthenticatedUserContext,
   ) {
-    const unit = await this.bloodUnitRepository.findOne({ where: { id: unitId } });
+    const unit = await this.bloodUnitRepository.findOne({
+      where: { id: unitId },
+    });
     if (!unit) {
       throw new NotFoundException(`Blood unit ${unitId} not found`);
     }
@@ -164,12 +180,19 @@ export class BloodStatusService {
       bloodUnitId: unitId,
       previousStatus,
       newStatus: BloodStatus.RESERVED,
-      reason: dto.reason ?? `Reserved for ${dto.reservedFor} until ${dto.reservedUntil}`,
+      reason:
+        dto.reason ??
+        `Reserved for ${dto.reservedFor} until ${dto.reservedUntil}`,
       changedBy: user?.id ?? null,
     });
     await this.statusHistoryRepository.save(historyEntry);
 
-    await this.syncStatusToBlockchain(unit, previousStatus, BloodStatus.RESERVED, user?.id ?? null);
+    await this.syncStatusToBlockchain(
+      unit,
+      previousStatus,
+      BloodStatus.RESERVED,
+      user?.id ?? null,
+    );
 
     return {
       success: true,

@@ -80,10 +80,12 @@ pub struct Payment {
     pub payer: Address,
     /// Address receiving the payment
     pub payee: Address,
-    /// Payment amount in smallest unit
+    /// Payment amount in smallest unit (net after fees)
     pub amount: i128,
     /// Asset contract address
     pub asset: Address,
+    /// Fee structure applied (for audit)
+    pub fee_structure: FeeStructure,
     /// Current payment status
     pub status: PaymentStatus,
     /// Timestamp when escrow was released (if applicable)
@@ -106,12 +108,16 @@ pub struct EscrowAccount {
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FeeStructure {
+    /// Policy ID for audit
+    pub policy_id: Symbol,
     /// Platform service fee
     pub service_fee: i128,
     /// Network transaction fee
     pub network_fee: i128,
     /// Optional performance-based bonus
     pub performance_bonus: i128,
+    /// Fixed fee
+    pub fixed_fee: i128,
 }
 
 /// Additional metadata for transaction tracking
@@ -230,12 +236,16 @@ impl EscrowAccount {
 impl FeeStructure {
     /// Calculates total fees
     pub fn total(&self) -> i128 {
-        self.service_fee + self.network_fee + self.performance_bonus
+        self.service_fee + self.network_fee + self.performance_bonus + self.fixed_fee
     }
 
     /// Validates fee structure
     pub fn validate(&self) -> Result<(), PaymentError> {
-        if self.service_fee < 0 || self.network_fee < 0 || self.performance_bonus < 0 {
+        if self.service_fee < 0
+            || self.network_fee < 0
+            || self.performance_bonus < 0
+            || self.fixed_fee < 0
+        {
             return Err(PaymentError::InvalidFee);
         }
         Ok(())

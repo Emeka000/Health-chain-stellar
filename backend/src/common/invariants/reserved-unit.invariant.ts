@@ -8,8 +8,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 
 import { In, Repository } from 'typeorm';
 
-import { BloodStatus } from '../../blood-units/enums/blood-status.enum';
 import { BloodUnitEntity } from '../../blood-units/entities/blood-unit.entity';
+import { BloodStatus } from '../../blood-units/enums/blood-status.enum';
 
 /** Statuses that allow a unit to be reserved for fulfillment. */
 const RESERVABLE_STATUSES: readonly string[] = [BloodStatus.AVAILABLE];

@@ -14,9 +14,7 @@ import {
   RiderAlreadyBusyErrorInteraction,
   ReleaseRiderFromOrderInteraction,
 } from '../contract-tests/fixtures';
-import {
-  validateInteraction,
-} from '../contract-tests/utils/interaction-matcher';
+import { validateInteraction } from '../contract-tests/utils/interaction-matcher';
 
 describe('[CONTRACT] Dispatch ↔ Riders (Order Assignment)', () => {
   /**
@@ -130,9 +128,9 @@ describe('[CONTRACT] Dispatch ↔ Riders (Order Assignment)', () => {
       );
 
       expect(validation.valid).toBe(false);
-      expect(validation.responseErrors.some((e) => e.includes('BREAKING'))).toBe(
-        true,
-      );
+      expect(
+        validation.responseErrors.some((e) => e.includes('BREAKING')),
+      ).toBe(true);
     });
   });
 
@@ -263,7 +261,11 @@ describe('[CONTRACT] Dispatch ↔ Riders (Order Assignment)', () => {
             'Content-Type': 'application/json',
             Authorization: 'Bearer valid-jwt-token',
           },
-          body: { status: 'busy', reason: 'Assigned to order ORD-12345', orderId: 'ORD-12345' },
+          body: {
+            status: 'busy',
+            reason: 'Assigned to order ORD-12345',
+            orderId: 'ORD-12345',
+          },
         },
         assignResponse,
         AssignOrderToRiderInteraction,
@@ -289,7 +291,11 @@ describe('[CONTRACT] Dispatch ↔ Riders (Order Assignment)', () => {
             'Content-Type': 'application/json',
             Authorization: 'Bearer valid-jwt-token',
           },
-          body: { status: 'busy', reason: 'Assigned to order ORD-12346', orderId: 'ORD-12346' },
+          body: {
+            status: 'busy',
+            reason: 'Assigned to order ORD-12346',
+            orderId: 'ORD-12346',
+          },
         },
         doubleAssignResponse,
         RiderAlreadyBusyErrorInteraction,
@@ -343,7 +349,11 @@ describe('[CONTRACT] Dispatch ↔ Riders (Order Assignment)', () => {
             'Content-Type': 'application/json',
             Authorization: 'Bearer valid-jwt-token',
           },
-          body: { status: 'busy', reason: 'Assigned to order ORD-12346', orderId: 'ORD-12346' },
+          body: {
+            status: 'busy',
+            reason: 'Assigned to order ORD-12346',
+            orderId: 'ORD-12346',
+          },
         },
         newAssignResponse,
         AssignOrderToRiderInteraction,
@@ -356,15 +366,15 @@ describe('[CONTRACT] Dispatch ↔ Riders (Order Assignment)', () => {
   describe('Contract Completeness', () => {
     it('should have all required interactions', () => {
       expect(DispatchRidersContract.interactions).toHaveLength(3);
-      expect(
-        DispatchRidersContract.interactions.map((i) => i.name),
-      ).toContain('Assign order to rider');
-      expect(
-        DispatchRidersContract.interactions.map((i) => i.name),
-      ).toContain('Rider busy error');
-      expect(
-        DispatchRidersContract.interactions.map((i) => i.name),
-      ).toContain('Release rider from order');
+      expect(DispatchRidersContract.interactions.map((i) => i.name)).toContain(
+        'Assign order to rider',
+      );
+      expect(DispatchRidersContract.interactions.map((i) => i.name)).toContain(
+        'Rider busy error',
+      );
+      expect(DispatchRidersContract.interactions.map((i) => i.name)).toContain(
+        'Release rider from order',
+      );
     });
 
     it('should maintain consumer-provider clarity', () => {

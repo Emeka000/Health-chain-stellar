@@ -33,6 +33,8 @@ describe('AuthService', () => {
         JWT_REFRESH_SECRET: 'test-refresh-secret',
         JWT_EXPIRES_IN: '1h',
         JWT_REFRESH_EXPIRES_IN: '7d',
+        MAX_FAILED_LOGIN_ATTEMPTS: 5,
+        ACCOUNT_LOCK_MINUTES: 15,
       };
       return config[key] || defaultValue;
     }),
@@ -123,13 +125,31 @@ describe('AuthService', () => {
       expect(mockJwtService.sign).toHaveBeenCalledTimes(2);
     });
 
-    it('locks account after 5 failed attempts', async () => {
+    it('locks account after MAX_FAILED_LOGIN_ATTEMPTS failed attempts', async () => {
+      const mockConfigServiceCustom = {
+        get: jest.fn().mockImplementation((key: string) => {
+          if (key === 'MAX_FAILED_LOGIN_ATTEMPTS') return 3;
+          if (key === 'ACCOUNT_LOCK_MINUTES') return 5;
+          return mockConfigService.get(key);
+        }),
+      };
+      const moduleCustom = await Test.createTestingModule({
+        providers: [
+          AuthService,
+          { provide: JwtService, useValue: mockJwtService },
+          { provide: ConfigService, useValue: mockConfigServiceCustom },
+          { provide: REDIS_CLIENT, useValue: mockRedis },
+          { provide: getRepositoryToken(UserEntity), useValue: userRepository },
+        ],
+      }).compile();
+      const serviceCustom = moduleCustom.get<AuthService>(AuthService);
+
       const user = {
         id: 'user-1',
         email: 'test@example.com',
         role: 'donor',
         passwordHash: await hashPassword('password'),
-        failedLoginAttempts: 4,
+        failedLoginAttempts: 2,
         lockedUntil: null,
       } as UserEntity;
       (userRepository.findOne as jest.Mock).mockResolvedValue(user);
@@ -138,17 +158,34 @@ describe('AuthService', () => {
       );
 
       await expect(
-        service.login({
+        serviceCustom.login({
           email: 'test@example.com',
           password: 'wrong-password',
         }),
       ).rejects.toThrow(UnauthorizedException);
 
-      expect(user.failedLoginAttempts).toBe(5);
+      expect(user.failedLoginAttempts).toBe(3);
       expect(user.lockedUntil).toBeInstanceOf(Date);
     });
 
-    it('auto unlocks account after lock duration and allows login', async () => {
+    it('auto unlocks account after custom ACCOUNT_LOCK_MINUTES and allows login', async () => {
+      const mockConfigServiceCustom = {
+        get: jest.fn().mockImplementation((key: string) => {
+          if (key === 'ACCOUNT_LOCK_MINUTES') return 1;
+          return mockConfigService.get(key);
+        }),
+      };
+      const moduleCustom = await Test.createTestingModule({
+        providers: [
+          AuthService,
+          { provide: JwtService, useValue: mockJwtService },
+          { provide: ConfigService, useValue: mockConfigServiceCustom },
+          { provide: REDIS_CLIENT, useValue: mockRedis },
+          { provide: getRepositoryToken(UserEntity), useValue: userRepository },
+        ],
+      }).compile();
+      const serviceCustom = moduleCustom.get<AuthService>(AuthService);
+
       const user = {
         id: 'user-1',
         email: 'test@example.com',
@@ -164,7 +201,7 @@ describe('AuthService', () => {
       mockJwtService.sign.mockReturnValueOnce('access-token');
       mockJwtService.sign.mockReturnValueOnce('refresh-token');
 
-      const result = await service.login({
+      const result = await serviceCustom.login({
         email: 'test@example.com',
         password: 'password',
       });
@@ -201,7 +238,7 @@ describe('AuthService', () => {
       };
 
       mockJwtService.verify.mockReturnValue(mockPayload);
-      mockRedis.set.mockResolvedValue('OK'); // SET NX succeeds
+      mockRedis.set.mockResolvedValue('OK');
       mockRedis.hgetall.mockResolvedValue({
         userId: 'user-123',
       });
@@ -232,7 +269,7 @@ describe('AuthService', () => {
       };
 
       mockJwtService.verify.mockReturnValue(mockPayload);
-      mockRedis.set.mockResolvedValue(null); // SET NX fails (key exists)
+      mockRedis.set.mockResolvedValue(null);
 
       await expect(service.refreshToken('used-refresh-token')).rejects.toThrow(
         new UnauthorizedException('INVALID_REFRESH_TOKEN'),

@@ -1,18 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { InjectRepository } from '@nestjs/typeorm';
 
+import { Repository, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
+
+import { NotificationChannel } from '../../notifications/enums/notification-channel.enum';
+import { NotificationsService } from '../../notifications/notifications.service';
+import { AlertPreferenceEntity } from '../entities/alert-preference.entity';
 import {
   InventoryAlertEntity,
   AlertType,
   AlertSeverity,
   AlertStatus,
 } from '../entities/inventory-alert.entity';
-import { AlertPreferenceEntity } from '../entities/alert-preference.entity';
 import { InventoryStockEntity } from '../entities/inventory-stock.entity';
-import { NotificationsService } from '../../notifications/notifications.service';
-import { NotificationChannel } from '../../notifications/enums/notification-channel.enum';
 
 export interface CreateAlertParams {
   bloodBankId: string;
@@ -62,7 +63,8 @@ export class InventoryAlertService {
 
     if (existingAlert) {
       // Update existing alert
-      existingAlert.currentValue = params.currentValue ?? existingAlert.currentValue;
+      existingAlert.currentValue =
+        params.currentValue ?? existingAlert.currentValue;
       existingAlert.message = params.message;
       existingAlert.severity = params.severity;
       return this.alertRepository.save(existingAlert);
@@ -88,7 +90,9 @@ export class InventoryAlertService {
     return savedAlert;
   }
 
-  async dismissAlert(params: DismissAlertParams): Promise<InventoryAlertEntity> {
+  async dismissAlert(
+    params: DismissAlertParams,
+  ): Promise<InventoryAlertEntity> {
     const alert = await this.alertRepository.findOne({
       where: { id: params.alertId },
     });
@@ -104,7 +108,9 @@ export class InventoryAlertService {
     return this.alertRepository.save(alert);
   }
 
-  async resolveAlert(params: ResolveAlertParams): Promise<InventoryAlertEntity> {
+  async resolveAlert(
+    params: ResolveAlertParams,
+  ): Promise<InventoryAlertEntity> {
     const alert = await this.alertRepository.findOne({
       where: { id: params.alertId },
     });
@@ -169,14 +175,14 @@ export class InventoryAlertService {
     return this.alertRepository.findOne({ where: { id } });
   }
 
-  async getAlertStats(
-    bloodBankId?: string,
-  ): Promise<{
+  async getAlertStats(bloodBankId?: string): Promise<{
     totalActive: number;
     byType: Record<AlertType, number>;
     bySeverity: Record<AlertSeverity, number>;
   }> {
-    const where = bloodBankId ? { bloodBankId, status: AlertStatus.ACTIVE } : { status: AlertStatus.ACTIVE };
+    const where = bloodBankId
+      ? { bloodBankId, status: AlertStatus.ACTIVE }
+      : { status: AlertStatus.ACTIVE };
 
     const alerts = await this.alertRepository.find({ where });
 
@@ -228,7 +234,7 @@ export class InventoryAlertService {
     organizationId: string,
     updates: Partial<AlertPreferenceEntity>,
   ): Promise<AlertPreferenceEntity> {
-    let preferences = await this.getAlertPreferences(organizationId);
+    const preferences = await this.getAlertPreferences(organizationId);
 
     Object.assign(preferences, updates);
     return this.preferenceRepository.save(preferences);

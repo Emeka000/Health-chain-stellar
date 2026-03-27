@@ -9,7 +9,11 @@ import { OrderTransitionException } from '../exceptions/order-transition.excepti
  */
 export const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [OrderStatus.PENDING]: [OrderStatus.CONFIRMED, OrderStatus.CANCELLED],
-  [OrderStatus.CONFIRMED]: [OrderStatus.DISPATCHED, OrderStatus.DELIVERED, OrderStatus.CANCELLED],
+  [OrderStatus.CONFIRMED]: [
+    OrderStatus.DISPATCHED,
+    OrderStatus.DELIVERED,
+    OrderStatus.CANCELLED,
+  ],
   [OrderStatus.DISPATCHED]: [OrderStatus.IN_TRANSIT, OrderStatus.CANCELLED],
   [OrderStatus.IN_TRANSIT]: [
     OrderStatus.DELIVERED,

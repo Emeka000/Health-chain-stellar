@@ -47,7 +47,10 @@ export function assertStellarPublicKey(value: string, field: string): void {
 /**
  * Asserts that `value` is a safe, non-empty idempotency key.
  */
-export function assertIdempotencyKey(value: string, field = 'idempotencyKey'): void {
+export function assertIdempotencyKey(
+  value: string,
+  field = 'idempotencyKey',
+): void {
   if (!value || typeof value !== 'string') {
     throw new BadRequestException(
       `'${field}' must be a non-empty string; received ${JSON.stringify(value)}.`,
@@ -64,7 +67,10 @@ export function assertIdempotencyKey(value: string, field = 'idempotencyKey'): v
 /**
  * Asserts that `value` is a valid Soroban contract method name.
  */
-export function assertContractMethod(value: string, field = 'contractMethod'): void {
+export function assertContractMethod(
+  value: string,
+  field = 'contractMethod',
+): void {
   if (!value || typeof value !== 'string') {
     throw new BadRequestException(
       `'${field}' must be a non-empty string; received ${JSON.stringify(value)}.`,
@@ -92,7 +98,10 @@ export function assertBlockchainUnitId(value: number, field = 'unitId'): void {
 /**
  * Asserts that an optional donor ID is safe to pass as a Soroban symbol.
  */
-export function assertDonorId(value: string | undefined, field = 'donorId'): void {
+export function assertDonorId(
+  value: string | undefined,
+  field = 'donorId',
+): void {
   if (value === undefined || value === null) return;
   if (typeof value !== 'string' || !DONOR_ID_RE.test(value)) {
     throw new BadRequestException(

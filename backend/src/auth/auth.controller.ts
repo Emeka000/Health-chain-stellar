@@ -11,7 +11,6 @@ import {
   Patch,
   UseInterceptors,
 } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
 import {
   ApiTags,
   ApiOperation,
@@ -21,9 +20,12 @@ import {
   ApiBearerAuth,
   ApiParam,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
+
+import { RateLimit } from '../common/decorators/rate-limit.decorator';
+import { IdempotencyInterceptor } from '../common/idempotency/idempotency.interceptor';
 
 import { AuthService } from './auth.service';
-import { IdempotencyInterceptor } from '../common/idempotency/idempotency.interceptor';
 import { Public } from './decorators/public.decorator';
 import { RequirePermissions } from './decorators/require-permissions.decorator';
 import {
@@ -34,7 +36,6 @@ import {
   UnlockAccountDto,
 } from './dto/auth.dto';
 import { Permission } from './enums/permission.enum';
-import { RateLimit } from '../common/decorators/rate-limit.decorator';
 
 /** Stricter than global default (100/min) to reduce brute-force and abuse on auth. */
 @Throttle({ default: { limit: 20, ttl: 60_000 } })

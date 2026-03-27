@@ -1,11 +1,12 @@
-import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bullmq';
+import { Module } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { OutboxEventEntity } from './outbox-event.entity';
-import { OutboxService } from './outbox.service';
-import { OutboxProducer } from './outbox-producer';
+import { TypeOrmModule } from '@nestjs/typeorm';
+
 import { OutboxConsumer } from './outbox-consumer';
+import { OutboxEventEntity } from './outbox-event.entity';
+import { OutboxProducer } from './outbox-producer';
+import { OutboxService } from './outbox.service';
 
 @Module({
   imports: [

@@ -157,7 +157,8 @@ export class FeePolicyValidator {
     const errors: string[] = [];
 
     // 1. Amount bounds
-    const amountCheck = FeePolicyValidator.validatePaymentAmount(grossAmountStroops);
+    const amountCheck =
+      FeePolicyValidator.validatePaymentAmount(grossAmountStroops);
     errors.push(...amountCheck.errors);
 
     // 2. Policy structure
@@ -208,10 +209,7 @@ export class FeePolicyValidator {
   ): FeeBreakdownDto {
     const effectiveFeePercent =
       grossAmountStroops > 0
-        ? (
-            (components.totalFeeStroops / grossAmountStroops) *
-            100
-          ).toFixed(4)
+        ? ((components.totalFeeStroops / grossAmountStroops) * 100).toFixed(4)
         : '0.0000';
 
     return {

@@ -21,6 +21,7 @@ import {
   assertTransferCustodyIds,
   assertLogTemperatureIds,
 } from '../common/guards/on-chain-id.guard';
+
 import { BlockchainEvent } from './entities/blockchain-event.entity';
 import {
   ContractError,

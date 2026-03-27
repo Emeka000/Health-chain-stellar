@@ -1,9 +1,8 @@
 import { InjectQueue } from '@nestjs/bull';
 import { Injectable, Logger } from '@nestjs/common';
 
-import {
-  assertSorobanTxJob,
-} from '../../common/guards/on-chain-id.guard';
+import { assertSorobanTxJob } from '../../common/guards/on-chain-id.guard';
+import { JobDeduplicationPlugin } from '../plugins/job-deduplication.plugin';
 import {
   SorobanTxJob,
   SorobanTxResult,
@@ -11,7 +10,6 @@ import {
 } from '../types/soroban-tx.types';
 
 import { IdempotencyService } from './idempotency.service';
-import { JobDeduplicationPlugin } from '../plugins/job-deduplication.plugin';
 
 import type { Queue } from 'bull';
 

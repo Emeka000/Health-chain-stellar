@@ -64,33 +64,61 @@ describe('QueueMetricsService', () => {
 
   describe('processing counter', () => {
     it('increments when a job becomes active', () => {
-      txQueue.emit('active', { id: 'job-1', opts: { attempts: 5 }, attemptsMade: 0 });
+      txQueue.emit('active', {
+        id: 'job-1',
+        opts: { attempts: 5 },
+        attemptsMade: 0,
+      });
       expect(service['counters'].processing).toBe(1);
     });
 
     it('decrements when a job completes', () => {
-      txQueue.emit('active', { id: 'job-1', opts: { attempts: 5 }, attemptsMade: 0 });
-      txQueue.emit('completed', { id: 'job-1', opts: { attempts: 5 }, attemptsMade: 0 });
+      txQueue.emit('active', {
+        id: 'job-1',
+        opts: { attempts: 5 },
+        attemptsMade: 0,
+      });
+      txQueue.emit('completed', {
+        id: 'job-1',
+        opts: { attempts: 5 },
+        attemptsMade: 0,
+      });
       expect(service['counters'].processing).toBe(0);
     });
 
     it('does not go below zero', () => {
-      txQueue.emit('completed', { id: 'job-1', opts: { attempts: 5 }, attemptsMade: 0 });
+      txQueue.emit('completed', {
+        id: 'job-1',
+        opts: { attempts: 5 },
+        attemptsMade: 0,
+      });
       expect(service['counters'].processing).toBe(0);
     });
   });
 
   describe('success counter', () => {
     it('increments on job completion', () => {
-      txQueue.emit('completed', { id: 'job-1', opts: { attempts: 5 }, attemptsMade: 0 });
-      txQueue.emit('completed', { id: 'job-2', opts: { attempts: 5 }, attemptsMade: 0 });
+      txQueue.emit('completed', {
+        id: 'job-1',
+        opts: { attempts: 5 },
+        attemptsMade: 0,
+      });
+      txQueue.emit('completed', {
+        id: 'job-2',
+        opts: { attempts: 5 },
+        attemptsMade: 0,
+      });
       expect(service['counters'].success).toBe(2);
     });
   });
 
   describe('failure counter', () => {
     it('increments on job failure', () => {
-      txQueue.emit('failed', { id: 'job-1', opts: { attempts: 5 }, attemptsMade: 4 }, new Error('rpc'));
+      txQueue.emit(
+        'failed',
+        { id: 'job-1', opts: { attempts: 5 }, attemptsMade: 4 },
+        new Error('rpc'),
+      );
       expect(service['counters'].failure).toBe(1);
     });
   });
@@ -98,13 +126,21 @@ describe('QueueMetricsService', () => {
   describe('retries counter', () => {
     it('increments when a failed job has remaining attempts', () => {
       // attemptsMade=1, attempts=5 → 3 remaining → retry
-      txQueue.emit('failed', { id: 'job-1', opts: { attempts: 5 }, attemptsMade: 1 }, new Error('rpc'));
+      txQueue.emit(
+        'failed',
+        { id: 'job-1', opts: { attempts: 5 }, attemptsMade: 1 },
+        new Error('rpc'),
+      );
       expect(service['counters'].retries).toBe(1);
     });
 
     it('does not increment retry when no attempts remain', () => {
       // attemptsMade=4, attempts=5 → 0 remaining → no retry
-      txQueue.emit('failed', { id: 'job-1', opts: { attempts: 5 }, attemptsMade: 4 }, new Error('rpc'));
+      txQueue.emit(
+        'failed',
+        { id: 'job-1', opts: { attempts: 5 }, attemptsMade: 4 },
+        new Error('rpc'),
+      );
       expect(service['counters'].retries).toBe(0);
     });
 
@@ -136,7 +172,11 @@ describe('QueueMetricsService', () => {
       const jobId = 'timed-job-1';
       // Simulate active → completed with a known start time
       service['jobStartTimes'].set(jobId, Date.now() - 100);
-      txQueue.emit('completed', { id: jobId, opts: { attempts: 5 }, attemptsMade: 0 });
+      txQueue.emit('completed', {
+        id: jobId,
+        opts: { attempts: 5 },
+        attemptsMade: 0,
+      });
 
       const timings = service['buildTimings']();
       expect(timings.samples).toBe(1);
@@ -155,10 +195,18 @@ describe('QueueMetricsService', () => {
 
     it('tracks min and max across multiple jobs', () => {
       service['jobStartTimes'].set('j1', Date.now() - 50);
-      txQueue.emit('completed', { id: 'j1', opts: { attempts: 5 }, attemptsMade: 0 });
+      txQueue.emit('completed', {
+        id: 'j1',
+        opts: { attempts: 5 },
+        attemptsMade: 0,
+      });
 
       service['jobStartTimes'].set('j2', Date.now() - 200);
-      txQueue.emit('completed', { id: 'j2', opts: { attempts: 5 }, attemptsMade: 0 });
+      txQueue.emit('completed', {
+        id: 'j2',
+        opts: { attempts: 5 },
+        attemptsMade: 0,
+      });
 
       const timings = service['buildTimings']();
       expect(timings.samples).toBe(2);
@@ -234,7 +282,11 @@ describe('QueueMetricsService', () => {
 
     it('resets timing state', () => {
       service['jobStartTimes'].set('j1', Date.now() - 100);
-      txQueue.emit('completed', { id: 'j1', opts: { attempts: 5 }, attemptsMade: 0 });
+      txQueue.emit('completed', {
+        id: 'j1',
+        opts: { attempts: 5 },
+        attemptsMade: 0,
+      });
 
       service.reset();
 

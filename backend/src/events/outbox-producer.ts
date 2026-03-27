@@ -1,7 +1,9 @@
+import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { InjectQueue } from '@nestjs/bullmq';
+
 import { Queue } from 'bullmq';
+
 import { OutboxService } from './outbox.service';
 
 @Injectable()

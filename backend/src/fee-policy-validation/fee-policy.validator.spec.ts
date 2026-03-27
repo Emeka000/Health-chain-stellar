@@ -16,9 +16,9 @@ import { FeePolicyValidator } from './fee-policy.validator';
 // ─── Shared fixtures ──────────────────────────────────────────────────────────
 
 const validPolicy = {
-  platformFeeBp: 100,       // 1 %
-  insuranceFeeBp: 50,       // 0.5 %
-  flatFeeStroops: 500_000,  // 0.05 XLM
+  platformFeeBp: 100, // 1 %
+  insuranceFeeBp: 50, // 0.5 %
+  flatFeeStroops: 500_000, // 0.05 XLM
   stellarNetworkFeeStroops: 100,
 };
 
@@ -126,10 +126,10 @@ describe('FeePolicyValidator.validatePolicyStructure', () => {
 
   it('returns multiple errors for a fully pathological config', () => {
     const result = FeePolicyValidator.validatePolicyStructure({
-      platformFeeBp: PLATFORM_FEE_MAX_BP + 100,   // over max
-      insuranceFeeBp: INSURANCE_FEE_MAX_BP + 100,  // over max
-      flatFeeStroops: FLAT_FEE_MAX_STROOPS + 1,    // over max
-      stellarNetworkFeeStroops: 0,                  // below base
+      platformFeeBp: PLATFORM_FEE_MAX_BP + 100, // over max
+      insuranceFeeBp: INSURANCE_FEE_MAX_BP + 100, // over max
+      flatFeeStroops: FLAT_FEE_MAX_STROOPS + 1, // over max
+      stellarNetworkFeeStroops: 0, // below base
     });
     expect(result.valid).toBe(false);
     expect(result.errors.length).toBeGreaterThanOrEqual(4);
@@ -150,9 +150,9 @@ describe('FeePolicyValidator.validatePolicyStructure', () => {
 
 describe('FeePolicyValidator.validatePaymentAmount', () => {
   it('accepts an amount within bounds', () => {
-    expect(
-      FeePolicyValidator.validatePaymentAmount(GROSS_50_XLM).valid,
-    ).toBe(true);
+    expect(FeePolicyValidator.validatePaymentAmount(GROSS_50_XLM).valid).toBe(
+      true,
+    );
   });
 
   it('rejects amount below minimum', () => {
@@ -192,8 +192,8 @@ describe('FeePolicyValidator.computeFeeComponents', () => {
   it('correctly deducts flat fee before percentage fees', () => {
     const gross = 100_000_000; // 10 XLM
     const policy = {
-      platformFeeBp: 200,        // 2 %
-      insuranceFeeBp: 100,       // 1 %
+      platformFeeBp: 200, // 2 %
+      insuranceFeeBp: 100, // 1 %
       flatFeeStroops: 1_000_000, // 0.1 XLM flat
       stellarNetworkFeeStroops: 100,
     };
@@ -246,7 +246,9 @@ describe('FeePolicyValidator.computeFeeComponents', () => {
       insuranceFeeBp: 0,
       flatFeeStroops: 0,
     });
-    const expectedPlatform = Math.floor((gross * 100) / BASIS_POINTS_DENOMINATOR);
+    const expectedPlatform = Math.floor(
+      (gross * 100) / BASIS_POINTS_DENOMINATOR,
+    );
     expect(c.platformFeeStroops).toBe(expectedPlatform);
   });
 
@@ -266,7 +268,10 @@ describe('FeePolicyValidator.computeFeeComponents', () => {
   });
 
   it('totalFeeStroops = flatFee + platformFee + insuranceFee + stellarFee', () => {
-    const c = FeePolicyValidator.computeFeeComponents(GROSS_50_XLM, validPolicy);
+    const c = FeePolicyValidator.computeFeeComponents(
+      GROSS_50_XLM,
+      validPolicy,
+    );
     expect(c.totalFeeStroops).toBe(
       c.flatFeeStroops +
         c.platformFeeStroops +
@@ -276,7 +281,10 @@ describe('FeePolicyValidator.computeFeeComponents', () => {
   });
 
   it('netAmountStroops = gross - totalFees', () => {
-    const c = FeePolicyValidator.computeFeeComponents(GROSS_50_XLM, validPolicy);
+    const c = FeePolicyValidator.computeFeeComponents(
+      GROSS_50_XLM,
+      validPolicy,
+    );
     expect(c.netAmountStroops).toBe(GROSS_50_XLM - c.totalFeeStroops);
   });
 });
@@ -507,9 +515,9 @@ describe('Pathological fee configuration edge cases', () => {
     // 5 % platform + 3 % insurance = 8 % in bp; flat = 10 XLM
     // On a 10 XLM payment the flat fee alone consumes everything
     const policy = {
-      platformFeeBp: PLATFORM_FEE_MAX_BP,   // 5 %
+      platformFeeBp: PLATFORM_FEE_MAX_BP, // 5 %
       insuranceFeeBp: INSURANCE_FEE_MAX_BP, // 3 %
-      flatFeeStroops: 99_000_000,            // 9.9 XLM
+      flatFeeStroops: 99_000_000, // 9.9 XLM
       stellarNetworkFeeStroops: STELLAR_BASE_FEE_STROOPS,
     };
     // Structure validation passes (all individual bounds ok, bp sum = 8 % < 15 %)

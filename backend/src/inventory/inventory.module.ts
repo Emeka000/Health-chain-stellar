@@ -8,9 +8,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { OrderEntity } from '../orders/entities/order.entity';
 import { UsersModule } from '../users/users.module';
 
-import { InventoryEntity } from './entities/inventory.entity';
-import { InventoryStockEntity } from './entities/inventory-stock.entity';
-import { InventoryAlertEntity } from './entities/inventory-alert.entity';
+import { InventoryAlertController } from './controllers/inventory-alert.controller';
 import { AlertPreferenceEntity } from './entities/alert-preference.entity';
 import { RestockingCampaignEntity } from './entities/restocking-campaign.entity';
 import { InventoryEventListener } from './inventory-event.listener';

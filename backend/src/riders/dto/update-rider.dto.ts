@@ -1,6 +1,13 @@
-import { IsEnum, IsOptional, IsString, IsNumber, IsBoolean } from 'class-validator';
-import { VehicleType } from '../enums/vehicle-type.enum';
+import {
+  IsEnum,
+  IsOptional,
+  IsString,
+  IsNumber,
+  IsBoolean,
+} from 'class-validator';
+
 import { RiderStatus } from '../enums/rider-status.enum';
+import { VehicleType } from '../enums/vehicle-type.enum';
 
 export class UpdateRiderDto {
   @IsEnum(VehicleType)

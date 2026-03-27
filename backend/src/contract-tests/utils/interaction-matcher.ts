@@ -88,11 +88,7 @@ function deepEquals(
       }
 
       for (let i = 0; i < Math.max(actual.length, expected.length); i++) {
-        const item = deepEquals(
-          actual[i],
-          expected[i],
-          `${path}[${i}]`,
-        );
+        const item = deepEquals(actual[i], expected[i], `${path}[${i}]`);
         errors.push(...item.errors);
       }
     } else {
@@ -102,9 +98,7 @@ function deepEquals(
       // Check for missing keys (breaking)
       for (const key of expectedKeys) {
         if (!actualKeys.includes(key)) {
-          errors.push(
-            `BREAKING: Required key '${key}' missing at ${path}`,
-          );
+          errors.push(`BREAKING: Required key '${key}' missing at ${path}`);
         }
       }
 
@@ -120,11 +114,7 @@ function deepEquals(
       // Check existing keys
       for (const key of expectedKeys) {
         if (actualKeys.includes(key)) {
-          const item = deepEquals(
-            actual[key],
-            expected[key],
-            `${path}.${key}`,
-          );
+          const item = deepEquals(actual[key], expected[key], `${path}.${key}`);
           errors.push(...item.errors);
         }
       }
@@ -166,7 +156,10 @@ export function validateInteraction(
   }
 
   if (contract.request.headers) {
-    const headersCheck = deepEquals(actualRequest.headers, contract.request.headers);
+    const headersCheck = deepEquals(
+      actualRequest.headers,
+      contract.request.headers,
+    );
     requestErrors.push(...headersCheck.errors);
   }
 
@@ -193,11 +186,16 @@ export function validateInteraction(
   }
 
   // Only count BREAKING errors as failures, INFO is just warnings
-  const breakingRequestErrors = requestErrors.filter((e) => e.includes('BREAKING'));
-  const breakingResponseErrors = responseErrors.filter((e) => e.includes('BREAKING'));
+  const breakingRequestErrors = requestErrors.filter((e) =>
+    e.includes('BREAKING'),
+  );
+  const breakingResponseErrors = responseErrors.filter((e) =>
+    e.includes('BREAKING'),
+  );
 
   return {
-    valid: breakingRequestErrors.length === 0 && breakingResponseErrors.length === 0,
+    valid:
+      breakingRequestErrors.length === 0 && breakingResponseErrors.length === 0,
     interaction: contract,
     requestErrors,
     responseErrors,

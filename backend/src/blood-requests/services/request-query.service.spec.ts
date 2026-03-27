@@ -1,12 +1,18 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+
 import { Repository } from 'typeorm';
 
-import { RequestQueryService } from './request-query.service';
-import { BloodRequestEntity } from '../entities/blood-request.entity';
+import {
+  QueryRequestsDto,
+  SortField,
+  SortOrder,
+} from '../dto/query-requests.dto';
 import { BloodRequestItemEntity } from '../entities/blood-request-item.entity';
+import { BloodRequestEntity } from '../entities/blood-request.entity';
 import { BloodRequestStatus } from '../enums/blood-request-status.enum';
-import { QueryRequestsDto, SortField, SortOrder } from '../dto/query-requests.dto';
+
+import { RequestQueryService } from './request-query.service';
 
 describe('RequestQueryService', () => {
   let service: RequestQueryService;
@@ -84,7 +90,9 @@ describe('RequestQueryService', () => {
         skip: jest.fn().mockReturnThis(),
         getManyAndCount: jest.fn().mockResolvedValue([[mockBloodRequest], 1]),
       };
-      mockBloodRequestRepository.createQueryBuilder.mockReturnValue(mockQueryBuilder);
+      mockBloodRequestRepository.createQueryBuilder.mockReturnValue(
+        mockQueryBuilder,
+      );
 
       const queryDto: QueryRequestsDto = {
         status: BloodRequestStatus.PENDING,
@@ -112,7 +120,9 @@ describe('RequestQueryService', () => {
         skip: jest.fn().mockReturnThis(),
         getManyAndCount: jest.fn().mockResolvedValue([[mockBloodRequest], 1]),
       };
-      mockBloodRequestRepository.createQueryBuilder.mockReturnValue(mockQueryBuilder);
+      mockBloodRequestRepository.createQueryBuilder.mockReturnValue(
+        mockQueryBuilder,
+      );
 
       const queryDto: QueryRequestsDto = {
         searchText: 'BR-001',
@@ -134,7 +144,9 @@ describe('RequestQueryService', () => {
         skip: jest.fn().mockReturnThis(),
         getManyAndCount: jest.fn().mockResolvedValue([[mockBloodRequest], 1]),
       };
-      mockBloodRequestRepository.createQueryBuilder.mockReturnValue(mockQueryBuilder);
+      mockBloodRequestRepository.createQueryBuilder.mockReturnValue(
+        mockQueryBuilder,
+      );
 
       const queryDto: QueryRequestsDto = {
         startDate: new Date('2024-01-01'),
@@ -224,7 +236,9 @@ describe('RequestQueryService', () => {
         skip: jest.fn().mockReturnThis(),
         getManyAndCount: jest.fn().mockResolvedValue([[mockBloodRequest], 1]),
       };
-      mockBloodRequestRepository.createQueryBuilder.mockReturnValue(mockQueryBuilder);
+      mockBloodRequestRepository.createQueryBuilder.mockReturnValue(
+        mockQueryBuilder,
+      );
 
       const queryDto: QueryRequestsDto = {
         limit: 20,

@@ -18,8 +18,8 @@ import { PaginatedResponse, PaginationQueryDto } from '../common/pagination';
 
 import { CreateInventoryDto } from './dto/create-inventory.dto';
 import { UpdateInventoryDto } from './dto/update-inventory.dto';
-import { InventoryService } from './inventory.service';
 import { InventoryStockEntity } from './entities/inventory-stock.entity';
+import { InventoryService } from './inventory.service';
 
 @Controller('inventory')
 export class InventoryController {

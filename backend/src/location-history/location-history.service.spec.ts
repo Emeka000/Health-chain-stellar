@@ -137,7 +137,9 @@ describe('LocationHistoryService', () => {
       });
 
       expect(mockLocationRepository.insert).toHaveBeenCalledWith(
-        expect.arrayContaining([expect.objectContaining({ riderId: 'rider-1' })]),
+        expect.arrayContaining([
+          expect.objectContaining({ riderId: 'rider-1' }),
+        ]),
       );
       expect(result.saved).toBe(3);
     });
@@ -148,7 +150,9 @@ describe('LocationHistoryService', () => {
   describe('getLocationsByDelivery', () => {
     it('returns ordered points for a known delivery', async () => {
       const points = [makePoint(1, 2), makePoint(3, 4)];
-      mockLocationRepository.createQueryBuilder.mockReturnValue(buildQb(points));
+      mockLocationRepository.createQueryBuilder.mockReturnValue(
+        buildQb(points),
+      );
 
       const result = await service.getLocationsByDelivery('order-1');
 
@@ -159,9 +163,9 @@ describe('LocationHistoryService', () => {
       mockLocationRepository.createQueryBuilder.mockReturnValue(buildQb([]));
       mockLocationRepository.findOne.mockResolvedValue(null);
 
-      await expect(service.getLocationsByDelivery('order-unknown')).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.getLocationsByDelivery('order-unknown'),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('returns empty array without throwing when order exists but query window is empty', async () => {
@@ -189,19 +193,28 @@ describe('LocationHistoryService', () => {
         makePoint(0, 3, 'order-1', 'rider-1', t(3000)),
         makePoint(0, 4, 'order-1', 'rider-1', t(4000)),
       ];
-      mockLocationRepository.createQueryBuilder.mockReturnValue(buildQb(points));
+      mockLocationRepository.createQueryBuilder.mockReturnValue(
+        buildQb(points),
+      );
 
-      const route = await service.reconstructRoute('order-1', { epsilon: 0.001 });
+      const route = await service.reconstructRoute('order-1', {
+        epsilon: 0.001,
+      });
 
       // Straight line — only endpoints survive after aggressive simplification
       expect(route.length).toBeLessThan(points.length);
       expect(route[0]).toMatchObject({ latitude: 0, longitude: 0 });
-      expect(route[route.length - 1]).toMatchObject({ latitude: 0, longitude: 4 });
+      expect(route[route.length - 1]).toMatchObject({
+        latitude: 0,
+        longitude: 4,
+      });
     });
 
     it('returns both points unchanged for a 2-point route', async () => {
       const points = [makePoint(0, 0), makePoint(1, 1)];
-      mockLocationRepository.createQueryBuilder.mockReturnValue(buildQb(points));
+      mockLocationRepository.createQueryBuilder.mockReturnValue(
+        buildQb(points),
+      );
 
       const route = await service.reconstructRoute('order-1');
 
@@ -216,12 +229,17 @@ describe('LocationHistoryService', () => {
       const t = (s: number) => new Date(1_700_000_000_000 + s * 1000);
       const points = [
         makePoint(0, 0, 'order-1', 'rider-1', t(0)),
-        makePoint(0, 0.009, 'order-1', 'rider-1', t(60)),   // ~1 km east in 60 s ≈ 60 km/h
+        makePoint(0, 0.009, 'order-1', 'rider-1', t(60)), // ~1 km east in 60 s ≈ 60 km/h
       ];
-      mockLocationRepository.createQueryBuilder.mockReturnValue(buildQb(points));
+      mockLocationRepository.createQueryBuilder.mockReturnValue(
+        buildQb(points),
+      );
 
-      const { points: playback, totalDistanceKm, durationSeconds } =
-        await service.getPlaybackData('order-1');
+      const {
+        points: playback,
+        totalDistanceKm,
+        durationSeconds,
+      } = await service.getPlaybackData('order-1');
 
       expect(playback[0].speedKmh).toBeNull();
       expect(playback[0].bearing).toBeNull();
@@ -248,7 +266,9 @@ describe('LocationHistoryService', () => {
   describe('getVisualizationData', () => {
     it('returns a valid GeoJSON LineString feature', async () => {
       const points = [makePoint(1, 2), makePoint(3, 4)];
-      mockLocationRepository.createQueryBuilder.mockReturnValue(buildQb(points));
+      mockLocationRepository.createQueryBuilder.mockReturnValue(
+        buildQb(points),
+      );
       mockLocationRepository.findOne.mockResolvedValue({ riderId: 'rider-1' });
 
       const geoJson = await service.getVisualizationData('order-1');
@@ -362,7 +382,10 @@ describe('douglasPeucker', () => {
     // All midpoints are on the line; only endpoints survive
     expect(result).toHaveLength(2);
     expect(result[0]).toMatchObject({ latitude: 0, longitude: 0 });
-    expect(result[result.length - 1]).toMatchObject({ latitude: 0, longitude: 4 });
+    expect(result[result.length - 1]).toMatchObject({
+      latitude: 0,
+      longitude: 4,
+    });
   });
 
   it('preserves a significant bend in the route', () => {

@@ -1,15 +1,16 @@
+import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { NotFoundException, BadRequestException } from '@nestjs/common';
+
 import { Repository } from 'typeorm';
 
-import { UsersService } from './users.service';
-import { UserEntity } from './entities/user.entity';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ProfileActivityEntity } from './entities/profile-activity.entity';
-import { StorageService } from './services/storage.service';
+import { UserEntity } from './entities/user.entity';
 import { ImageValidationService } from './services/image-validation.service';
 import { ProfileActivityService } from './services/profile-activity.service';
-import { UpdateProfileDto } from './dto/update-profile.dto';
+import { StorageService } from './services/storage.service';
+import { UsersService } from './users.service';
 
 describe('UsersService', () => {
   let service: UsersService;
@@ -86,10 +87,16 @@ describe('UsersService', () => {
     }).compile();
 
     service = module.get<UsersService>(UsersService);
-    userRepository = module.get<Repository<UserEntity>>(getRepositoryToken(UserEntity));
+    userRepository = module.get<Repository<UserEntity>>(
+      getRepositoryToken(UserEntity),
+    );
     storageService = module.get<StorageService>(StorageService);
-    imageValidationService = module.get<ImageValidationService>(ImageValidationService);
-    profileActivityService = module.get<ProfileActivityService>(ProfileActivityService);
+    imageValidationService = module.get<ImageValidationService>(
+      ImageValidationService,
+    );
+    profileActivityService = module.get<ProfileActivityService>(
+      ProfileActivityService,
+    );
   });
 
   afterEach(() => {
@@ -130,7 +137,9 @@ describe('UsersService', () => {
     it('should throw NotFoundException if user not found', async () => {
       mockUserRepository.findOne.mockResolvedValue(null);
 
-      await expect(service.findOne('user-1')).rejects.toThrow(NotFoundException);
+      await expect(service.findOne('user-1')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
@@ -160,7 +169,9 @@ describe('UsersService', () => {
     it('should throw NotFoundException if user not found', async () => {
       mockUserRepository.findOne.mockResolvedValue(null);
 
-      await expect(service.update('user-1', {}, {})).rejects.toThrow(NotFoundException);
+      await expect(service.update('user-1', {}, {})).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
@@ -200,7 +211,9 @@ describe('UsersService', () => {
     it('should throw NotFoundException if user not found', async () => {
       mockUserRepository.findOne.mockResolvedValue(null);
 
-      await expect(service.getProfile('user-1')).rejects.toThrow(NotFoundException);
+      await expect(service.getProfile('user-1')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
@@ -220,7 +233,9 @@ describe('UsersService', () => {
         format: 'jpeg',
         size: 1024,
       });
-      mockImageValidationService.resizeImage.mockResolvedValue(Buffer.from('resized'));
+      mockImageValidationService.resizeImage.mockResolvedValue(
+        Buffer.from('resized'),
+      );
       mockStorageService.uploadFile.mockResolvedValue({
         url: '/uploads/avatars/test.jpg',
         key: 'avatars/test.jpg',
@@ -259,12 +274,14 @@ describe('UsersService', () => {
         format: 'jpeg',
         size: 1024,
       });
-      mockImageValidationService.resizeImage.mockResolvedValue(Buffer.from('resized'));
+      mockImageValidationService.resizeImage.mockResolvedValue(
+        Buffer.from('resized'),
+      );
       mockUserRepository.findOne.mockResolvedValue(null);
 
-      await expect(service.uploadAvatar('user-1', mockFile, {})).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.uploadAvatar('user-1', mockFile, {}),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -276,7 +293,10 @@ describe('UsersService', () => {
       };
       mockUserRepository.findOne.mockResolvedValue(userWithAvatar);
       mockStorageService.deleteFile.mockResolvedValue(undefined);
-      mockUserRepository.save.mockResolvedValue({ ...userWithAvatar, avatarUrl: null });
+      mockUserRepository.save.mockResolvedValue({
+        ...userWithAvatar,
+        avatarUrl: null,
+      });
       mockProfileActivityService.logActivity.mockResolvedValue({});
 
       const result = await service.deleteAvatar('user-1', {
@@ -299,7 +319,9 @@ describe('UsersService', () => {
     it('should throw NotFoundException if user not found', async () => {
       mockUserRepository.findOne.mockResolvedValue(null);
 
-      await expect(service.deleteAvatar('user-1', {})).rejects.toThrow(NotFoundException);
+      await expect(service.deleteAvatar('user-1', {})).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 

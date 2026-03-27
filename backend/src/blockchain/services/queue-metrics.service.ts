@@ -119,7 +119,13 @@ export class QueueMetricsService implements OnModuleInit {
       retries: 0,
       dlq: 0,
     };
-    this.timingState = { count: 0, mean: 0, m2: 0, min: Infinity, max: -Infinity };
+    this.timingState = {
+      count: 0,
+      mean: 0,
+      m2: 0,
+      min: Infinity,
+      max: -Infinity,
+    };
     this.jobStartTimes.clear();
     this.since = new Date().toISOString();
   }

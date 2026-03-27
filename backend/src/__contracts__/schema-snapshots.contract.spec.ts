@@ -19,60 +19,48 @@ describe('[CONTRACT] Response Schema Snapshots', () => {
 
   beforeAll(() => {
     // Create frozen schema snapshots for critical responses
-    bloodRequestSnapshot = createSnapshot(
-      'BloodRequest',
-      '1.0.0',
-      {
-        id: 'BR-12345-ABC',
-        hospitalId: 'hospital-001',
-        requestNumber: 'BR-1711430400-A1B2C3',
-        status: 'PENDING',
-        requiredBy: '2026-03-27T10:00:00Z',
-        items: [
-          {
-            bloodType: 'A+',
-            quantity: 5,
-            fulfilled: 0,
-          },
-        ],
-        createdAt: '2026-03-26T10:00:00Z',
-        updatedAt: '2026-03-26T10:00:00Z',
-      },
-    );
+    bloodRequestSnapshot = createSnapshot('BloodRequest', '1.0.0', {
+      id: 'BR-12345-ABC',
+      hospitalId: 'hospital-001',
+      requestNumber: 'BR-1711430400-A1B2C3',
+      status: 'PENDING',
+      requiredBy: '2026-03-27T10:00:00Z',
+      items: [
+        {
+          bloodType: 'A+',
+          quantity: 5,
+          fulfilled: 0,
+        },
+      ],
+      createdAt: '2026-03-26T10:00:00Z',
+      updatedAt: '2026-03-26T10:00:00Z',
+    });
 
-    inventoryItemSnapshot = createSnapshot(
-      'InventoryStock',
-      '1.0.0',
-      {
-        id: 'inv-001',
-        bloodBankId: 'bank-001',
-        bloodType: 'A+',
-        availableUnits: 50,
-        reservedUnits: 5,
-        totalUnits: 55,
-        expirationDate: '2026-06-26',
-        createdAt: '2026-03-26T10:00:00Z',
-        updatedAt: '2026-03-26T10:00:00Z',
-      },
-    );
+    inventoryItemSnapshot = createSnapshot('InventoryStock', '1.0.0', {
+      id: 'inv-001',
+      bloodBankId: 'bank-001',
+      bloodType: 'A+',
+      availableUnits: 50,
+      reservedUnits: 5,
+      totalUnits: 55,
+      expirationDate: '2026-06-26',
+      createdAt: '2026-03-26T10:00:00Z',
+      updatedAt: '2026-03-26T10:00:00Z',
+    });
 
-    orderSnapshot = createSnapshot(
-      'Order',
-      '1.0.0',
-      {
-        id: 'ORD-12345',
-        status: 'PENDING',
-        items: [
-          {
-            id: 'item-1',
-            name: 'Blood Unit A+',
-            quantity: 5,
-          },
-        ],
-        createdAt: '2026-03-26T10:00:00Z',
-        completedAt: null,
-      },
-    );
+    orderSnapshot = createSnapshot('Order', '1.0.0', {
+      id: 'ORD-12345',
+      status: 'PENDING',
+      items: [
+        {
+          id: 'item-1',
+          name: 'Blood Unit A+',
+          quantity: 5,
+        },
+      ],
+      createdAt: '2026-03-26T10:00:00Z',
+      completedAt: null,
+    });
   });
 
   describe('BloodRequest Schema Validation', () => {
@@ -94,7 +82,10 @@ describe('[CONTRACT] Response Schema Snapshots', () => {
         updatedAt: '2026-03-26T12:00:00Z',
       };
 
-      const validation = validateAgainstSnapshot(response, bloodRequestSnapshot);
+      const validation = validateAgainstSnapshot(
+        response,
+        bloodRequestSnapshot,
+      );
 
       expect(validation.valid).toBe(true);
       expect(validation.errors).toHaveLength(0);
@@ -112,7 +103,10 @@ describe('[CONTRACT] Response Schema Snapshots', () => {
         updatedAt: '2026-03-26T12:00:00Z',
       };
 
-      const validation = validateAgainstSnapshot(response, bloodRequestSnapshot);
+      const validation = validateAgainstSnapshot(
+        response,
+        bloodRequestSnapshot,
+      );
 
       expect(validation.valid).toBe(false);
       expect(validation.errors.some((e) => e.includes('BREAKING'))).toBe(true);
@@ -136,7 +130,10 @@ describe('[CONTRACT] Response Schema Snapshots', () => {
         updatedAt: '2026-03-26T10:00:00Z',
       };
 
-      const validation = validateAgainstSnapshot(response, inventoryItemSnapshot);
+      const validation = validateAgainstSnapshot(
+        response,
+        inventoryItemSnapshot,
+      );
 
       expect(validation.valid).toBe(true);
     });
@@ -154,7 +151,10 @@ describe('[CONTRACT] Response Schema Snapshots', () => {
         updatedAt: '2026-03-26T10:00:00Z',
       };
 
-      const validation = validateAgainstSnapshot(response, inventoryItemSnapshot);
+      const validation = validateAgainstSnapshot(
+        response,
+        inventoryItemSnapshot,
+      );
 
       expect(validation.valid).toBe(false);
       expect(validation.errors.length).toBeGreaterThan(0);
@@ -166,9 +166,7 @@ describe('[CONTRACT] Response Schema Snapshots', () => {
       const response = {
         id: 'ORD-54321',
         status: 'COMPLETED',
-        items: [
-          { id: 'item-1', name: 'Blood Unit A+', quantity: 5 },
-        ],
+        items: [{ id: 'item-1', name: 'Blood Unit A+', quantity: 5 }],
         createdAt: '2026-03-26T10:00:00Z',
         completedAt: '2026-03-26T14:00:00Z',
       };

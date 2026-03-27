@@ -1,7 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
 import { Processor, Process } from '@nestjs/bullmq';
-import { Job } from 'bullmq';
+import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+
+import { Job } from 'bullmq';
+
 import { OutboxService } from './outbox.service';
 
 @Injectable()

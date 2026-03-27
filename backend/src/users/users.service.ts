@@ -5,20 +5,21 @@ import {
   Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+
 import { Repository } from 'typeorm';
 
-import { UserEntity } from './entities/user.entity';
 import { UpdateProfileDto } from './dto/update-profile.dto';
-import { StorageService } from './services/storage.service';
+import {
+  ProfileActivityEntity,
+  ProfileActivityType,
+} from './entities/profile-activity.entity';
+import { UserEntity } from './entities/user.entity';
 import { ImageValidationService } from './services/image-validation.service';
 import {
   ProfileActivityService,
   LogActivityParams,
 } from './services/profile-activity.service';
-import {
-  ProfileActivityEntity,
-  ProfileActivityType,
-} from './entities/profile-activity.entity';
+import { StorageService } from './services/storage.service';
 
 @Injectable()
 export class UsersService {
@@ -32,7 +33,15 @@ export class UsersService {
 
   async findAll() {
     const users = await this.userRepository.find({
-      select: ['id', 'email', 'firstName', 'lastName', 'name', 'role', 'createdAt'],
+      select: [
+        'id',
+        'email',
+        'firstName',
+        'lastName',
+        'name',
+        'role',
+        'createdAt',
+      ],
     });
 
     return {

@@ -38,6 +38,11 @@ export {
  * Get contract by name
  */
 export function getContractByName(name: string) {
-  const contracts = [BloodRequestsInventoryContract, BloodRequestsSorobanContract, DispatchRidersContract, AuthContract];
+  const contracts = [
+    BloodRequestsInventoryContract,
+    BloodRequestsSorobanContract,
+    DispatchRidersContract,
+    AuthContract,
+  ];
   return contracts.find((c) => c.name === name);
 }

@@ -6,9 +6,9 @@ import {
   Logger,
 } from '@nestjs/common';
 
-import type { Response } from 'express';
-
 import { IrrecoverableError, RecoverableError } from '../errors/app-errors';
+
+import type { Response } from 'express';
 
 /**
  * Global filter that intercepts AppError subclasses and returns
@@ -37,13 +37,13 @@ export class AppErrorFilter implements ExceptionFilter {
         message: exception.message,
         domain: exception.domain,
         // Surface the failure record ID if it was attached by the caller
-        failureRecordId: (exception.context['failureRecordId'] as string) ?? null,
+        failureRecordId:
+          (exception.context['failureRecordId'] as string) ?? null,
       });
     } else {
-      this.logger.warn(
-        `[RecoverableError] message=${exception.message}`,
-        { context: exception.context },
-      );
+      this.logger.warn(`[RecoverableError] message=${exception.message}`, {
+        context: exception.context,
+      });
 
       response.status(HttpStatus.SERVICE_UNAVAILABLE).json({
         statusCode: HttpStatus.SERVICE_UNAVAILABLE,

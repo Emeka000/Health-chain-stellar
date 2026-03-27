@@ -1,7 +1,9 @@
 import { Entity, Column, ManyToOne, JoinColumn, Index } from 'typeorm';
+
 import { BaseEntity } from '../../common/entities/base.entity';
-import { ReputationEntity } from './reputation.entity';
 import { ReputationEventType } from '../enums/reputation-event-type.enum';
+
+import { ReputationEntity } from './reputation.entity';
 
 @Entity('reputation_history')
 @Index(['reputationId'])

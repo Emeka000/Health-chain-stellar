@@ -1,16 +1,18 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+
+import { InventoryService } from '../inventory/inventory.service';
+
+import { OrderQueryParamsDto } from './dto/order-query-params.dto';
+import { OrderEntity } from './entities/order.entity';
+import { OrdersGateway } from './gateways/orders.gateway';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
-import { OrderQueryParamsDto } from './dto/order-query-params.dto';
-import { OrdersGateway } from './gateways/orders.gateway';
-import { OrderEntity } from './entities/order.entity';
 import { OrderEventStoreService } from './services/order-event-store.service';
-import { OrderStateMachine } from './state-machine/order-state-machine';
-import { InventoryService } from '../inventory/inventory.service';
 import { RequestStatusService } from './services/request-status.service';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { OrderStateMachine } from './state-machine/order-state-machine';
 
 describe('OrdersController', () => {
   let controller: OrdersController;

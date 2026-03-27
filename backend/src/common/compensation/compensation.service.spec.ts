@@ -1,10 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 
-import { FailureRecordService } from '../failure-record/failure-record.service';
 import {
   BlockchainTxIrrecoverableError,
   CompensationAction,
 } from '../errors/app-errors';
+import { FailureRecordService } from '../failure-record/failure-record.service';
 
 import { CompensationService } from './compensation.service';
 
@@ -28,10 +28,18 @@ describe('CompensationService', () => {
   });
 
   it('runs all handlers and returns applied list', async () => {
-    const error = new BlockchainTxIrrecoverableError('tx failed', { jobId: '1' });
+    const error = new BlockchainTxIrrecoverableError('tx failed', {
+      jobId: '1',
+    });
     const handlers = [
-      { action: CompensationAction.NOTIFY_ADMIN, execute: jest.fn().mockResolvedValue(true) },
-      { action: CompensationAction.FLAG_FOR_REVIEW, execute: jest.fn().mockResolvedValue(true) },
+      {
+        action: CompensationAction.NOTIFY_ADMIN,
+        execute: jest.fn().mockResolvedValue(true),
+      },
+      {
+        action: CompensationAction.FLAG_FOR_REVIEW,
+        execute: jest.fn().mockResolvedValue(true),
+      },
     ];
 
     const result = await service.compensate(error, handlers, 'corr-1');
@@ -46,10 +54,18 @@ describe('CompensationService', () => {
   });
 
   it('records failed handlers without short-circuiting', async () => {
-    const error = new BlockchainTxIrrecoverableError('tx failed', { jobId: '2' });
+    const error = new BlockchainTxIrrecoverableError('tx failed', {
+      jobId: '2',
+    });
     const handlers = [
-      { action: CompensationAction.REVERT_INVENTORY, execute: jest.fn().mockRejectedValue(new Error('db down')) },
-      { action: CompensationAction.NOTIFY_ADMIN, execute: jest.fn().mockResolvedValue(true) },
+      {
+        action: CompensationAction.REVERT_INVENTORY,
+        execute: jest.fn().mockRejectedValue(new Error('db down')),
+      },
+      {
+        action: CompensationAction.NOTIFY_ADMIN,
+        execute: jest.fn().mockResolvedValue(true),
+      },
     ];
 
     const result = await service.compensate(error, handlers);
@@ -61,9 +77,14 @@ describe('CompensationService', () => {
   });
 
   it('records handler that returns false as failed', async () => {
-    const error = new BlockchainTxIrrecoverableError('tx failed', { jobId: '3' });
+    const error = new BlockchainTxIrrecoverableError('tx failed', {
+      jobId: '3',
+    });
     const handlers = [
-      { action: CompensationAction.NOTIFY_USER, execute: jest.fn().mockResolvedValue(false) },
+      {
+        action: CompensationAction.NOTIFY_USER,
+        execute: jest.fn().mockResolvedValue(false),
+      },
     ];
 
     const result = await service.compensate(error, handlers);
@@ -73,9 +94,14 @@ describe('CompensationService', () => {
   });
 
   it('still persists failure record even when all handlers fail', async () => {
-    const error = new BlockchainTxIrrecoverableError('tx failed', { jobId: '4' });
+    const error = new BlockchainTxIrrecoverableError('tx failed', {
+      jobId: '4',
+    });
     const handlers = [
-      { action: CompensationAction.REVERT_INVENTORY, execute: jest.fn().mockRejectedValue(new Error('boom')) },
+      {
+        action: CompensationAction.REVERT_INVENTORY,
+        execute: jest.fn().mockRejectedValue(new Error('boom')),
+      },
     ];
 
     await service.compensate(error, handlers);
@@ -85,7 +111,9 @@ describe('CompensationService', () => {
 
   it('returns null failureRecordId when persist fails', async () => {
     mockFailureRecordService.persist.mockResolvedValueOnce(null);
-    const error = new BlockchainTxIrrecoverableError('tx failed', { jobId: '5' });
+    const error = new BlockchainTxIrrecoverableError('tx failed', {
+      jobId: '5',
+    });
 
     const result = await service.compensate(error, []);
 

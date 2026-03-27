@@ -1,4 +1,5 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
+
 import * as sharp from 'sharp';
 
 export interface ImageValidationResult {
@@ -51,19 +52,13 @@ export class ImageValidationService {
     }
 
     // Check dimensions
-    if (
-      metadata.width < this.minWidth ||
-      metadata.height < this.minHeight
-    ) {
+    if (metadata.width < this.minWidth || metadata.height < this.minHeight) {
       throw new BadRequestException(
         `Image dimensions must be at least ${this.minWidth}x${this.minHeight}px`,
       );
     }
 
-    if (
-      metadata.width > this.maxWidth ||
-      metadata.height > this.maxHeight
-    ) {
+    if (metadata.width > this.maxWidth || metadata.height > this.maxHeight) {
       throw new BadRequestException(
         `Image dimensions must not exceed ${this.maxWidth}x${this.maxHeight}px`,
       );
@@ -92,7 +87,9 @@ export class ImageValidationService {
       .toBuffer();
   }
 
-  async getImageDimensions(buffer: Buffer): Promise<{ width: number; height: number }> {
+  async getImageDimensions(
+    buffer: Buffer,
+  ): Promise<{ width: number; height: number }> {
     const metadata = await sharp(buffer).metadata();
     return {
       width: metadata.width || 0,

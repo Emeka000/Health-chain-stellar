@@ -31,7 +31,9 @@ export class AddAuthIndexes1780000000000 implements MigrationInterface {
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`DROP INDEX IF EXISTS "IDX_USERS_EMAIL_AUTH"`);
     await queryRunner.query(`DROP INDEX IF EXISTS "IDX_USERS_LOCKED_UNTIL"`);
-    await queryRunner.query(`DROP INDEX IF EXISTS "IDX_USERS_FAILED_LOGIN_ATTEMPTS"`);
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS "IDX_USERS_FAILED_LOGIN_ATTEMPTS"`,
+    );
     await queryRunner.query(`DROP INDEX IF EXISTS "IDX_USERS_IS_ACTIVE"`);
     await queryRunner.query(`DROP INDEX IF EXISTS "IDX_USERS_EMAIL_ACTIVE"`);
   }

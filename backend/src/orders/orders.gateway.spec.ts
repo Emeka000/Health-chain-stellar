@@ -1,6 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { OrdersGateway } from './gateways/orders.gateway';
+
 import { Server, Socket } from 'socket.io';
+
+import { OrdersGateway } from './gateways/orders.gateway';
 
 describe('OrdersGateway', () => {
   let gateway: OrdersGateway;
@@ -40,7 +42,9 @@ describe('OrdersGateway', () => {
     it('should initialize gateway', () => {
       const logSpy = jest.spyOn(gateway['logger'], 'log');
       gateway.afterInit(mockServer as Server);
-      expect(logSpy).toHaveBeenCalledWith('OrdersGateway WebSocket server initialised');
+      expect(logSpy).toHaveBeenCalledWith(
+        'OrdersGateway WebSocket server initialised',
+      );
     });
   });
 
@@ -48,7 +52,9 @@ describe('OrdersGateway', () => {
     it('should log client connection', () => {
       const logSpy = jest.spyOn(gateway['logger'], 'log');
       gateway.handleConnection(mockSocket as Socket);
-      expect(logSpy).toHaveBeenCalledWith(`WebSocket client connected: ${mockSocket.id}`);
+      expect(logSpy).toHaveBeenCalledWith(
+        `WebSocket client connected: ${mockSocket.id}`,
+      );
     });
   });
 
@@ -56,7 +62,9 @@ describe('OrdersGateway', () => {
     it('should log client disconnection', () => {
       const logSpy = jest.spyOn(gateway['logger'], 'log');
       gateway.handleDisconnect(mockSocket as Socket);
-      expect(logSpy).toHaveBeenCalledWith(`WebSocket client disconnected: ${mockSocket.id}`);
+      expect(logSpy).toHaveBeenCalledWith(
+        `WebSocket client disconnected: ${mockSocket.id}`,
+      );
     });
   });
 

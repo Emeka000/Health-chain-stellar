@@ -20,13 +20,14 @@ import { PaginatedResponse } from '../common/pagination';
 
 import { OrderQueryParamsDto } from './dto/order-query-params.dto';
 import { OrdersResponseDto } from './dto/orders-response.dto';
+import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateRequestStatusDto } from './dto/update-request-status.dto';
 import { OrdersService } from './orders.service';
 import { Order } from './types/order.types';
 
 @Controller('orders')
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService) {}
+  constructor(private readonly ordersService: OrdersService) { }
 
   @RequirePermissions(Permission.VIEW_ORDER)
   @Get()
@@ -90,9 +91,16 @@ export class OrdersController {
     return this.ordersService.trackOrder(id);
   }
 
+  @RequirePermissions(Permission.VIEW_ORDER)
+  @Post(':id/preview-fees')
+  async previewOrderFees(@Param('id') id: string, @Body() previewData: Partial<FeePreviewDto>) {
+    return this.ordersService.previewOrderFees(id, previewData);
+  }
+
+
   @RequirePermissions(Permission.CREATE_ORDER)
   @Post()
-  create(@Body() createOrderDto: any, @Request() req: any) {
+  create(@Body() createOrderDto: CreateOrderDto, @Request() req: any) {
     const actorId: string | undefined = req.user?.id;
     return this.ordersService.create(createOrderDto, actorId);
   }
@@ -112,7 +120,12 @@ export class OrdersController {
   ) {
     const actorId: string | undefined = req.user?.id;
     const actorRole: string | undefined = req.user?.role;
-    return this.ordersService.updateStatus(id, statusUpdateDto, actorId, actorRole);
+    return this.ordersService.updateStatus(
+      id,
+      statusUpdateDto,
+      actorId,
+      actorRole,
+    );
   }
 
   @RequirePermissions(Permission.MANAGE_RIDERS)

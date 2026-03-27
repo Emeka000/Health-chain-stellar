@@ -1,9 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+
 import { Repository } from 'typeorm';
-import { RiderEntity } from '../entities/rider.entity';
-import { RiderStatus } from '../enums/rider-status.enum';
-import { VehicleType } from '../enums/vehicle-type.enum';
+
 import {
   RiderSearchDto,
   RiderAssignmentDto,
@@ -13,6 +12,9 @@ import {
   RiderSearchResponse,
   RiderAssignmentResponse,
 } from '../dto/rider-search.dto';
+import { RiderEntity } from '../entities/rider.entity';
+import { RiderStatus } from '../enums/rider-status.enum';
+import { VehicleType } from '../enums/vehicle-type.enum';
 
 @Injectable()
 export class RiderSearchService {
@@ -232,7 +234,8 @@ export class RiderSearchService {
       // Calculate individual scores
       const distanceScore = this.calculateDistanceScore(distanceKm);
       const ratingScore = this.calculateRatingScore(rider.rating);
-      const completionRateScore = this.calculateCompletionRateScore(completionRate);
+      const completionRateScore =
+        this.calculateCompletionRateScore(completionRate);
       const vehicleTypeScore = this.calculateVehicleTypeScore(
         rider.vehicleType,
         preferredVehicleType,
@@ -397,7 +400,9 @@ export class RiderSearchService {
     }
 
     const totalDeliveries =
-      rider.completedDeliveries + rider.cancelledDeliveries + rider.failedDeliveries;
+      rider.completedDeliveries +
+      rider.cancelledDeliveries +
+      rider.failedDeliveries;
     const completionRate = this.calculateCompletionRate(
       rider.completedDeliveries,
       rider.cancelledDeliveries,

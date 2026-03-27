@@ -1,12 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+
 import { Repository } from 'typeorm';
 
-import { BloodMatchingService } from './blood-matching.service';
-import { BloodUnitEntity } from '../../blood-units/entities/blood-unit.entity';
-import { BloodRequestEntity } from '../../blood-requests/entities/blood-request.entity';
 import { BloodRequestItemEntity } from '../../blood-requests/entities/blood-request-item.entity';
+import { BloodRequestEntity } from '../../blood-requests/entities/blood-request.entity';
+import { BloodUnitEntity } from '../../blood-units/entities/blood-unit.entity';
 import { InventoryStockEntity } from '../../inventory/entities/inventory-stock.entity';
+
+import { BloodMatchingService } from './blood-matching.service';
 
 describe('BloodMatchingService', () => {
   let service: BloodMatchingService;
@@ -204,12 +206,7 @@ describe('BloodMatchingService', () => {
 
   describe('calculateMatchingScore', () => {
     it('should calculate matching score correctly', async () => {
-      const score = await service.calculateMatchingScore(
-        'A+',
-        'high',
-        7,
-        10,
-      );
+      const score = await service.calculateMatchingScore('A+', 'high', 7, 10);
 
       expect(score).toBeGreaterThan(0);
       expect(score).toBeLessThanOrEqual(100);
@@ -232,11 +229,7 @@ describe('BloodMatchingService', () => {
     });
 
     it('should give higher score for urgent expiration', async () => {
-      const urgentScore = await service.calculateMatchingScore(
-        'A+',
-        'high',
-        5,
-      );
+      const urgentScore = await service.calculateMatchingScore('A+', 'high', 5);
 
       const normalScore = await service.calculateMatchingScore(
         'A+',
@@ -254,11 +247,7 @@ describe('BloodMatchingService', () => {
         7,
       );
 
-      const lowScore = await service.calculateMatchingScore(
-        'A+',
-        'low',
-        7,
-      );
+      const lowScore = await service.calculateMatchingScore('A+', 'low', 7);
 
       expect(criticalScore).toBeGreaterThan(lowScore);
     });

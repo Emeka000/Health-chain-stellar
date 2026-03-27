@@ -7,11 +7,14 @@ import {
   ConflictException,
   Logger,
 } from '@nestjs/common';
+
+import { Request, Response } from 'express';
 import { Observable, of } from 'rxjs';
 import { tap } from 'rxjs/operators';
-import { Request, Response } from 'express';
-import { IdempotencyService } from './idempotency.service';
+
 import { ErrorCode } from '../errors/error-codes.enum';
+
+import { IdempotencyService } from './idempotency.service';
 
 /**
  * Idempotency interceptor for POST endpoints.
@@ -54,9 +57,8 @@ export class IdempotencyInterceptor implements NestInterceptor {
     }
 
     // Check for cached response
-    const cachedResponse = await this.idempotencyService.getResponse(
-      idempotencyKey,
-    );
+    const cachedResponse =
+      await this.idempotencyService.getResponse(idempotencyKey);
     if (cachedResponse) {
       this.logger.debug(
         `Returning cached response for idempotency key: ${idempotencyKey}`,
@@ -66,14 +68,14 @@ export class IdempotencyInterceptor implements NestInterceptor {
     }
 
     // Try to acquire lock to prevent concurrent processing
-    const lockAcquired = await this.idempotencyService.acquireLock(
-      idempotencyKey,
-    );
+    const lockAcquired =
+      await this.idempotencyService.acquireLock(idempotencyKey);
     if (!lockAcquired) {
       throw new ConflictException(
         JSON.stringify({
           code: ErrorCode.IDEMPOTENCY_KEY_CONFLICT,
-          message: 'Request with this Idempotency-Key is already being processed',
+          message:
+            'Request with this Idempotency-Key is already being processed',
         }),
       );
     }

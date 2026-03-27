@@ -182,11 +182,16 @@ export class InventoryRepository {
     const result = await this.repository
       .createQueryBuilder()
       .update(InventoryEntity)
-      .set({ quantity: () => `quantity + ${delta}`, version: () => 'version + 1' })
+      .set({
+        quantity: () => `quantity + ${delta}`,
+        version: () => 'version + 1',
+      })
       .where('id = :id AND version = :version', { id, version: stock.version })
       .execute();
     if ((result.affected ?? 0) === 0) {
-      throw new Error(`Inventory '${id}' was modified concurrently. Please retry.`);
+      throw new Error(
+        `Inventory '${id}' was modified concurrently. Please retry.`,
+      );
     }
   }
 
@@ -199,7 +204,10 @@ export class InventoryRepository {
     const result = await this.repository
       .createQueryBuilder()
       .update(InventoryEntity)
-      .set({ quantity: () => `quantity - ${quantity}`, version: () => 'version + 1' })
+      .set({
+        quantity: () => `quantity - ${quantity}`,
+        version: () => 'version + 1',
+      })
       .where('id = :id AND version = :version AND quantity >= :quantity', {
         id,
         version: stock.version,
@@ -218,11 +226,16 @@ export class InventoryRepository {
     const result = await this.repository
       .createQueryBuilder()
       .update(InventoryEntity)
-      .set({ quantity: () => `quantity + ${quantity}`, version: () => 'version + 1' })
+      .set({
+        quantity: () => `quantity + ${quantity}`,
+        version: () => 'version + 1',
+      })
       .where('id = :id AND version = :version', { id, version: stock.version })
       .execute();
     if ((result.affected ?? 0) === 0) {
-      throw new Error(`Inventory '${id}' was modified concurrently. Please retry.`);
+      throw new Error(
+        `Inventory '${id}' was modified concurrently. Please retry.`,
+      );
     }
   }
 

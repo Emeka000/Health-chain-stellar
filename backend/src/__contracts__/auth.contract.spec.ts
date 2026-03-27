@@ -11,9 +11,7 @@ import {
   InvalidJWTTokenErrorInteraction,
   InsufficientPermissionsErrorInteraction,
 } from '../contract-tests/fixtures';
-import {
-  validateInteraction,
-} from '../contract-tests/utils/interaction-matcher';
+import { validateInteraction } from '../contract-tests/utils/interaction-matcher';
 
 describe('[CONTRACT] Auth Guards ↔ Protected APIs', () => {
   describe('Missing Auth Header', () => {
@@ -193,7 +191,9 @@ describe('[CONTRACT] Auth Guards ↔ Protected APIs', () => {
         expect(interaction.name).toBeDefined();
         expect(interaction.request).toBeDefined();
         expect(interaction.response).toBeDefined();
-        expect(interaction.request.method).toMatch(/^(GET|POST|PUT|PATCH|DELETE)$/);
+        expect(interaction.request.method).toMatch(
+          /^(GET|POST|PUT|PATCH|DELETE)$/,
+        );
       }
     });
   });

@@ -1,19 +1,11 @@
-import {
-  Controller,
-  Get,
-  Query,
-  Res,
-  Header,
-} from '@nestjs/common';
+import { Controller, Get, Query, Res, Header } from '@nestjs/common';
+
 import { Response } from 'express';
 
 import { RequirePermissions } from '../../auth/decorators/require-permissions.decorator';
 import { Permission } from '../../auth/enums/permission.enum';
-
-import {
-  RequestQueryService,
-} from '../services/request-query.service';
 import { QueryRequestsDto } from '../dto/query-requests.dto';
+import { RequestQueryService } from '../services/request-query.service';
 
 @Controller('blood-requests/query')
 export class RequestQueryController {
@@ -57,10 +49,7 @@ export class RequestQueryController {
   @Get('export/csv')
   @Header('Content-Type', 'text/csv')
   @Header('Content-Disposition', 'attachment; filename="blood-requests.csv"')
-  async exportToCSV(
-    @Query() queryDto: QueryRequestsDto,
-    @Res() res: Response,
-  ) {
+  async exportToCSV(@Query() queryDto: QueryRequestsDto, @Res() res: Response) {
     const csv = await this.queryService.exportToCSV(queryDto);
     res.send(csv);
   }
@@ -69,10 +58,7 @@ export class RequestQueryController {
   @Get('export/pdf')
   @Header('Content-Type', 'application/pdf')
   @Header('Content-Disposition', 'attachment; filename="blood-requests.pdf"')
-  async exportToPDF(
-    @Query() queryDto: QueryRequestsDto,
-    @Res() res: Response,
-  ) {
+  async exportToPDF(@Query() queryDto: QueryRequestsDto, @Res() res: Response) {
     const pdf = await this.queryService.exportToPDF(queryDto);
     res.send(pdf);
   }

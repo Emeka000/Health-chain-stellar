@@ -1,15 +1,21 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { OnEvent } from '@nestjs/event-emitter';
-import { ReputationEntity } from './entities/reputation.entity';
-import { ReputationHistoryEntity } from './entities/reputation-history.entity';
-import { BadgeType } from './enums/badge-type.enum';
-import { ReputationEventType } from './enums/reputation-event-type.enum';
-import { LeaderboardQueryDto, ReputationHistoryQueryDto } from './dto/reputation-query.dto';
+import { InjectRepository } from '@nestjs/typeorm';
+
+import { Repository } from 'typeorm';
+
 import { OrderDeliveredEvent } from '../events/order-delivered.event';
 import { OrderDisputedEvent } from '../events/order-disputed.event';
 import { RiderEntity } from '../riders/entities/rider.entity';
+
+import {
+  LeaderboardQueryDto,
+  ReputationHistoryQueryDto,
+} from './dto/reputation-query.dto';
+import { ReputationHistoryEntity } from './entities/reputation-history.entity';
+import { ReputationEntity } from './entities/reputation.entity';
+import { BadgeType } from './enums/badge-type.enum';
+import { ReputationEventType } from './enums/reputation-event-type.enum';
 
 const POINTS = {
   [ReputationEventType.DELIVERY_COMPLETED]: 10,
@@ -38,7 +44,10 @@ export class ReputationService {
       where: { riderId },
       relations: ['rider', 'rider.user'],
     });
-    if (!rep) throw new NotFoundException(`Reputation for rider '${riderId}' not found`);
+    if (!rep)
+      throw new NotFoundException(
+        `Reputation for rider '${riderId}' not found`,
+      );
     return { message: 'Reputation retrieved successfully', data: rep };
   }
 
@@ -67,14 +76,20 @@ export class ReputationService {
 
   async getBadges(riderId: string) {
     const rep = await this.reputationRepo.findOne({ where: { riderId } });
-    if (!rep) throw new NotFoundException(`Reputation for rider '${riderId}' not found`);
+    if (!rep)
+      throw new NotFoundException(
+        `Reputation for rider '${riderId}' not found`,
+      );
     return { message: 'Badges retrieved successfully', data: rep.badges };
   }
 
   async getHistory(riderId: string, query: ReputationHistoryQueryDto) {
     const { type, page = 1, limit = 20 } = query;
     const rep = await this.reputationRepo.findOne({ where: { riderId } });
-    if (!rep) throw new NotFoundException(`Reputation for rider '${riderId}' not found`);
+    if (!rep)
+      throw new NotFoundException(
+        `Reputation for rider '${riderId}' not found`,
+      );
 
     const where: Record<string, unknown> = { reputationId: rep.id };
     if (type) where.eventType = type;
@@ -96,7 +111,10 @@ export class ReputationService {
 
   async getRank(riderId: string) {
     const rep = await this.reputationRepo.findOne({ where: { riderId } });
-    if (!rep) throw new NotFoundException(`Reputation for rider '${riderId}' not found`);
+    if (!rep)
+      throw new NotFoundException(
+        `Reputation for rider '${riderId}' not found`,
+      );
 
     const rank = await this.reputationRepo
       .createQueryBuilder('r')
@@ -114,7 +132,11 @@ export class ReputationService {
   private async getOrCreate(riderId: string): Promise<ReputationEntity> {
     let rep = await this.reputationRepo.findOne({ where: { riderId } });
     if (!rep) {
-      rep = this.reputationRepo.create({ riderId, reputationScore: 0, badges: [] });
+      rep = this.reputationRepo.create({
+        riderId,
+        reputationScore: 0,
+        badges: [],
+      });
       rep = await this.reputationRepo.save(rep);
     }
     return rep;
@@ -150,7 +172,9 @@ export class ReputationService {
     if (!rider) return;
 
     const earned: BadgeType[] = [...(rep.badges ?? [])];
-    const add = (b: BadgeType) => { if (!earned.includes(b)) earned.push(b); };
+    const add = (b: BadgeType) => {
+      if (!earned.includes(b)) earned.push(b);
+    };
 
     if (rider.completedDeliveries >= 1) add(BadgeType.FIRST_DELIVERY);
     if (rider.completedDeliveries >= 100) add(BadgeType.CENTURY_CLUB);
@@ -181,7 +205,11 @@ export class ReputationService {
   }
 
   /** Called by dispatch/rider services after a delivery outcome is known */
-  async recordDelivery(riderId: string, orderId: string, outcome: 'completed' | 'cancelled' | 'failed') {
+  async recordDelivery(
+    riderId: string,
+    orderId: string,
+    outcome: 'completed' | 'cancelled' | 'failed',
+  ) {
     const typeMap = {
       completed: ReputationEventType.DELIVERY_COMPLETED,
       cancelled: ReputationEventType.DELIVERY_CANCELLED,

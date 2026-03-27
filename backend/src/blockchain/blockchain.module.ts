@@ -5,12 +5,12 @@ import { CompensationModule } from '../common/compensation/compensation.module';
 
 import { BlockchainController } from './controllers/blockchain.controller';
 import { AdminGuard } from './guards/admin.guard';
+import { JobDeduplicationPlugin } from './plugins/job-deduplication.plugin';
 import { SorobanDlqProcessor } from './processors/soroban-dlq.processor';
 import { SorobanTxProcessor } from './processors/soroban-tx.processor';
 import { IdempotencyService } from './services/idempotency.service';
 import { QueueMetricsService } from './services/queue-metrics.service';
 import { SorobanService } from './services/soroban.service';
-import { JobDeduplicationPlugin } from './plugins/job-deduplication.plugin';
 
 @Module({
   imports: [

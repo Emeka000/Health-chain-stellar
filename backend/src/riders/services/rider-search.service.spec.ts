@@ -1,9 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { RiderSearchService } from './rider-search.service';
+
 import { RiderEntity } from '../entities/rider.entity';
 import { RiderStatus } from '../enums/rider-status.enum';
 import { VehicleType } from '../enums/vehicle-type.enum';
+
+import { RiderSearchService } from './rider-search.service';
 
 describe('RiderSearchService', () => {
   let service: RiderSearchService;
@@ -46,14 +48,27 @@ describe('RiderSearchService', () => {
     });
 
     it('should return null when any coordinate is null', () => {
-      expect(service.calculateDistance(null, 3.3792, 9.0579, 7.4951)).toBeNull();
-      expect(service.calculateDistance(6.5244, null, 9.0579, 7.4951)).toBeNull();
-      expect(service.calculateDistance(6.5244, 3.3792, null, 7.4951)).toBeNull();
-      expect(service.calculateDistance(6.5244, 3.3792, 9.0579, null)).toBeNull();
+      expect(
+        service.calculateDistance(null, 3.3792, 9.0579, 7.4951),
+      ).toBeNull();
+      expect(
+        service.calculateDistance(6.5244, null, 9.0579, 7.4951),
+      ).toBeNull();
+      expect(
+        service.calculateDistance(6.5244, 3.3792, null, 7.4951),
+      ).toBeNull();
+      expect(
+        service.calculateDistance(6.5244, 3.3792, 9.0579, null),
+      ).toBeNull();
     });
 
     it('should return 0 for same coordinates', () => {
-      const distance = service.calculateDistance(6.5244, 3.3792, 6.5244, 3.3792);
+      const distance = service.calculateDistance(
+        6.5244,
+        3.3792,
+        6.5244,
+        3.3792,
+      );
       expect(distance).toBe(0);
     });
 
@@ -91,8 +106,8 @@ describe('RiderSearchService', () => {
           userId: 'user-2',
           vehicleType: VehicleType.CAR,
           status: RiderStatus.AVAILABLE,
-          latitude: 6.5300,
-          longitude: 3.3800,
+          latitude: 6.53,
+          longitude: 3.38,
           rating: 4.8,
           completedDeliveries: 150,
           cancelledDeliveries: 3,
@@ -116,7 +131,9 @@ describe('RiderSearchService', () => {
       });
 
       expect(result.data).toHaveLength(2);
-      expect(result.data[0].distanceKm).toBeLessThanOrEqual(result.data[1].distanceKm);
+      expect(result.data[0].distanceKm).toBeLessThanOrEqual(
+        result.data[1].distanceKm,
+      );
     });
 
     it('should filter by vehicle type', async () => {
@@ -174,8 +191,8 @@ describe('RiderSearchService', () => {
           userId: 'user-2',
           vehicleType: VehicleType.CAR,
           status: RiderStatus.AVAILABLE,
-          latitude: 6.5300,
-          longitude: 3.3800,
+          latitude: 6.53,
+          longitude: 3.38,
           rating: 3.5,
           completedDeliveries: 50,
           cancelledDeliveries: 10,
@@ -308,8 +325,8 @@ describe('RiderSearchService', () => {
           userId: 'user-2',
           vehicleType: VehicleType.CAR,
           status: RiderStatus.AVAILABLE,
-          latitude: 6.5300,
-          longitude: 3.3800,
+          latitude: 6.53,
+          longitude: 3.38,
           rating: 4.8,
           completedDeliveries: 150,
           cancelledDeliveries: 3,

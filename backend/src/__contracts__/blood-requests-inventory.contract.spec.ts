@@ -112,9 +112,9 @@ describe('[CONTRACT] BloodRequests ↔ Inventory', () => {
       );
 
       expect(validation.valid).toBe(false);
-      expect(validation.responseErrors.some((e) => e.includes('BREAKING'))).toBe(
-        true,
-      );
+      expect(
+        validation.responseErrors.some((e) => e.includes('BREAKING')),
+      ).toBe(true);
     });
 
     it('should detect breaking change: response field type change', () => {
@@ -141,9 +141,9 @@ describe('[CONTRACT] BloodRequests ↔ Inventory', () => {
       );
 
       expect(validation.valid).toBe(false);
-      expect(validation.responseErrors.some((e) => e.includes('BREAKING'))).toBe(
-        true,
-      );
+      expect(
+        validation.responseErrors.some((e) => e.includes('BREAKING')),
+      ).toBe(true);
     });
   });
 

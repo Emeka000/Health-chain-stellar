@@ -1,7 +1,10 @@
 import { Injectable, Inject, Logger } from '@nestjs/common';
+
 import Redis from 'ioredis';
-import { REDIS_CLIENT } from './redis.constants';
+
 import { ErrorCode } from '../common/errors/error-codes.enum';
+
+import { REDIS_CLIENT } from './redis.constants';
 
 /**
  * Idempotency service for handling duplicate requests.
@@ -22,9 +25,7 @@ export class IdempotencyService {
     idempotencyKey: string,
   ): Promise<{ statusCode: number; body: unknown } | null> {
     try {
-      const cached = await this.redis.get(
-        this.getKey(idempotencyKey),
-      );
+      const cached = await this.redis.get(this.getKey(idempotencyKey));
       if (!cached) {
         return null;
       }

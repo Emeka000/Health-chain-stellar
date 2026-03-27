@@ -1,4 +1,6 @@
 export enum Permission {
+  MANAGE_FEE_POLICIES = 'MANAGE_FEE_POLICIES',
+  VIEW_FEE_POLICIES = 'VIEW_FEE_POLICIES',
   // ── Orders ──────────────────────────────────────────────────────────
   CREATE_ORDER = 'create:order',
   VIEW_ORDER = 'view:order',
