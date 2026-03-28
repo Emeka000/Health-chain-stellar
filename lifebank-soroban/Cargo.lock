@@ -880,6 +880,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "matching-contract"
+version = "0.0.0"
+dependencies = [
+ "inventory-contract",
+ "request-contract",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
