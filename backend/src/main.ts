@@ -2,9 +2,11 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 
 import { AppModule } from './app.module';
 import { AppErrorFilter } from './common/filters/irrecoverable-error.filter';
+import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { validateEnv } from './config/validate-env';
 import { ThrottlerExceptionFilter } from './throttler/throttler-exception.filter';
 
@@ -17,15 +19,23 @@ async function bootstrap() {
     process.exit(1);
   }
 
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
   const configService = app.get(ConfigService);
   const logger = new Logger('Bootstrap');
+
+  // Use Winston as the NestJS logger
+  app.useLogger(app.get(WINSTON_MODULE_NEST_PROVIDER));
 
   if (configService.get<string>('TRUST_PROXY', 'false') === 'true') {
     app.getHttpAdapter().getInstance().set('trust proxy', 1);
   }
 
-  app.useGlobalFilters(new ThrottlerExceptionFilter(), new AppErrorFilter());
+  // Order matters: GlobalExceptionFilter runs last (catches everything)
+  app.useGlobalFilters(
+    new ThrottlerExceptionFilter(),
+    new AppErrorFilter(),
+    app.get(GlobalExceptionFilter),
+  );
 
   // Global validation pipe
   app.useGlobalPipes(

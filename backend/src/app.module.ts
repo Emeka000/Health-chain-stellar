@@ -22,6 +22,7 @@ import { CorrelationIdMiddleware } from './common/middleware/correlation-id.midd
 import { CorrelationIdService } from './common/middleware/correlation-id.service';
 import { LoggerModule } from './common/logger/logger.module';
 import { HttpLoggingInterceptor } from './common/interceptors/http-logging.interceptor';
+import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { AppConfigModule } from './config/config.module';
 import { DatabaseSyncGuard } from './config/database-sync.guard';
 import { DispatchModule } from './dispatch/dispatch.module';
@@ -88,6 +89,7 @@ import type Redis from 'ioredis';
     { provide: APP_INTERCEPTOR, useClass: ActivityLoggingInterceptor },
     /** HTTP request/response logging with correlation IDs */
     { provide: APP_INTERCEPTOR, useClass: HttpLoggingInterceptor },
+    GlobalExceptionFilter,
     CorrelationIdService,
   ],
 })
