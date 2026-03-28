@@ -103,7 +103,13 @@ export class OrganizationsController {
   @Get(':id/reviews')
   listReviews(
     @Param('id', ParseUUIDPipe) organizationId: string,
-    @Query(new ValidationPipe({ transform: true }))
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
     query: OrganizationReviewQueryDto,
   ) {
     return this.organizationReviewsService.getReviewsForOrganization(

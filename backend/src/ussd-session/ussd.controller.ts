@@ -31,7 +31,13 @@ export class UssdController {
    */
   @Post('session')
   @HttpCode(HttpStatus.OK)
-  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
   @ApiOperation({ summary: "Handle Africa's Talking USSD session callback" })
   @ApiResponse({
     status: 200,

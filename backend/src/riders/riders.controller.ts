@@ -31,7 +31,13 @@ export class RidersController {
   @RequirePermissions(Permission.VIEW_RIDERS)
   @Get()
   findAll(
-    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
     paginationDto: PaginationQueryDto,
     @Query('status') status?: RiderStatus,
   ): Promise<PaginatedResponse<RiderEntity>> {
