@@ -1,0 +1,825 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "@angular-devkit/core": {
+      "name": "@angular-devkit/core",
+      "severity": "moderate",
+      "isDirect": false,
+      "via": [
+        "ajv",
+        "picomatch"
+      ],
+      "effects": [
+        "@angular-devkit/schematics",
+        "@angular-devkit/schematics-cli",
+        "@nestjs/cli",
+        "@nestjs/schematics"
+      ],
+      "range": "12.0.0-next.0 - 19.2.22 || 20.0.0-next.0 - 20.3.21 || 21.0.0-next.0 - 21.2.4 || >=22.0.0-next.0",
+      "nodes": [
+        "node_modules/@angular-devkit/core",
+        "node_modules/@nestjs/schematics/node_modules/@angular-devkit/core"
+      ],
+      "fixAvailable": {
+        "name": "@nestjs/schematics",
+        "version": "7.3.1",
+        "isSemVerMajor": true
+      }
+    },
+    "@angular-devkit/schematics": {
+      "name": "@angular-devkit/schematics",
+      "severity": "moderate",
+      "isDirect": false,
+      "via": [
+        "@angular-devkit/core"
+      ],
+      "effects": [],
+      "range": "12.0.0-next.0 - 19.2.21 || 20.0.0-next.0 - 20.3.17 || 21.0.0-next.0 - 21.1.4 || 21.2.0-next.0 - 21.2.0-rc.2",
+      "nodes": [
+        "node_modules/@angular-devkit/schematics",
+        "node_modules/@nestjs/schematics/node_modules/@angular-devkit/schematics"
+      ],
+      "fixAvailable": true
+    },
+    "@angular-devkit/schematics-cli": {
+      "name": "@angular-devkit/schematics-cli",
+      "severity": "moderate",
+      "isDirect": false,
+      "via": [
+        "@angular-devkit/core",
+        "@angular-devkit/schematics"
+      ],
+      "effects": [],
+      "range": "0.1200.0-next.0 - 19.2.21 || 20.0.0-next.0 - 20.3.17 || 21.0.0-next.0 - 21.1.4 || 21.2.0-next.0 - 21.2.0-rc.2",
+      "nodes": [
+        "node_modules/@angular-devkit/schematics-cli"
+      ],
+      "fixAvailable": true
+    },
+    "@google-cloud/firestore": {
+      "name": "@google-cloud/firestore",
+      "severity": "low",
+      "isDirect": false,
+      "via": [
+        "google-gax"
+      ],
+      "effects": [
+        "firebase-admin"
+      ],
+      "range": "7.5.0-pre.0 || 7.6.0 - 7.11.6",
+      "nodes": [
+        "node_modules/@google-cloud/firestore"
+      ],
+      "fixAvailable": {
+        "name": "firebase-admin",
+        "version": "10.3.0",
+        "isSemVerMajor": true
+      }
+    },
+    "@google-cloud/storage": {
+      "name": "@google-cloud/storage",
+      "severity": "low",
+      "isDirect": false,
+      "via": [
+        "retry-request",
+        "teeny-request"
+      ],
+      "effects": [
+        "firebase-admin"
+      ],
+      "range": ">=5.19.0",
+      "nodes": [
+        "node_modules/@google-cloud/storage"
+      ],
+      "fixAvailable": {
+        "name": "firebase-admin",
+        "version": "10.3.0",
+        "isSemVerMajor": true
+      }
+    },
+    "@nestjs/cli": {
+      "name": "@nestjs/cli",
+      "severity": "moderate",
+      "isDirect": true,
+      "via": [
+        "@angular-devkit/core",
+        "@angular-devkit/schematics",
+        "@angular-devkit/schematics-cli",
+        "@nestjs/schematics"
+      ],
+      "effects": [],
+      "range": "8.0.0 - 11.0.16",
+      "nodes": [
+        "node_modules/@nestjs/cli"
+      ],
+      "fixAvailable": {
+        "name": "@nestjs/cli",
+        "version": "7.6.0",
+        "isSemVerMajor": true
+      }
+    },
+    "@nestjs/core": {
+      "name": "@nestjs/core",
+      "severity": "high",
+      "isDirect": true,
+      "via": [
+        "@nestjs/websockets",
+        "path-to-regexp"
+      ],
+      "effects": [
+        "@nestjs/platform-express",
+        "@nestjs/swagger",
+        "@nestjs/testing",
+        "@nestjs/websockets"
+      ],
+      "range": ">=11.0.0-next.1",
+      "nodes": [
+        "node_modules/@nestjs/core"
+      ],
+      "fixAvailable": {
+        "name": "@nestjs/core",
+        "version": "10.4.22",
+        "isSemVerMajor": true
+      }
+    },
+    "@nestjs/platform-express": {
+      "name": "@nestjs/platform-express",
+      "severity": "high",
+      "isDirect": true,
+      "via": [
+        "@nestjs/core",
+        "path-to-regexp"
+      ],
+      "effects": [],
+      "range": ">=11.0.0-next.1",
+      "nodes": [
+        "node_modules/@nestjs/platform-express"
+      ],
+      "fixAvailable": true
+    },
+    "@nestjs/platform-socket.io": {
+      "name": "@nestjs/platform-socket.io",
+      "severity": "high",
+      "isDirect": true,
+      "via": [
+        "@nestjs/websockets"
+      ],
+      "effects": [],
+      "range": ">=11.0.0-next.1",
+      "nodes": [
+        "node_modules/@nestjs/platform-socket.io"
+      ],
+      "fixAvailable": {
+        "name": "@nestjs/platform-socket.io",
+        "version": "10.4.22",
+        "isSemVerMajor": true
+      }
+    },
+    "@nestjs/schematics": {
+      "name": "@nestjs/schematics",
+      "severity": "moderate",
+      "isDirect": true,
+      "via": [
+        "@angular-devkit/core",
+        "@angular-devkit/schematics"
+      ],
+      "effects": [],
+      "range": "8.0.0 - 11.0.9",
+      "nodes": [
+        "node_modules/@nestjs/schematics"
+      ],
+      "fixAvailable": {
+        "name": "@nestjs/schematics",
+        "version": "7.3.1",
+        "isSemVerMajor": true
+      }
+    },
+    "@nestjs/swagger": {
+      "name": "@nestjs/swagger",
+      "severity": "high",
+      "isDirect": true,
+      "via": [
+        "@nestjs/core",
+        "path-to-regexp"
+      ],
+      "effects": [],
+      "range": ">=11.0.0-next.1",
+      "nodes": [
+        "node_modules/@nestjs/swagger"
+      ],
+      "fixAvailable": {
+        "name": "@nestjs/swagger",
+        "version": "11.0.0",
+        "isSemVerMajor": true
+      }
+    },
+    "@nestjs/testing": {
+      "name": "@nestjs/testing",
+      "severity": "high",
+      "isDirect": true,
+      "via": [
+        "@nestjs/core"
+      ],
+      "effects": [],
+      "range": ">=11.0.0-next.1",
+      "nodes": [
+        "node_modules/@nestjs/testing"
+      ],
+      "fixAvailable": {
+        "name": "@nestjs/testing",
+        "version": "10.4.22",
+        "isSemVerMajor": true
+      }
+    },
+    "@nestjs/websockets": {
+      "name": "@nestjs/websockets",
+      "severity": "high",
+      "isDirect": true,
+      "via": [
+        "@nestjs/core",
+        "@nestjs/platform-socket.io"
+      ],
+      "effects": [
+        "@nestjs/platform-socket.io"
+      ],
+      "range": ">=11.0.0-next.1",
+      "nodes": [
+        "node_modules/@nestjs/websockets"
+      ],
+      "fixAvailable": {
+        "name": "@nestjs/websockets",
+        "version": "10.4.22",
+        "isSemVerMajor": true
+      }
+    },
+    "@tootallnate/once": {
+      "name": "@tootallnate/once",
+      "severity": "low",
+      "isDirect": false,
+      "via": [
+        {
+          "source": 1113977,
+          "name": "@tootallnate/once",
+          "dependency": "@tootallnate/once",
+          "title": "@tootallnate/once vulnerable to Incorrect Control Flow Scoping",
+          "url": "https://github.com/advisories/GHSA-vpq2-c234-7xj6",
+          "severity": "low",
+          "cwe": [
+            "CWE-705"
+          ],
+          "cvss": {
+            "score": 3.3,
+            "vectorString": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:L"
+          },
+          "range": "<3.0.1"
+        }
+      ],
+      "effects": [
+        "http-proxy-agent"
+      ],
+      "range": "<3.0.1",
+      "nodes": [
+        "node_modules/@tootallnate/once",
+        "node_modules/teeny-request/node_modules/@tootallnate/once"
+      ],
+      "fixAvailable": {
+        "name": "sqlite3",
+        "version": "6.0.1",
+        "isSemVerMajor": true
+      }
+    },
+    "ajv": {
+      "name": "ajv",
+      "severity": "moderate",
+      "isDirect": false,
+      "via": [
+        {
+          "source": 1113715,
+          "name": "ajv",
+          "dependency": "ajv",
+          "title": "ajv has ReDoS when using `$data` option",
+          "url": "https://github.com/advisories/GHSA-2g4f-4pwh-qvx6",
+          "severity": "moderate",
+          "cwe": [
+            "CWE-400",
+            "CWE-1333"
+          ],
+          "cvss": {
+            "score": 0,
+            "vectorString": null
+          },
+          "range": ">=7.0.0-alpha.0 <8.18.0"
+        }
+      ],
+      "effects": [
+        "@angular-devkit/core"
+      ],
+      "range": "7.0.0-alpha.0 - 8.17.1",
+      "nodes": [
+        "node_modules/@angular-devkit/core/node_modules/ajv",
+        "node_modules/@nestjs/schematics/node_modules/ajv"
+      ],
+      "fixAvailable": {
+        "name": "@nestjs/schematics",
+        "version": "7.3.1",
+        "isSemVerMajor": true
+      }
+    },
+    "brace-expansion": {
+      "name": "brace-expansion",
+      "severity": "moderate",
+      "isDirect": false,
+      "via": [
+        {
+          "source": 1115540,
+          "name": "brace-expansion",
+          "dependency": "brace-expansion",
+          "title": "brace-expansion: Zero-step sequence causes process hang and memory exhaustion",
+          "url": "https://github.com/advisories/GHSA-f886-m6hf-6m8v",
+          "severity": "moderate",
+          "cwe": [
+            "CWE-400"
+          ],
+          "cvss": {
+            "score": 6.5,
+            "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:H"
+          },
+          "range": "<1.1.13"
+        },
+        {
+          "source": 1115541,
+          "name": "brace-expansion",
+          "dependency": "brace-expansion",
+          "title": "brace-expansion: Zero-step sequence causes process hang and memory exhaustion",
+          "url": "https://github.com/advisories/GHSA-f886-m6hf-6m8v",
+          "severity": "moderate",
+          "cwe": [
+            "CWE-400"
+          ],
+          "cvss": {
+            "score": 6.5,
+            "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:H"
+          },
+          "range": ">=2.0.0 <2.0.3"
+        }
+      ],
+      "effects": [],
+      "range": "<1.1.13 || >=2.0.0 <2.0.3",
+      "nodes": [
+        "node_modules/@jest/reporters/node_modules/brace-expansion",
+        "node_modules/brace-expansion",
+        "node_modules/jest-config/node_modules/brace-expansion",
+        "node_modules/jest-runtime/node_modules/brace-expansion",
+        "node_modules/typeorm/node_modules/brace-expansion"
+      ],
+      "fixAvailable": true
+    },
+    "cacache": {
+      "name": "cacache",
+      "severity": "high",
+      "isDirect": false,
+      "via": [
+        "tar"
+      ],
+      "effects": [
+        "make-fetch-happen"
+      ],
+      "range": "14.0.0 - 18.0.4",
+      "nodes": [
+        "node_modules/cacache"
+      ],
+      "fixAvailable": {
+        "name": "sqlite3",
+        "version": "6.0.1",
+        "isSemVerMajor": true
+      }
+    },
+    "firebase-admin": {
+      "name": "firebase-admin",
+      "severity": "low",
+      "isDirect": true,
+      "via": [
+        "@google-cloud/firestore",
+        "@google-cloud/storage"
+      ],
+      "effects": [],
+      "range": ">=11.0.0",
+      "nodes": [
+        "node_modules/firebase-admin"
+      ],
+      "fixAvailable": {
+        "name": "firebase-admin",
+        "version": "10.3.0",
+        "isSemVerMajor": true
+      }
+    },
+    "google-gax": {
+      "name": "google-gax",
+      "severity": "low",
+      "isDirect": false,
+      "via": [
+        "retry-request"
+      ],
+      "effects": [
+        "@google-cloud/firestore"
+      ],
+      "range": "4.0.5-experimental - 4.6.1",
+      "nodes": [
+        "node_modules/google-gax"
+      ],
+      "fixAvailable": {
+        "name": "firebase-admin",
+        "version": "10.3.0",
+        "isSemVerMajor": true
+      }
+    },
+    "http-proxy-agent": {
+      "name": "http-proxy-agent",
+      "severity": "low",
+      "isDirect": false,
+      "via": [
+        "@tootallnate/once"
+      ],
+      "effects": [
+        "make-fetch-happen",
+        "teeny-request"
+      ],
+      "range": "4.0.1 - 5.0.0",
+      "nodes": [
+        "node_modules/http-proxy-agent",
+        "node_modules/teeny-request/node_modules/http-proxy-agent"
+      ],
+      "fixAvailable": {
+        "name": "sqlite3",
+        "version": "6.0.1",
+        "isSemVerMajor": true
+      }
+    },
+    "make-fetch-happen": {
+      "name": "make-fetch-happen",
+      "severity": "high",
+      "isDirect": false,
+      "via": [
+        "cacache",
+        "http-proxy-agent"
+      ],
+      "effects": [
+        "node-gyp"
+      ],
+      "range": "7.1.1 - 14.0.0",
+      "nodes": [
+        "node_modules/make-fetch-happen"
+      ],
+      "fixAvailable": {
+        "name": "sqlite3",
+        "version": "6.0.1",
+        "isSemVerMajor": true
+      }
+    },
+    "node-gyp": {
+      "name": "node-gyp",
+      "severity": "high",
+      "isDirect": false,
+      "via": [
+        "make-fetch-happen",
+        "tar"
+      ],
+      "effects": [
+        "sqlite3"
+      ],
+      "range": "<=10.3.1",
+      "nodes": [
+        "node_modules/node-gyp"
+      ],
+      "fixAvailable": {
+        "name": "sqlite3",
+        "version": "6.0.1",
+        "isSemVerMajor": true
+      }
+    },
+    "path-to-regexp": {
+      "name": "path-to-regexp",
+      "severity": "high",
+      "isDirect": false,
+      "via": [
+        {
+          "source": 1115573,
+          "name": "path-to-regexp",
+          "dependency": "path-to-regexp",
+          "title": "path-to-regexp vulnerable to Denial of Service via sequential optional groups",
+          "url": "https://github.com/advisories/GHSA-j3q9-mxjg-w52f",
+          "severity": "high",
+          "cwe": [
+            "CWE-400",
+            "CWE-1333"
+          ],
+          "cvss": {
+            "score": 7.5,
+            "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+          },
+          "range": ">=8.0.0 <8.4.0"
+        },
+        {
+          "source": 1115582,
+          "name": "path-to-regexp",
+          "dependency": "path-to-regexp",
+          "title": "path-to-regexp vulnerable to Regular Expression Denial of Service via multiple wildcards",
+          "url": "https://github.com/advisories/GHSA-27v5-c462-wpq7",
+          "severity": "moderate",
+          "cwe": [
+            "CWE-1333"
+          ],
+          "cvss": {
+            "score": 5.9,
+            "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:H"
+          },
+          "range": ">=8.0.0 <8.4.0"
+        }
+      ],
+      "effects": [
+        "@nestjs/core",
+        "@nestjs/platform-express",
+        "@nestjs/swagger"
+      ],
+      "range": "8.0.0 - 8.3.0",
+      "nodes": [
+        "node_modules/path-to-regexp"
+      ],
+      "fixAvailable": {
+        "name": "@nestjs/core",
+        "version": "10.4.22",
+        "isSemVerMajor": true
+      }
+    },
+    "picomatch": {
+      "name": "picomatch",
+      "severity": "high",
+      "isDirect": false,
+      "via": [
+        {
+          "source": 1115551,
+          "name": "picomatch",
+          "dependency": "picomatch",
+          "title": "Picomatch: Method Injection in POSIX Character Classes causes incorrect Glob Matching",
+          "url": "https://github.com/advisories/GHSA-3v7f-55p6-f55p",
+          "severity": "moderate",
+          "cwe": [
+            "CWE-1321"
+          ],
+          "cvss": {
+            "score": 5.3,
+            "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N"
+          },
+          "range": ">=4.0.0 <4.0.4"
+        },
+        {
+          "source": 1115554,
+          "name": "picomatch",
+          "dependency": "picomatch",
+          "title": "Picomatch has a ReDoS vulnerability via extglob quantifiers",
+          "url": "https://github.com/advisories/GHSA-c2c7-rcm5-vvqj",
+          "severity": "high",
+          "cwe": [
+            "CWE-1333"
+          ],
+          "cvss": {
+            "score": 7.5,
+            "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+          },
+          "range": ">=4.0.0 <4.0.4"
+        }
+      ],
+      "effects": [
+        "@angular-devkit/core"
+      ],
+      "range": "4.0.0 - 4.0.3",
+      "nodes": [
+        "node_modules/picomatch"
+      ],
+      "fixAvailable": {
+        "name": "@nestjs/schematics",
+        "version": "7.3.1",
+        "isSemVerMajor": true
+      }
+    },
+    "retry-request": {
+      "name": "retry-request",
+      "severity": "low",
+      "isDirect": false,
+      "via": [
+        "teeny-request"
+      ],
+      "effects": [
+        "@google-cloud/storage",
+        "google-gax"
+      ],
+      "range": "7.0.0 - 7.0.2",
+      "nodes": [
+        "node_modules/retry-request"
+      ],
+      "fixAvailable": {
+        "name": "firebase-admin",
+        "version": "10.3.0",
+        "isSemVerMajor": true
+      }
+    },
+    "sqlite3": {
+      "name": "sqlite3",
+      "severity": "high",
+      "isDirect": true,
+      "via": [
+        "node-gyp",
+        "tar"
+      ],
+      "effects": [
+        "typeorm"
+      ],
+      "range": "5.0.0 - 5.1.7",
+      "nodes": [
+        "node_modules/sqlite3"
+      ],
+      "fixAvailable": {
+        "name": "sqlite3",
+        "version": "6.0.1",
+        "isSemVerMajor": true
+      }
+    },
+    "tar": {
+      "name": "tar",
+      "severity": "high",
+      "isDirect": false,
+      "via": [
+        {
+          "source": 1112659,
+          "name": "tar",
+          "dependency": "tar",
+          "title": "node-tar Vulnerable to Arbitrary File Creation/Overwrite via Hardlink Path Traversal",
+          "url": "https://github.com/advisories/GHSA-34x7-hfp2-rc4v",
+          "severity": "high",
+          "cwe": [
+            "CWE-22",
+            "CWE-59"
+          ],
+          "cvss": {
+            "score": 8.2,
+            "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:L/A:N"
+          },
+          "range": "<7.5.7"
+        },
+        {
+          "source": 1113300,
+          "name": "tar",
+          "dependency": "tar",
+          "title": "node-tar is Vulnerable to Arbitrary File Overwrite and Symlink Poisoning via Insufficient Path Sanitization",
+          "url": "https://github.com/advisories/GHSA-8qq5-rm4j-mr97",
+          "severity": "high",
+          "cwe": [
+            "CWE-22"
+          ],
+          "cvss": {
+            "score": 0,
+            "vectorString": null
+          },
+          "range": "<=7.5.2"
+        },
+        {
+          "source": 1113375,
+          "name": "tar",
+          "dependency": "tar",
+          "title": "Arbitrary File Read/Write via Hardlink Target Escape Through Symlink Chain in node-tar Extraction",
+          "url": "https://github.com/advisories/GHSA-83g3-92jg-28cx",
+          "severity": "high",
+          "cwe": [
+            "CWE-22"
+          ],
+          "cvss": {
+            "score": 7.1,
+            "vectorString": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:N"
+          },
+          "range": "<7.5.8"
+        },
+        {
+          "source": 1114200,
+          "name": "tar",
+          "dependency": "tar",
+          "title": "tar has Hardlink Path Traversal via Drive-Relative Linkpath",
+          "url": "https://github.com/advisories/GHSA-qffp-2rhf-9h96",
+          "severity": "high",
+          "cwe": [
+            "CWE-22",
+            "CWE-59"
+          ],
+          "cvss": {
+            "score": 0,
+            "vectorString": null
+          },
+          "range": "<=7.5.9"
+        },
+        {
+          "source": 1114302,
+          "name": "tar",
+          "dependency": "tar",
+          "title": "node-tar Symlink Path Traversal via Drive-Relative Linkpath",
+          "url": "https://github.com/advisories/GHSA-9ppj-qmqm-q256",
+          "severity": "high",
+          "cwe": [
+            "CWE-22"
+          ],
+          "cvss": {
+            "score": 0,
+            "vectorString": null
+          },
+          "range": "<=7.5.10"
+        },
+        {
+          "source": 1114680,
+          "name": "tar",
+          "dependency": "tar",
+          "title": "Race Condition in node-tar Path Reservations via Unicode Ligature Collisions on macOS APFS",
+          "url": "https://github.com/advisories/GHSA-r6q2-hw4h-h46w",
+          "severity": "high",
+          "cwe": [
+            "CWE-176",
+            "CWE-367"
+          ],
+          "cvss": {
+            "score": 8.8,
+            "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:H/A:L"
+          },
+          "range": "<=7.5.3"
+        }
+      ],
+      "effects": [
+        "cacache",
+        "node-gyp",
+        "sqlite3"
+      ],
+      "range": "<=7.5.10",
+      "nodes": [
+        "node_modules/tar"
+      ],
+      "fixAvailable": {
+        "name": "sqlite3",
+        "version": "6.0.1",
+        "isSemVerMajor": true
+      }
+    },
+    "teeny-request": {
+      "name": "teeny-request",
+      "severity": "low",
+      "isDirect": false,
+      "via": [
+        "http-proxy-agent"
+      ],
+      "effects": [
+        "@google-cloud/storage",
+        "retry-request"
+      ],
+      "range": "7.1.3 - 10.1.0",
+      "nodes": [
+        "node_modules/teeny-request"
+      ],
+      "fixAvailable": {
+        "name": "firebase-admin",
+        "version": "10.3.0",
+        "isSemVerMajor": true
+      }
+    },
+    "typeorm": {
+      "name": "typeorm",
+      "severity": "high",
+      "isDirect": true,
+      "via": [
+        "sqlite3"
+      ],
+      "effects": [],
+      "range": ">=0.3.7-dev.1b5aa62",
+      "nodes": [
+        "node_modules/typeorm"
+      ],
+      "fixAvailable": {
+        "name": "typeorm",
+        "version": "0.3.6",
+        "isSemVerMajor": true
+      }
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 8,
+      "moderate": 7,
+      "high": 14,
+      "critical": 0,
+      "total": 29
+    },
+    "dependencies": {
+      "prod": 554,
+      "dev": 758,
+      "optional": 183,
+      "peer": 11,
+      "peerOptional": 0,
+      "total": 1392
+    }
+  }
+}

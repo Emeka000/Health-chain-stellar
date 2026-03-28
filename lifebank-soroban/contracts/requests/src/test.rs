@@ -66,7 +66,7 @@ fn test_initialize_emits_initialized_event() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #0)")]
+#[should_panic(expected = "Error(Contract, #300)")]
 fn test_initialize_cannot_run_twice() {
     let (env, client, _contract_id) = create_uninitialized_contract();
     let admin = Address::generate(&env);
@@ -77,7 +77,7 @@ fn test_initialize_cannot_run_twice() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #1)")]
+#[should_panic(expected = "Error(Contract, #301)")]
 fn test_readers_fail_before_initialization() {
     let (_env, client, _contract_id) = create_uninitialized_contract();
     let _ = client.get_admin();
@@ -161,7 +161,7 @@ fn test_create_request_generates_unique_ids() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #5)")]
+#[should_panic(expected = "Error(Contract, #305)")]
 fn test_create_request_requires_authorized_hospital() {
     let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
     let hospital = Address::generate(&env);
@@ -179,7 +179,7 @@ fn test_create_request_requires_authorized_hospital() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #3)")]
+#[should_panic(expected = "Error(Contract, #303)")]
 fn test_create_request_rejects_past_timestamp() {
     let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
     let hospital = authorize_hospital(&env, &client);
@@ -197,7 +197,7 @@ fn test_create_request_rejects_past_timestamp() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #4)")]
+#[should_panic(expected = "Error(Contract, #304)")]
 fn test_create_request_rejects_zero_quantity() {
     let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
     let hospital = authorize_hospital(&env, &client);

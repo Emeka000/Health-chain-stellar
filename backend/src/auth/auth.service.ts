@@ -486,4 +486,178 @@ export class AuthService {
   private async createSession(
     user: UserEntity,
     sessionId: string,
-    ttlSeconds
+    ttlSeconds: number,
+  ) {
+    const key = this.sessionKey(sessionId);
+    const sessionData = {
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
+    };
+
+    await this.circuitBreaker.execute(
+      async () => {
+        await this.redis.hset(key, sessionData);
+        await this.redis.expire(key, ttlSeconds);
+        await this.redis.zadd(
+          this.userSessionsKey(user.id),
+          Date.now(),
+          sessionId,
+        );
+      },
+      async () => {
+        await this.fallbackStore.setSession(sessionId, sessionData, ttlSeconds);
+        await this.fallbackStore.addUserSession(user.id, sessionId);
+      },
+    );
+
+    // Persist to database
+    try {
+      await this.authSessionRepository.create({
+        sessionId,
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+        expiresAt: new Date(Date.now() + ttlSeconds * 1000),
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Failed to persist session to database: ${error.message}`,
+      );
+    }
+  }
+
+  private async touchSession(
+    userId: string,
+    sessionId: string,
+    ttlSeconds: number,
+  ) {
+    const key = this.sessionKey(sessionId);
+    await this.circuitBreaker.execute(
+      async () => {
+        await this.redis.expire(key, ttlSeconds);
+        await this.redis.zadd(
+          this.userSessionsKey(userId),
+          Date.now(),
+          sessionId,
+        );
+      },
+      async () => {
+        // Fallback store doesn't need explicit touch as it uses setTimeout for TTL
+      },
+    );
+
+    try {
+      await this.authSessionRepository.updateLastActivity(sessionId);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to update session activity in DB: ${error.message}`,
+      );
+    }
+  }
+
+  private async getSessionById(
+    sessionId: string,
+  ): Promise<Record<string, string> | null> {
+    const key = this.sessionKey(sessionId);
+    return this.circuitBreaker.execute(
+      async () => {
+        const session = await this.redis.hgetall(key);
+        return Object.keys(session).length > 0 ? session : null;
+      },
+      async () => {
+        return this.fallbackStore.getSession(sessionId);
+      },
+    );
+  }
+
+  private userSessionsKey(userId: string): string {
+    return `auth:user-sessions:${userId}`;
+  }
+
+  private sessionKey(sessionId: string): string {
+    return `auth:session:${sessionId}`;
+  }
+
+  private getRefreshTokenExpirySeconds(): number {
+    const expires =
+      this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') ?? '7d';
+    if (expires.endsWith('d')) {
+      return parseInt(expires) * 24 * 60 * 60;
+    }
+    if (expires.endsWith('h')) {
+      return parseInt(expires) * 60 * 60;
+    }
+    return 604800; // 7 days default
+  }
+
+  private async enforceConcurrentSessionLimit(userId: string) {
+    const maxSessions = this.configService.get<number>('MAX_CONCURRENT_SESSIONS', 5);
+    const sessionIds = await this.redis.zrange(this.userSessionsKey(userId), 0, -1);
+    
+    if (sessionIds.length > maxSessions) {
+      const toRevoke = sessionIds.slice(0, sessionIds.length - maxSessions);
+      await Promise.all(toRevoke.map(sid => this.revokeSession(userId, sid)));
+      this.logger.log(`Enforced session limit for user ${userId}, revoked ${toRevoke.length} sessions`);
+    }
+  }
+
+  /**
+   * Admin-only functionality to revoke all sessions for a specific user.
+   */
+  async revokeAllUserSessionsByAdmin(userId: string) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException(
+        JSON.stringify({
+          code: ErrorCode.USER_NOT_FOUND,
+          message: 'User not found',
+        }),
+      );
+    }
+    
+    this.logger.log(`Admin revoking all sessions for user: ${userId}`);
+
+    // 1. Get all session IDs from Redis
+    const sessionIds = await this.redis.zrange(
+      this.userSessionsKey(userId),
+      0,
+      -1,
+    );
+
+    // 2. Revoke each session in Redis
+    await Promise.all(
+      sessionIds.map(async (sessionId) => {
+        await this.redis.hset(
+          this.sessionKey(sessionId),
+          'revokedAt',
+          new Date().toISOString(),
+        );
+        // We could also delete them, but setting revokedAt allows for consistent logic in getSessionById
+      }),
+    );
+
+    // 3. Clean up the user's session index in Redis
+    await this.redis.del(this.userSessionsKey(userId));
+
+    // 4. Revoke in Database
+    await this.authSessionRepository.revokeUserSessions(
+      userId,
+      'Revoked by Admin',
+    );
+
+    // 5. Fallback store (if active)
+    const fallbackSessions = await this.fallbackStore.getUserSessions(userId);
+    await Promise.all(
+      fallbackSessions.map((sid) => this.fallbackStore.revokeSession(sid)),
+    );
+
+    return {
+      message: `Successfully revoked ${sessionIds.length || fallbackSessions.length || 'all'} sessions for user ${userId}`,
+      userId,
+      revokedCount: Math.max(sessionIds.length, fallbackSessions.length),
+    };
+  }
+}

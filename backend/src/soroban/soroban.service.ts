@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 
@@ -14,7 +14,10 @@ import {
 } from '@stellar/stellar-sdk';
 import { Server } from '@stellar/stellar-sdk/rpc';
 import * as SorobanRpc from '@stellar/stellar-sdk/rpc';
+import Redis from 'ioredis';
 import { Repository } from 'typeorm';
+
+import { REDIS_CLIENT } from '../redis/redis.constants';
 
 import {
   assertRegisterBloodUnitIds,
@@ -57,6 +60,7 @@ export class SorobanService implements OnModuleInit {
 
   constructor(
     private configService: ConfigService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
     @InjectRepository(BlockchainEvent)
     private eventRepository: Repository<BlockchainEvent>,
   ) {}
@@ -86,6 +90,100 @@ export class SorobanService implements OnModuleInit {
     }
 
     this.logger.log(`Soroban service initialized on ${network}`);
+
+    // Validate contract compatibility
+    try {
+      await this.validateContractCompatibility();
+    } catch (err) {
+      this.logger.error(`Contract compatibility check failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * Validate that the deployed contract version matches backend expectations
+   */
+  async validateContractCompatibility(): Promise<void> {
+    if (!this.contract) return;
+
+    try {
+      const version = await this.getContractVersion();
+      const expectedVersion = this.configService.get<number>(
+        'EXPECTED_CONTRACT_VERSION',
+        1,
+      );
+
+      if (version !== expectedVersion) {
+        this.logger.warn(
+          `Contract version mismatch! Deployed: ${version}, Expected: ${expectedVersion}`,
+        );
+      } else {
+        this.logger.log(`Contract version ${version} validated successfully.`);
+      }
+    } catch (error) {
+      this.logger.error(`Could not validate contract version: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get contract version from the blockchain
+   */
+  async getContractVersion(): Promise<number> {
+    const cacheKey = `contract:version:${this.contract.contractId()}`;
+    const cached = await this.redis.get(cacheKey);
+    if (cached) return parseInt(cached);
+
+    return this.executeWithRetry(async () => {
+      const account = await this.server.getAccount(
+        this.sourceKeypair.publicKey(),
+      );
+      const transaction = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(this.contract.call('version'))
+        .setTimeout(30)
+        .build();
+
+      const simulated = await this.server.simulateTransaction(transaction);
+      if (SorobanRpc.Api.isSimulationSuccess(simulated)) {
+        const result = simulated.result?.retval;
+        const version = this.parseScVal(result);
+        await this.redis.setex(cacheKey, 3600, version.toString()); // cache for 1 hour
+        return version;
+      }
+      throw new Error('Failed to fetch contract version');
+    });
+  }
+
+  /**
+   * Get contract metadata
+   */
+  async getContractMetadata(): Promise<Record<string, string>> {
+    const cacheKey = `contract:metadata:${this.contract.contractId()}`;
+    const cached = await this.redis.get(cacheKey);
+    if (cached) return JSON.parse(cached);
+
+    return this.executeWithRetry(async () => {
+      const account = await this.server.getAccount(
+        this.sourceKeypair.publicKey(),
+      );
+      const transaction = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(this.contract.call('get_metadata'))
+        .setTimeout(30)
+        .build();
+
+      const simulated = await this.server.simulateTransaction(transaction);
+      if (SorobanRpc.Api.isSimulationSuccess(simulated)) {
+        const result = simulated.result?.retval;
+        const metadata = this.parseScVal(result);
+        await this.redis.setex(cacheKey, 3600, JSON.stringify(metadata));
+        return metadata;
+      }
+      throw new Error('Failed to fetch contract metadata');
+    });
   }
 
   /**
@@ -347,7 +445,7 @@ export class SorobanService implements OnModuleInit {
   /**
    * Execute operation with retry logic and exponential backoff
    */
-  private async executeWithRetry<T>(
+  public async executeWithRetry<T>(
     operation: () => Promise<T>,
     attempt = 1,
   ): Promise<T> {

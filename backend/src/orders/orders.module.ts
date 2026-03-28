@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
@@ -16,6 +16,9 @@ import { OrdersService } from './orders.service';
 import { OrderEventStoreService } from './services/order-event-store.service';
 import { RequestStatusService } from './services/request-status.service';
 import { OrderStateMachine } from './state-machine/order-state-machine';
+import { DisputePolicyService } from './services/dispute-policy.service';
+import { SorobanModule } from '../soroban/soroban.module';
+import { ApprovalModule } from '../approvals/approval.module';
 
 @Module({
   imports: [
@@ -24,6 +27,8 @@ import { OrderStateMachine } from './state-machine/order-state-machine';
     InventoryModule,
     NotificationsModule,
     FeePolicyModule,
+    SorobanModule,
+    forwardRef(() => ApprovalModule),
   ],
   controllers: [OrdersController],
   providers: [

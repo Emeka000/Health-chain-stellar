@@ -428,6 +428,43 @@ impl HealthChainContract {
         symbol_short!("init")
     }
 
+    /// Get contract version
+    pub fn version(_env: Env) -> u32 {
+        1
+    }
+
+    /// Get contract metadata
+    pub fn get_metadata(env: Env) -> Map<Symbol, String> {
+        let mut metadata = Map::new(&env);
+        metadata.set(
+            symbol_short!("name"),
+            String::from_str(&env, "HealthChain-Stellar"),
+        );
+        metadata.set(symbol_short!("version"), String::from_str(&env, "1.0.0"));
+        metadata.set(
+            symbol_short!("features"),
+            String::from_str(&env, "blood,escrow,audit,organizations,disputes"),
+        );
+        metadata.set(
+            symbol_short!("abi"),
+            String::from_str(&env, "soroban-v22.0.0"),
+        );
+        metadata
+    }
+
+    /// Check if a feature is supported
+    pub fn is_feature_supported(env: Env, feature: Symbol) -> bool {
+        let features = vec![
+            &env,
+            symbol_short!("blood"),
+            symbol_short!("escrow"),
+            symbol_short!("audit"),
+            symbol_short!("orgs"),
+            symbol_short!("disputes"),
+        ];
+        features.contains(feature)
+    }
+
     /// Register a blood bank (admin only)
     pub fn register_blood_bank(env: Env, bank_id: Address) -> Result<(), Error> {
         let admin: Address = env

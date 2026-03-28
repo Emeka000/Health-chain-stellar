@@ -406,4 +406,48 @@ export class AuthController {
   async unlockAccount(@Body() dto: UnlockAccountDto) {
     return this.authService.manualUnlockByAdmin(dto.userId);
   }
+
+  @RequirePermissions(Permission.MANAGE_USERS)
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Revoke all sessions for a user (Admin only)',
+    description: 'Forces target user to logout from all devices',
+  })
+  @ApiParam({
+    name: 'userId',
+    description: 'User ID to revoke sessions for',
+    example: 'user-uuid',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'All sessions revoked',
+    schema: {
+      example: {
+        message: 'Successfully revoked all sessions for user user-uuid',
+        userId: 'user-uuid',
+        revokedCount: 3,
+      },
+    },
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Requires MANAGE_USERS permission',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'User not found',
+    schema: {
+      example: {
+        code: 'USER_NOT_FOUND',
+        message: 'User not found',
+        statusCode: 404,
+        timestamp: '2024-03-27T04:30:44.473Z',
+      },
+    },
+  })
+  @Delete('admin/sessions/:userId')
+  async revokeAllUserSessionsByAdmin(@Param('userId') userId: string) {
+    return this.authService.revokeAllUserSessionsByAdmin(userId);
+  }
 }

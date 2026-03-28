@@ -4,11 +4,15 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { BloodRequestEntity } from '../blood-requests/entities/blood-request.entity';
+import { BloodUnit } from '../blood-units/entities/blood-unit.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { OrganizationEntity } from '../organizations/entities/organization.entity';
 import { OrderEntity } from '../orders/entities/order.entity';
 import { UsersModule } from '../users/users.module';
 
 import { InventoryAlertController } from './controllers/inventory-alert.controller';
+import { ExpirationForecastingController } from './controllers/expiration-forecasting.controller';
 import { AlertPreferenceEntity } from './entities/alert-preference.entity';
 import { RestockingCampaignEntity } from './entities/restocking-campaign.entity';
 import { InventoryEventListener } from './inventory-event.listener';

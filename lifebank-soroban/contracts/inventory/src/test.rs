@@ -34,7 +34,7 @@ fn test_initialize_success() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #0)")]
+#[should_panic(expected = "Error(Contract, #100)")]
 fn test_initialize_already_initialized() {
     let (_env, admin, client, _contract_id) = create_test_contract();
 
@@ -118,7 +118,7 @@ fn test_register_blood_increments_id() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #16)")]
+#[should_panic(expected = "Error(Contract, #116)")]
 fn test_register_blood_quantity_too_low() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -135,7 +135,7 @@ fn test_register_blood_quantity_too_low() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #16)")]
+#[should_panic(expected = "Error(Contract, #116)")]
 fn test_register_blood_quantity_too_high() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -152,7 +152,7 @@ fn test_register_blood_quantity_too_high() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #32)")]
+#[should_panic(expected = "Error(Contract, #132)")]
 fn test_register_blood_unauthorized_bank() {
     let (env, _admin, client, _contract_id) = create_test_contract();
 
@@ -199,7 +199,7 @@ fn test_register_all_blood_types() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #21)")]
+#[should_panic(expected = "Error(Contract, #121)")]
 fn test_get_blood_unit_not_found() {
     let (_env, _admin, client, _contract_id) = create_test_contract();
 
@@ -403,7 +403,7 @@ fn test_update_status_complete_flow() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_available_to_delivered() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -423,7 +423,7 @@ fn test_update_status_invalid_available_to_delivered() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_available_to_intransit() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -438,7 +438,7 @@ fn test_update_status_invalid_available_to_intransit() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_reserved_to_delivered() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -454,7 +454,7 @@ fn test_update_status_invalid_reserved_to_delivered() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_intransit_to_available() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -471,7 +471,7 @@ fn test_update_status_invalid_intransit_to_available() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_intransit_to_reserved() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -488,7 +488,7 @@ fn test_update_status_invalid_intransit_to_reserved() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_delivered_to_available() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -506,7 +506,7 @@ fn test_update_status_invalid_delivered_to_available() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_delivered_to_reserved() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -524,7 +524,7 @@ fn test_update_status_invalid_delivered_to_reserved() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_delivered_to_intransit() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -542,7 +542,7 @@ fn test_update_status_invalid_delivered_to_intransit() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_expired_to_available() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -558,7 +558,7 @@ fn test_update_status_invalid_expired_to_available() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_expired_to_reserved() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -617,7 +617,7 @@ fn test_update_status_expire_from_any_non_terminal() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #2)")]
+#[should_panic(expected = "Error(Contract, #102)")]
 fn test_update_status_unauthorized() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -634,7 +634,7 @@ fn test_update_status_unauthorized() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #21)")]
+#[should_panic(expected = "Error(Contract, #121)")]
 fn test_update_status_nonexistent_unit() {
     let (_env, admin, client, _contract_id) = create_test_contract();
 
@@ -643,7 +643,7 @@ fn test_update_status_nonexistent_unit() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #23)")]
+#[should_panic(expected = "Error(Contract, #123)")]
 fn test_update_status_expired_unit() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -662,7 +662,7 @@ fn test_update_status_expired_unit() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_from_terminal_delivered() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -704,7 +704,7 @@ fn test_mark_delivered_success() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_mark_delivered_from_available() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -899,7 +899,7 @@ fn test_batch_update_status_empty_list() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #21)")]
+#[should_panic(expected = "Error(Contract, #121)")]
 fn test_batch_update_status_nonexistent_unit() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -915,7 +915,7 @@ fn test_batch_update_status_nonexistent_unit() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #2)")]
+#[should_panic(expected = "Error(Contract, #102)")]
 fn test_batch_update_status_unauthorized() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -932,7 +932,7 @@ fn test_batch_update_status_unauthorized() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_batch_update_status_invalid_transition() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -1012,7 +1012,7 @@ fn test_dispose_records_history() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_dispose_from_available_invalid() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -1026,7 +1026,7 @@ fn test_dispose_from_available_invalid() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_dispose_from_reserved_invalid() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -1041,7 +1041,7 @@ fn test_dispose_from_reserved_invalid() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_transition_from_disposed_is_invalid() {
     let (env, admin, client, _contract_id) = create_test_contract();
 

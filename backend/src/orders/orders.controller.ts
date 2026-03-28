@@ -18,16 +18,22 @@ import { RequirePermissions } from '../auth/decorators/require-permissions.decor
 import { Permission } from '../auth/enums/permission.enum';
 import { PaginatedResponse } from '../common/pagination';
 
-import { OrderQueryParamsDto } from './dto/order-query-params.dto';
-import { OrdersResponseDto } from './dto/orders-response.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { OrderQueryParamsDto } from './dto/order-query-params.dto';
 import { UpdateRequestStatusDto } from './dto/update-request-status.dto';
 import { OrdersService } from './orders.service';
 import { Order } from './types/order.types';
 
+interface AuthenticatedRequest {
+  user?: {
+    id: string;
+    role?: string;
+  };
+}
+
 @Controller('orders')
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService) { }
+  constructor(private readonly ordersService: OrdersService) {}
 
   @RequirePermissions(Permission.VIEW_ORDER)
   @Get()
@@ -36,7 +42,7 @@ export class OrdersController {
       new ValidationPipe({
         transform: true,
         whitelist: true,
-        forbidNonWhitelisted: false,
+        forbidNonWhitelisted: true,
         exceptionFactory: (errors) => {
           const messages = errors.map((error) => {
             const constraints = error.constraints;
@@ -93,15 +99,19 @@ export class OrdersController {
 
   @RequirePermissions(Permission.VIEW_ORDER)
   @Post(':id/preview-fees')
-  async previewOrderFees(@Param('id') id: string, @Body() previewData: Partial<FeePreviewDto>) {
+  previewOrderFees(@Param('id') id: string, @Body() previewData: any) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
     return this.ordersService.previewOrderFees(id, previewData);
   }
 
-
   @RequirePermissions(Permission.CREATE_ORDER)
   @Post()
-  create(@Body() createOrderDto: CreateOrderDto, @Request() req: any) {
+  create(
+    @Body() createOrderDto: CreateOrderDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
     const actorId: string | undefined = req.user?.id;
+
     return this.ordersService.create(createOrderDto, actorId);
   }
 
@@ -116,7 +126,7 @@ export class OrdersController {
   updateStatus(
     @Param('id') id: string,
     @Body() statusUpdateDto: UpdateRequestStatusDto,
-    @Request() req: any,
+    @Request() req: AuthenticatedRequest,
   ) {
     const actorId: string | undefined = req.user?.id;
     const actorRole: string | undefined = req.user?.role;
@@ -133,7 +143,7 @@ export class OrdersController {
   assignRider(
     @Param('id') id: string,
     @Body('riderId') riderId: string,
-    @Request() req: any,
+    @Request() req: AuthenticatedRequest,
   ) {
     const actorId: string | undefined = req.user?.id;
     return this.ordersService.assignRider(id, riderId, actorId);
@@ -142,7 +152,7 @@ export class OrdersController {
   @RequirePermissions(Permission.DELETE_ORDER)
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@Param('id') id: string, @Request() req: any) {
+  remove(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
     const actorId: string | undefined = req.user?.id;
     return this.ordersService.remove(id, actorId);
   }
@@ -152,9 +162,11 @@ export class OrdersController {
   @HttpCode(HttpStatus.OK)
   raiseDispute(
     @Param('id') id: string,
-    @Body() dto: RaiseDisputeDto,
-    @Request() req: any,
+
+    @Body() dto: any,
+    @Request() req: AuthenticatedRequest,
   ) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
     return this.ordersService.raiseDispute(id, dto, req.user?.id);
   }
 
@@ -163,9 +175,11 @@ export class OrdersController {
   @HttpCode(HttpStatus.OK)
   resolveDispute(
     @Param('id') id: string,
-    @Body() dto: ResolveDisputeDto,
-    @Request() req: any,
+
+    @Body() dto: any,
+    @Request() req: AuthenticatedRequest,
   ) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
     return this.ordersService.resolveDispute(id, dto, req.user?.id);
   }
 }
