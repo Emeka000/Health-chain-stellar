@@ -12,6 +12,9 @@ const PROTECTED_ROUTES = ['/dashboard'];
 // Routes that should redirect to dashboard if already authenticated
 const AUTH_ROUTES = ['/auth/signin', '/auth/signup'];
 
+// Routes always publicly accessible — never redirect
+const PUBLIC_ROUTES = ['/transparency'];
+
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -38,6 +41,10 @@ export function middleware(request: NextRequest) {
 
   // Check if current route is an auth route
   const isAuthRoute = AUTH_ROUTES.some((route) => pathname.startsWith(route));
+
+  // Never redirect public transparency routes
+  const isPublicRoute = PUBLIC_ROUTES.some((route) => pathname.startsWith(route));
+  if (isPublicRoute) return NextResponse.next();
 
   // Redirect unauthenticated users from protected routes
   if (isProtectedRoute && !isAuthenticated) {

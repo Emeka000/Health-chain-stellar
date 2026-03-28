@@ -43,6 +43,10 @@ export default function Navbar() {
             Find Blood
             <span className="absolute left-0 bottom-0 w-0 h-[3px] bg-[#4b4949] group-hover:w-full transition-all duration-300"></span>
           </Link>
+          <Link href="/transparency" className="group relative py-2 hover:text-brand-loginBtn transition-colors">
+            Transparency
+            <span className="absolute left-0 bottom-0 w-0 h-[3px] bg-[#4b4949] group-hover:w-full transition-all duration-300"></span>
+          </Link>
           
           <div className="flex items-center gap-2 cursor-pointer hover:text-brand-loginBtn transition group py-2 relative">
             <Link href="/auth/signup" className="flex items-center gap-2">
@@ -66,6 +70,7 @@ export default function Navbar() {
             <Link href="/" onClick={() => setIsOpen(false)} className="text-xl text-brand-black">Home</Link>
             <Link href="#about" onClick={() => setIsOpen(false)} className="text-xl text-brand-black">About Us</Link>
             <Link href="#find" onClick={() => setIsOpen(false)} className="text-xl text-brand-black">Find Blood</Link>
+            <Link href="/transparency" onClick={() => setIsOpen(false)} className="text-xl text-brand-black">Transparency</Link>
             <Link href="/auth/signup" onClick={() => setIsOpen(false)} className="text-xl text-brand-black">Register Now</Link>
             <Link href="/auth/signin" onClick={() => setIsOpen(false)}>
               <button className="bg-brand-loginBtn text-[#fffbfb] w-[167px] h-[49px] rounded shadow-md font-roboto font-semibold text-base">

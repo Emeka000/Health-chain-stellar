@@ -31,6 +31,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { UserActivityModule } from './user-activity/user-activity.module';
 import { UsersModule } from './users/users.module';
 import { TrackingModule } from './tracking/tracking.module';
+import { TransparencyModule } from './transparency/transparency.module';
 
 import type Redis from 'ioredis';
 

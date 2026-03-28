@@ -32,6 +32,10 @@ export const queryKeys = {
     stats: ["dashboard", "stats"] as const,
   },
 
+ feat/public-transparency-portal
+  transparency: {
+    metrics: ["transparency", "metrics"] as const,
+=======
   /**
    * Anomalies (Issue #382)
    */
@@ -40,5 +44,6 @@ export const queryKeys = {
     list: (params: import("@/lib/types/anomaly").AnomalyQueryParams) =>
       ["anomalies", "list", params] as const,
     detail: (id: string) => ["anomalies", "detail", id] as const,
+ main
   },
 } as const;
