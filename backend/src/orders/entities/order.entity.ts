@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 
 import { OrderStatus } from '../enums/order-status.enum';
+import { EscalationTier } from '../../escalation/enums/escalation-tier.enum';
 
 @Entity('orders')
 export class OrderEntity {
@@ -68,5 +69,13 @@ export class OrderEntity {
 
   @Column({ name: 'applied_policy_id', type: 'uuid', nullable: true })
   appliedPolicyId: string | null;
+
+  @Column({
+    name: 'escalation_tier',
+    type: 'varchar',
+    length: 16,
+    default: EscalationTier.NONE,
+  })
+  escalationTier: EscalationTier;
 }
 
