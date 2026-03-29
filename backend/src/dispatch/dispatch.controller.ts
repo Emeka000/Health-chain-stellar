@@ -50,7 +50,7 @@ export class DispatchController {
     return this.dispatchService.create(createDispatchDto);
   }
 
-  @RequirePermissions(Permission.MANAGE_DISPATCH)
+  @RequirePermissions(Permission.DISPATCH_OVERRIDE)
   @Post('assign')
   assignOrder(
     @Body('orderId') orderId: string,

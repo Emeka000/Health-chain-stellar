@@ -49,6 +49,20 @@ pub enum Role {
     Custom(u32),
 }
 
+/// Fine-grained permission scopes that map to on-chain actions (Issue #374).
+/// These mirror the backend `Permission` enum for actions that require
+/// on-chain enforcement (e.g. settlement release, verification admin).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub enum PermissionScope {
+    InventoryWrite,
+    DispatchOverride,
+    RequestApprove,
+    DisputeResolve,
+    VerificationAdmin,
+    SettlementRelease,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BadgeType {
@@ -153,6 +167,8 @@ pub enum DataKey {
     Delivery(u64),
     // AccessControlContract (and IdentityContract role storage)
     AddressRoles(Address),
+    // Fine-grained permission scopes (Issue #374)
+    AddressScopes(Address),
 }
 
 // ---------------------------------------------------------------------------
@@ -987,6 +1003,86 @@ impl AccessControlContract {
         }
 
         new_roles
+    }
+
+    // ── Fine-grained permission scopes (Issue #374) ──────────────────────
+
+    /// Grant a permission scope to an address. Admin only.
+    pub fn grant_scope(env: Env, address: Address, scope: PermissionScope) {
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("Not initialized");
+        admin.require_auth();
+
+        let key = DataKey::AddressScopes(address.clone());
+        let mut scopes: Vec<PermissionScope> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(Vec::new(&env));
+
+        // Deduplicate
+        for i in 0..scopes.len() {
+            if scopes.get(i).unwrap() == scope {
+                return;
+            }
+        }
+        scopes.push_back(scope);
+        env.storage().persistent().set(&key, &scopes);
+    }
+
+    /// Revoke a permission scope from an address. Admin only.
+    pub fn revoke_scope(env: Env, address: Address, scope: PermissionScope) {
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("Not initialized");
+        admin.require_auth();
+
+        let key = DataKey::AddressScopes(address.clone());
+        if let Some(scopes) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Vec<PermissionScope>>(&key)
+        {
+            let mut new_scopes: Vec<PermissionScope> = Vec::new(&env);
+            for i in 0..scopes.len() {
+                let s = scopes.get(i).unwrap();
+                if s != scope {
+                    new_scopes.push_back(s);
+                }
+            }
+            env.storage().persistent().set(&key, &new_scopes);
+        }
+    }
+
+    /// Check whether an address holds a specific permission scope.
+    pub fn has_scope(env: Env, address: Address, scope: PermissionScope) -> bool {
+        let key = DataKey::AddressScopes(address);
+        if let Some(scopes) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Vec<PermissionScope>>(&key)
+        {
+            for i in 0..scopes.len() {
+                if scopes.get(i).unwrap() == scope {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Return all scopes granted to an address.
+    pub fn get_scopes(env: Env, address: Address) -> Vec<PermissionScope> {
+        let key = DataKey::AddressScopes(address);
+        env.storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(Vec::new(&env))
     }
 }
 

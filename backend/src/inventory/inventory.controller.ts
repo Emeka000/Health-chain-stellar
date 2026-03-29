@@ -81,13 +81,13 @@ export class InventoryController {
     return this.inventoryService.findOne(id);
   }
 
-  @RequirePermissions(Permission.CREATE_INVENTORY)
+  @RequirePermissions(Permission.INVENTORY_WRITE)
   @Post()
   create(@Body() createInventoryDto: CreateInventoryDto) {
     return this.inventoryService.create(createInventoryDto);
   }
 
-  @RequirePermissions(Permission.UPDATE_INVENTORY)
+  @RequirePermissions(Permission.INVENTORY_WRITE)
   @Patch(':id')
   update(
     @Param('id') id: string,
@@ -96,27 +96,27 @@ export class InventoryController {
     return this.inventoryService.update(id, updateInventoryDto);
   }
 
-  @RequirePermissions(Permission.UPDATE_INVENTORY)
+  @RequirePermissions(Permission.INVENTORY_WRITE)
   @Patch(':id/stock')
   updateStock(@Param('id') id: string, @Body('quantity') quantity: number) {
     return this.inventoryService.updateStock(id, quantity);
   }
 
-  @RequirePermissions(Permission.UPDATE_INVENTORY)
+  @RequirePermissions(Permission.INVENTORY_WRITE)
   @Patch(':id/reserve')
   reserveStock(@Param('id') id: string, @Body('quantity') quantity: number) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
     return this.inventoryService.reserveStock(id, quantity);
   }
 
-  @RequirePermissions(Permission.UPDATE_INVENTORY)
+  @RequirePermissions(Permission.INVENTORY_WRITE)
   @Patch(':id/release')
   releaseStock(@Param('id') id: string, @Body('quantity') quantity: number) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
     return this.inventoryService.releaseStock(id, quantity);
   }
 
-  @RequirePermissions(Permission.DELETE_INVENTORY)
+  @RequirePermissions(Permission.INVENTORY_WRITE)
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param('id') id: string) {

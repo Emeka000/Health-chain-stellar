@@ -10,6 +10,7 @@ import { UserActivityModule } from '../user-activity/user-activity.module';
 import { UserEntity } from '../users/entities/user.entity';
 
 import { AuthController } from './auth.controller';
+import { PermissionsController } from './permissions.controller';
 import { AuthService } from './auth.service';
 import { EmailVerificationEntity } from './entities/email-verification.entity';
 import { AuthSessionEntity } from './entities/auth-session.entity';
@@ -52,7 +53,7 @@ import { AuthSessionRepository } from './repositories/auth-session.repository';
     IdempotencyModule,
     UserActivityModule,
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, PermissionsController],
   providers: [
     AuthService,
     PasswordResetService,

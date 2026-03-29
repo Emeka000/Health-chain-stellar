@@ -18,7 +18,7 @@ export class ApprovalController {
   constructor(private readonly approvalService: ApprovalService) {}
 
   @Get('pending')
-  @RequirePermissions(Permission.ADMIN_ACCESS)
+  @RequirePermissions(Permission.REQUEST_APPROVE)
   @ApiOperation({ summary: 'Get all pending approval requests' })
   @ApiResponse({ status: 200, description: 'Requests fetched' })
   async getPending(@Req() req: Request) {
@@ -26,7 +26,7 @@ export class ApprovalController {
   }
 
   @Get(':id')
-  @RequirePermissions(Permission.ADMIN_ACCESS)
+  @RequirePermissions(Permission.REQUEST_APPROVE)
   @ApiOperation({ summary: 'Get details of an approval request' })
   @ApiResponse({ status: 200, description: 'Request details fetched' })
   async getDetail(@Param('id') id: string) {
@@ -34,7 +34,7 @@ export class ApprovalController {
   }
 
   @Post(':id/approve')
-  @RequirePermissions(Permission.ADMIN_ACCESS)
+  @RequirePermissions(Permission.REQUEST_APPROVE)
   @ApiOperation({ summary: 'Approve a request' })
   @ApiResponse({ status: 200, description: 'Request approved' })
   async approve(
@@ -54,7 +54,7 @@ export class ApprovalController {
   }
 
   @Post(':id/reject')
-  @RequirePermissions(Permission.ADMIN_ACCESS)
+  @RequirePermissions(Permission.REQUEST_APPROVE)
   @ApiOperation({ summary: 'Reject a request' })
   @ApiResponse({ status: 200, description: 'Request rejected' })
   async reject(
