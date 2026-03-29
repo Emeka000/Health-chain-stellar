@@ -24,6 +24,7 @@ import { CorrelationIdService } from './common/middleware/correlation-id.service
 import { AppConfigModule } from './config/config.module';
 import { DatabaseSyncGuard } from './config/database-sync.guard';
 import { DispatchModule } from './dispatch/dispatch.module';
+import { EscalationModule } from './escalation/escalation.module';
 import { DonorImpactModule } from './donor-impact/donor-impact.module';
 import { LocationHistoryModule } from './location-history/location-history.module';
 import { HospitalsModule } from './hospitals/hospitals.module';
@@ -73,6 +74,7 @@ import type Redis from 'ioredis';
     BloodUnitsModule,
     BlockchainModule,
     DispatchModule,
+    EscalationModule,
     DonorImpactModule,
     LocationHistoryModule,
     HospitalsModule,

@@ -11,6 +11,7 @@ import { NotificationPreference } from './entities/notification-preference.entit
 import { NotificationDeliveryLog } from './entities/notification-delivery-log.entity';
 import { NotificationsGateway } from './gateways/notifications.gateway';
 import { OrderNotificationListener } from './listeners/order-notification.listener';
+import { EscalationNotificationListener } from './listeners/escalation-notification.listener';
 import { NotificationsController } from './notifications.controller';
 import { NotificationPreferenceController } from './controllers/notification-preference.controller';
 import { NotificationsService } from './notifications.service';
@@ -51,6 +52,7 @@ import { SmsProvider } from './providers/sms.provider';
 
     // Listeners
     OrderNotificationListener,
+    EscalationNotificationListener,
 
     // Services
     NotificationsService,

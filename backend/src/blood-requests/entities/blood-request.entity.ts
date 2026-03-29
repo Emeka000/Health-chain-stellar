@@ -11,6 +11,7 @@ import {
 import { BloodComponent } from '../../blood-units/enums/blood-component.enum';
 import { BloodType } from '../../blood-units/enums/blood-type.enum';
 import { BloodRequestStatus } from '../enums/blood-request-status.enum';
+import { EscalationTier } from '../../escalation/enums/escalation-tier.enum';
 
 import { BloodRequestItemEntity } from './blood-request-item.entity';
 import { BloodRequestReservationEntity } from './blood-request-reservation.entity';
@@ -95,6 +96,14 @@ export class BloodRequestEntity {
     nullable: true,
   })
   createdByUserId: string | null;
+
+  @Column({
+    name: 'escalation_tier',
+    type: 'varchar',
+    length: 16,
+    default: EscalationTier.NONE,
+  })
+  escalationTier: EscalationTier;
 
   @OneToMany(() => BloodRequestItemEntity, (item) => item.request, {
     cascade: true,
