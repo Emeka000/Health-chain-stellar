@@ -42,6 +42,13 @@ import {
   VerifyEmailDto,
 } from './dto/auth.dto';
 import { Permission } from './enums/permission.enum';
+import { IsNotEmpty, IsString } from 'class-validator';
+
+export class MfaExchangeDto {
+  @IsString()
+  @IsNotEmpty()
+  mfaToken: string;
+}
 
 /** Stricter than global default (100/min) to reduce brute-force and abuse on auth. */
 @Throttle({ auth: { limit: 10, ttl: 60_000 } })
@@ -486,8 +493,36 @@ export class AuthController {
     return this.passwordResetService.resendVerificationEmail(req.user.id);
   }
 
-  // ── Password Reset ────────────────────────────────────────────────────────
+  // ── MFA token exchange ────────────────────────────────────────────────────
 
+  @Public()
+  @Post('mfa/exchange')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Exchange MFA token for full JWT',
+    description:
+      'After a successful TOTP verification, exchange the short-lived mfaToken ' +
+      'for a full access_token + refresh_token pair.',
+  })
+  @ApiResponse({
+    status: 200,
+    schema: {
+      example: {
+        access_token: 'eyJ...',
+        refresh_token: 'eyJ...',
+      },
+    },
+  })
+  async exchangeMfaToken(@Body() dto: MfaExchangeDto, @Request() req: any) {
+    const meta = {
+      ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? null,
+      userAgent: (req.headers['user-agent'] as string) ?? null,
+      geoHint: (req.headers['x-geo-hint'] as string) ?? null,
+    };
+    return this.authService.exchangeMfaToken(dto.mfaToken, meta);
+  }
+
+  // ── Password Reset ────────────────────────────────────────────────────────
   @Public()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('forgot-password')

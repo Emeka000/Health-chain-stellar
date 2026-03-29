@@ -24,6 +24,7 @@ import { REDIS_CLIENT } from '../redis/redis.constants';
 import { SecurityEventLoggerService, SecurityEventType } from '../user-activity/security-event-logger.service';
 import { UserActivityService } from '../user-activity/user-activity.service';
 import { UserEntity } from '../users/entities/user.entity';
+import { TwoFactorAuthEntity } from '../users/entities/two-factor-auth.entity';
 
 import { JwtKeyService } from './jwt-key.service';
 import { JwtPayload } from './jwt.strategy';
@@ -34,6 +35,7 @@ import {
   verifyPassword,
   dummyVerify,
 } from './utils/password.util';
+import { MfaService } from './mfa/mfa.service';
 
 export interface SessionMetadata {
   ipAddress?: string | null;
@@ -60,6 +62,7 @@ export class AuthService {
     private readonly authSessionRepository: AuthSessionRepository,
     private readonly userActivityService: UserActivityService,
     private readonly securityEventLogger: SecurityEventLoggerService,
+    private readonly mfaService: MfaService,
   ) {
     this.circuitBreaker = new RedisCircuitBreaker();
     this.fallbackStore = new AuthSessionFallbackStore();
@@ -138,6 +141,12 @@ export class AuthService {
 
     await this.resetLoginAttempts(user);
 
+    // If MFA is enabled, return a challenge instead of full tokens
+    const mfaEnabled = await this.mfaService.isMfaEnabled(user.id);
+    if (mfaEnabled) {
+      return { mfa_required: true, user_id: user.id };
+    }
+
     const sessionId = randomBytes(16).toString('hex');
     const payload: JwtPayload = {
       sub: user.id,
@@ -166,6 +175,46 @@ export class AuthService {
       access_token: accessToken,
       refresh_token: refreshToken,
     };
+  }
+
+  /**
+   * Exchange a valid MFA token (issued by MfaService) for a full access + refresh token pair.
+   */
+  async exchangeMfaToken(mfaToken: string, meta: SessionMetadata = {}) {
+    const userId = this.mfaService.verifyMfaToken(mfaToken);
+
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new UnauthorizedException(
+        JSON.stringify({ code: ErrorCode.AUTH_INVALID_CREDENTIALS, message: 'User not found' }),
+      );
+    }
+
+    const sessionId = randomBytes(16).toString('hex');
+    const payload: JwtPayload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      sid: sessionId,
+    };
+
+    const { accessToken, refreshToken, refreshExpiresInSeconds } =
+      this.issueTokens(payload);
+    await this.createSession(user, sessionId, refreshExpiresInSeconds, meta);
+    await this.enforceConcurrentSessionLimit(user.id);
+
+    await this.securityEventLogger.logEvent({
+      eventType: SecurityEventType.AUTH_LOGIN_SUCCESS,
+      userId: user.id,
+      email: user.email,
+      sessionId,
+      description: 'User login succeeded via MFA',
+      metadata: { role: payload.role, mfa: true },
+      ipAddress: meta.ipAddress ?? null,
+      userAgent: meta.userAgent ?? null,
+    }).catch(() => undefined);
+
+    return { access_token: accessToken, refresh_token: refreshToken };
   }
 
   async register(registerDto: {
