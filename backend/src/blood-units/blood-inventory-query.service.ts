@@ -133,6 +133,56 @@ export class BloodInventoryQueryService {
     };
   }
 
+  async findNearby(params: {
+    lat: number;
+    lng: number;
+    radiusKm: number;
+    bloodType?: BloodType;
+    limit?: number;
+    offset?: number;
+  }): Promise<{
+    data: (BloodUnit & { distanceMetres: number })[];
+    total: number;
+  }> {
+    const radiusMetres = params.radiusKm * 1000;
+    const { lat, lng, bloodType, limit = 20, offset = 0 } = params;
+
+    // Use raw query for ST_DWithin and distance calculation
+    // ST_Distance(location, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography)
+    const query = this.bloodUnitRepository
+      .createQueryBuilder('u')
+      .addSelect(
+        'ST_Distance(u.location, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography)',
+        'distanceMetres',
+      )
+      .where(
+        'ST_DWithin(u.location, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography, :radiusMetres)',
+        { lng, lat, radiusMetres },
+      )
+      .andWhere('u.status = :status', { status: BloodStatus.AVAILABLE })
+      .andWhere('u.expiresAt > :now', { now: new Date() });
+
+    if (bloodType) {
+      query.andWhere('u.bloodType = :bloodType', { bloodType });
+    }
+
+    query
+      .orderBy('"distanceMetres"', 'ASC')
+      .limit(limit)
+      .offset(offset);
+
+    const { entities, raw } = await query.getRawAndEntities();
+
+    const data = entities.map((entity, index) => ({
+      ...entity,
+      distanceMetres: Math.round(raw[index].distanceMetres),
+    }));
+
+    const total = await query.getCount();
+
+    return { data, total };
+  }
+
   private buildQuery(
     dto: QueryBloodInventoryDto,
   ): SelectQueryBuilder<BloodUnit> {

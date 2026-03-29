@@ -16,51 +16,9 @@ import { BloodType } from '../enums/blood-type.enum';
 
 import { BloodStatusHistory } from './blood-status-history.entity';
 
-@Entity('blood_units')
-@Index(['unitNumber'], { unique: true })
-@Index(['bloodType', 'bankId'])
-export class BloodUnitEntity {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
-
-  @Column({ type: 'varchar', length: 80, unique: true })
-  unitNumber: string;
-
-  @Column({ type: 'bigint', nullable: true })
-  blockchainUnitId?: number;
-
-  @Column({ type: 'varchar', length: 255 })
-  blockchainTransactionHash: string;
-
-  @Column({ type: 'varchar', length: 5 })
-  bloodType: string;
-
-  @Column({ type: 'int' })
-  quantityMl: number;
-
-  @Column({ type: 'varchar', length: 100, nullable: true })
-  donorId?: string;
-
-  @Column({ type: 'varchar', length: 70 })
-  bankId: string;
-
-  @Column({ type: 'timestamp' })
-  expirationDate: Date;
-
-  @Column({ type: 'varchar', length: 80, nullable: true })
-  registeredBy?: string;
-
-  @Column({ type: 'text' })
-  barcodeData: string;
-
-  @Column({ type: 'jsonb', nullable: true })
-  metadata?: Record<string, unknown>;
-
-  @CreateDateColumn()
-  createdAt: Date;
-
-  @UpdateDateColumn()
-  updatedAt: Date;
+export interface BloodUnitValidationResult {
+  isValid: boolean;
+  errors: string[];
 }
 
 @Entity('blood_units')
@@ -135,6 +93,30 @@ export class BloodUnit extends BaseEntity {
 
   @Column({ name: 'reserved_until', type: 'timestamp', nullable: true })
   reservedUntil: Date | null;
+
+  @Column({ type: 'double precision', nullable: true })
+  latitude: number | null;
+
+  @Column({ type: 'double precision', nullable: true })
+  longitude: number | null;
+
+  @Index('idx_blood_units_location', { spatial: true })
+  @Column({
+    type: 'geography',
+    spatialFeatureType: 'Point',
+    srid: 4326,
+    nullable: true,
+  })
+  location: any;
+
+  @Column({ type: 'jsonb', nullable: true })
+  metadata?: Record<string, unknown>;
+
+  @CreateDateColumn()
+  createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
 
   @OneToMany(() => BloodStatusHistory, (history) => history.bloodUnit, {
     cascade: true,
@@ -365,6 +347,8 @@ export class BloodUnit extends BaseEntity {
       storageLocation: this.storageLocation,
       blockchainUnitId: this.blockchainUnitId,
       blockchainTxHash: this.blockchainTxHash,
+      latitude: this.latitude,
+      longitude: this.longitude,
       metadata: this.metadata,
       createdAt: this.createdAt.toISOString(),
       updatedAt: this.updatedAt.toISOString(),

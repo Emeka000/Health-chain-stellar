@@ -12,6 +12,7 @@ import {
   ParseIntPipe,
   ParseUUIDPipe,
   ParseEnumPipe,
+  BadRequestException,
 } from '@nestjs/common';
 
 import { Request } from 'express';
@@ -209,4 +210,36 @@ export class BloodUnitsController {
       requiredVolumeMl,
     );
   }
+
+  @Get('nearby')
+  async findNearby(
+    @Query('lat') lat: string,
+    @Query('lng') lng: string,
+    @Query('radius') radius: string,
+    @Query('bloodType') bloodType?: BloodType,
+  ) {
+    if (!lat || !lng || !radius) {
+      const errors: string[] = [];
+      if (!lat) errors.push('lat is required');
+      if (!lng) errors.push('lng is required');
+      if (!radius) errors.push('radius is required');
+      throw new BadRequestException(errors.join(', '));
+    }
+
+    const latitude = parseFloat(lat);
+    const longitude = parseFloat(lng);
+    const radiusKm = parseFloat(radius);
+
+    if (isNaN(latitude) || isNaN(longitude) || isNaN(radiusKm)) {
+      throw new BadRequestException('lat, lng, and radius must be valid numbers');
+    }
+
+    return this.inventoryQueryService.findNearby({
+      lat: latitude,
+      lng: longitude,
+      radiusKm,
+      bloodType,
+    });
+  }
 }
+
