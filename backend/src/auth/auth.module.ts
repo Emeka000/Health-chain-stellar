@@ -8,6 +8,7 @@ import { IdempotencyModule } from '../common/idempotency/idempotency.module';
 import { RedisModule } from '../redis/redis.module';
 import { UserActivityModule } from '../user-activity/user-activity.module';
 import { UserEntity } from '../users/entities/user.entity';
+import { TwoFactorAuthEntity } from '../users/entities/two-factor-auth.entity';
 
 import { AuthController } from './auth.controller';
 import { PermissionsController } from './permissions.controller';
@@ -21,6 +22,8 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { PermissionsGuard } from './guards/permissions.guard';
 import { JwtKeyService } from './jwt-key.service';
 import { JwtStrategy } from './jwt.strategy';
+import { MfaController } from './mfa/mfa.controller';
+import { MfaService } from './mfa/mfa.service';
 import { PasswordResetService } from './password-reset.service';
 import { PermissionsService } from './permissions.service';
 import { AuthSessionRepository } from './repositories/auth-session.repository';
@@ -45,6 +48,7 @@ import { AuthSessionRepository } from './repositories/auth-session.repository';
       RoleEntity,
       RolePermissionEntity,
       UserEntity,
+      TwoFactorAuthEntity,
       AuthSessionEntity,
       EmailVerificationEntity,
       PasswordResetTokenEntity,
@@ -56,6 +60,7 @@ import { AuthSessionRepository } from './repositories/auth-session.repository';
   controllers: [AuthController, PermissionsController],
   providers: [
     AuthService,
+    MfaService,
     PasswordResetService,
     JwtStrategy,
     JwtAuthGuard,
@@ -65,6 +70,7 @@ import { AuthSessionRepository } from './repositories/auth-session.repository';
   ],
   exports: [
     AuthService,
+    MfaService,
     PasswordResetService,
     JwtStrategy,
     JwtAuthGuard,
