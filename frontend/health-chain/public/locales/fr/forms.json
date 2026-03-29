@@ -1,0 +1,19 @@
+{
+  "form_required_field": "Ce champ est obligatoire",
+  "form_invalid_email": "Veuillez entrer une adresse e-mail valide",
+  "form_invalid_phone": "Veuillez entrer un numéro de téléphone valide",
+  "form_password_too_short": "Le mot de passe doit faire au moins 8 caractères",
+  "form_passwords_do_not_match": "Les mots de passe ne correspondent pas",
+  "form_field_error": "Il y a une erreur avec ce champ",
+  "form_submit_error": "Une erreur s'est produite lors de la soumission du formulaire",
+  "form_submit_success": "Formulaire soumis avec succès",
+  "form_validation_summary": "Veuillez corriger les erreurs ci-dessous avant de soumettre",
+  "form_label_email": "Adresse e-mail",
+  "form_label_password": "Mot de passe",
+  "form_label_confirm_password": "Confirmer le mot de passe",
+  "form_label_first_name": "Prénom",
+  "form_label_last_name": "Nom de famille",
+  "form_label_phone": "Numéro de téléphone",
+  "form_label_organization": "Organisation",
+  "form_hint_required_fields": "Les champs marqués d'un * sont obligatoires"
+}

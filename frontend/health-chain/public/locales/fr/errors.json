@@ -1,0 +1,23 @@
+{
+  "error_400": "Mauvaise requête",
+  "error_401": "Non autorisé - Veuillez vous connecter",
+  "error_403": "Interdit - Vous n'avez pas la permission",
+  "error_404": "Non trouvé",
+  "error_409": "Conflit - La ressource existe déjà",
+  "error_422": "Validation échouée - Veuillez vérifier votre saisie",
+  "error_429": "Trop de requêtes - Veuillez attendre avant de réessayer",
+  "error_500": "Erreur serveur - Veuillez réessayer plus tard",
+  "error_503": "Service indisponible - Veuillez réessayer plus tard",
+  "error_network": "Erreur réseau - Veuillez vérifier votre connexion",
+  "error_timeout": "Délai d'expiration dépassé - Veuillez réessayer",
+  "error_generic": "Une erreur s'est produite - Veuillez réessayer",
+  "error_retry": "Réessayer",
+  "error_report": "Signaler un problème",
+  "error_details": "Détails de l'erreur",
+  "error_back_to_home": "Retour à l'accueil",
+  "validation_error_title": "Erreur de validation",
+  "validation_error_count": "{{count}} erreur(s) trouvée(s)",
+  "validation_error_message": "Veuillez corriger les champs en surbrillance et réessayer",
+  "network_offline": "Vous êtes hors ligne - Certaines fonctionnalités peuvent ne pas fonctionner",
+  "network_reconnected": "Connexion rétablie"
+}

@@ -1,0 +1,23 @@
+{
+  "error_400": "Bad Request",
+  "error_401": "Unauthorized - Please log in",
+  "error_403": "Forbidden - You don't have permission",
+  "error_404": "Not Found",
+  "error_409": "Conflict - Resource already exists",
+  "error_422": "Validation failed - Please check your input",
+  "error_429": "Too many requests - Please wait before trying again",
+  "error_500": "Server Error - Please try again later",
+  "error_503": "Service Unavailable - Please try again later",
+  "error_network": "Network error - Please check your connection",
+  "error_timeout": "Request timed out - Please try again",
+  "error_generic": "An error occurred - Please try again",
+  "error_retry": "Retry",
+  "error_report": "Report Issue",
+  "error_details": "Error Details",
+  "error_back_to_home": "Back to Home",
+  "validation_error_title": "Validation Error",
+  "validation_error_count": "{{count}} error(s) found",
+  "validation_error_message": "Please fix the highlighted fields and try again",
+  "network_offline": "You are offline - Some features may not work",
+  "network_reconnected": "Connection restored"
+}
