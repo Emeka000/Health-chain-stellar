@@ -44,6 +44,43 @@ export class FeePolicyService {
         return this.computeBreakdown(applicablePolicy, dto);
     }
 
+    /**
+     * Compute fees with an optional surge multiplier applied to the platform fee.
+     * The surgeMultiplier and bloodType are recorded in the audit hash for traceability.
+     */
+    async computeFeeWithSurge(
+        dto: FeePreviewDto,
+        surgeMultiplier: number,
+        bloodType: string,
+    ): Promise<FeeBreakdownDto> {
+        const applicablePolicy = await this.findApplicablePolicy(dto);
+        if (!applicablePolicy) {
+            throw new BadRequestException('No applicable fee policy found');
+        }
+        const breakdown = this.computeBreakdown(applicablePolicy, dto);
+        const adjustedPlatformFee = breakdown.platformFee * surgeMultiplier;
+        const feeDelta = adjustedPlatformFee - breakdown.platformFee;
+        return {
+            ...breakdown,
+            platformFee: adjustedPlatformFee,
+            totalFee: breakdown.totalFee + feeDelta,
+            auditHash: this.generateSurgeAuditHash(applicablePolicy, dto, surgeMultiplier, bloodType),
+        };
+    }
+
+    private generateSurgeAuditHash(
+        policy: FeePolicyEntity,
+        dto: FeePreviewDto,
+        surgeMultiplier: number,
+        bloodType: string,
+    ): string {
+        const inputs = `${policy.id}${dto.geographyCode}${dto.distanceKm}${dto.urgencyTier}|surge:${bloodType}:${surgeMultiplier}`;
+        return inputs
+            .split('')
+            .reduce((a, b) => ((a << 5) - a + b.charCodeAt(0)) | 0, 0)
+            .toString();
+    }
+
     private async findApplicablePolicy(
         dto: FeePreviewDto,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
