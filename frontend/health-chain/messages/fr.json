@@ -1,0 +1,91 @@
+{
+  "Dashboard": {
+    "title": "Aperçu de l'administration",
+    "description": "Surveillance de la distribution du sang et des demandes d'urgence.",
+    "stats": {
+      "bloodUnits": "Unités totales de sang",
+      "pendingRequests": "Demandes en attente",
+      "activeDeliveries": "Livraisons actives",
+      "totalDonors": "Total des donneurs"
+    },
+    "criticalRequests": "Demandes critiques",
+    "table": {
+      "bloodType": "Groupe sanguin",
+      "hospital": "Hôpital",
+      "status": "Statut",
+      "unit": "Unité"
+    },
+    "recentActivity": "Activité récente",
+    "viewActivityLog": "Voir le journal d'activité"
+  },
+  "Navbar": {
+    "home": "Accueil",
+    "about": "À propos de nous",
+    "findBlood": "Trouver du sang",
+    "transparency": "Transparence",
+    "register": "S'inscrire maintenant",
+    "enterApp": "Entrer dans l'application"
+  },
+  "Common": {
+    "createRequest": "Créer une demande",
+    "loading": "Chargement...",
+    "error": "Une erreur inattendue s'est produite",
+    "refresh": "Actualiser",
+    "close": "Fermer",
+    "next": "Suivant",
+    "back": "Retour",
+    "confirm": "Confirmer"
+  },
+  "CreateRequest": {
+    "step1": {
+      "title": "Choisir le groupe sanguin et la quantité",
+      "description": "Choisissez le groupe sanguin et le nombre d'unités requises.",
+      "bloodType": "Groupe sanguin",
+      "quantity": "Quantité",
+      "maxUnits": "Max 50 unités par commande",
+      "errorSelectType": "Veuillez sélectionner un groupe sanguin.",
+      "errorInvalidQuantity": "La quantité doit être comprise entre 1 et 50 unités.",
+      "cta": "Voir les banques de sang disponibles"
+    },
+    "step2": {
+      "title": "Sélectionner une banque de sang",
+      "description": "Choisissez une banque de sang à proximité avec du stock disponible.",
+      "distance": "à {distance} km",
+      "available": "{count} unités disponibles",
+      "cta": "Réviser la demande"
+    },
+    "step3": {
+      "title": "Confirmer la demande",
+      "description": "Vérifiez les détails de votre demande avant de la soumettre.",
+      "summary": "Résumé de la demande",
+      "cta": "Soumettre la demande",
+      "bankLabel": "Banque de sang",
+      "deliveryLabel": "Livraison estimée",
+      "confirmationNote": "En confirmant, vous autorisez le placement de cette commande. Un coursier sera dépêché dès que la banque de sang aura confirmé la disponibilité."
+    }
+  },
+  "VerificationConsole": {
+    "title": "Console de vérification des organisations",
+    "noPending": "Aucune vérification en attente",
+    "verifiedAt": "Vérifié à",
+    "syncedAt": "Synchronisé à",
+    "txHash": "Hachage TX",
+    "errorLabel": "Erreur",
+    "retries": "Tentatives",
+    "retrying": "Nouvelle tentative...",
+    "retry": "Réessayer",
+    "syncStatuses": {
+      "pending": "En attente",
+      "syncing": "Synchronisation",
+      "synced": "Synchronisé",
+      "failed": "Échoué",
+      "mismatch": "Incohérence"
+    }
+  },
+  "Toasts": {
+    "sessionExpired": "Votre session a expiré. Veuillez vous reconnecter.",
+    "errorOccurred": "Une erreur inattendue s'est produite.",
+    "requestCreated": "Demande de sang créée avec succès.",
+    "syncRetrying": "Tentative de synchronisation en cours..."
+  }
+}

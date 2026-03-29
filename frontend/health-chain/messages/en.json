@@ -1,0 +1,91 @@
+{
+  "Dashboard": {
+    "title": "Admin Overview",
+    "description": "Monitoring blood distribution and emergency requests.",
+    "stats": {
+      "bloodUnits": "Total Blood Units",
+      "pendingRequests": "Pending Requests",
+      "activeDeliveries": "Active Deliveries",
+      "totalDonors": "Total Donors"
+    },
+    "criticalRequests": "Critical Requests",
+    "table": {
+      "bloodType": "Blood Type",
+      "hospital": "Hospital",
+      "status": "Status",
+      "unit": "Unit"
+    },
+    "recentActivity": "Recent Activity",
+    "viewActivityLog": "View Activity Log"
+  },
+  "Navbar": {
+    "home": "Home",
+    "about": "About Us",
+    "findBlood": "Find Blood",
+    "transparency": "Transparency",
+    "register": "Register Now",
+    "enterApp": "Enter App"
+  },
+  "Common": {
+    "createRequest": "Create Request",
+    "loading": "Loading...",
+    "error": "An unexpected error occurred",
+    "refresh": "Refresh",
+    "close": "Close",
+    "next": "Next",
+    "back": "Back",
+    "confirm": "Confirm"
+  },
+  "CreateRequest": {
+    "step1": {
+      "title": "Select Blood Type & Quantity",
+      "description": "Choose the blood type and the number of units required.",
+      "bloodType": "Blood Type",
+      "quantity": "Quantity",
+      "maxUnits": "Max 50 units per order",
+      "errorSelectType": "Please select a blood type.",
+      "errorInvalidQuantity": "Quantity must be between 1 and 50 units.",
+      "cta": "View Available Blood Banks"
+    },
+    "step2": {
+      "title": "Select Blood Bank",
+      "description": "Choose a nearby blood bank with available stock.",
+      "distance": "{distance} km away",
+      "available": "{count} units available",
+      "cta": "Review Request"
+    },
+    "step3": {
+      "title": "Confirm Request",
+      "description": "Review your request details before submitting.",
+      "summary": "Request Summary",
+      "cta": "Submit Request",
+      "bankLabel": "Blood Bank",
+      "deliveryLabel": "Estimated Delivery",
+      "confirmationNote": "By confirming, you authorize the placement of this order. A rider will be dispatched once the blood bank confirms availability."
+    }
+  },
+  "VerificationConsole": {
+    "title": "Organization Verification Console",
+    "noPending": "No pending verifications",
+    "verifiedAt": "Verified At",
+    "syncedAt": "Synced At",
+    "txHash": "TX Hash",
+    "errorLabel": "Error",
+    "retries": "Retries",
+    "retrying": "Retrying...",
+    "retry": "Retry",
+    "syncStatuses": {
+      "pending": "Pending",
+      "syncing": "Syncing",
+      "synced": "Synced",
+      "failed": "Failed",
+      "mismatch": "Mismatch"
+    }
+  },
+  "Toasts": {
+    "sessionExpired": "Your session has expired. Please sign in again.",
+    "errorOccurred": "An unexpected error occurred.",
+    "requestCreated": "Blood request created successfully.",
+    "syncRetrying": "Attempting to retry synchronization..."
+  }
+}

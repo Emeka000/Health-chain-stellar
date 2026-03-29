@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { AlertCircle, CheckCircle, Clock, XCircle, RefreshCw } from "lucide-react";
+import { useTranslations } from 'next-intl';
 
 interface VerificationStatus {
   id: string;
@@ -18,6 +19,9 @@ interface VerificationStatus {
 }
 
 export function VerificationConsole() {
+  const t = useTranslations('VerificationConsole');
+  const commonT = useTranslations('Common');
+  
   const [organizations, setOrganizations] = useState<VerificationStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedOrg, setSelectedOrg] = useState<VerificationStatus | null>(null);
@@ -65,15 +69,15 @@ export function VerificationConsole() {
   const getSyncStatusIcon = (status: string) => {
     switch (status) {
       case "synced":
-        return <CheckCircle className="w-5 h-5 text-green-600" />;
+        return <CheckCircle className="w-5 h-5 text-green-600" aria-hidden="true" />;
       case "failed":
-        return <XCircle className="w-5 h-5 text-red-600" />;
+        return <XCircle className="w-5 h-5 text-red-600" aria-hidden="true" />;
       case "syncing":
-        return <Clock className="w-5 h-5 text-blue-600 animate-spin" />;
+        return <Clock className="w-5 h-5 text-blue-600 animate-spin" aria-hidden="true" />;
       case "mismatch":
-        return <AlertCircle className="w-5 h-5 text-yellow-600" />;
+        return <AlertCircle className="w-5 h-5 text-yellow-600" aria-hidden="true" />;
       default:
-        return <Clock className="w-5 h-5 text-gray-400" />;
+        return <Clock className="w-5 h-5 text-gray-400" aria-hidden="true" />;
     }
   };
 
@@ -93,35 +97,38 @@ export function VerificationConsole() {
   };
 
   if (loading) {
-    return <div className="p-6 text-center">Loading verification status...</div>;
+    return <div className="p-6 text-center" role="status">{commonT('loading')}</div>;
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6" role="region" aria-labelledby="console-title">
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold">Organization Verification Console</h2>
+        <h2 id="console-title" className="text-2xl font-bold">{t('title')}</h2>
         <button
           onClick={fetchPendingSyncs}
-          className="px-4 py-2 bg-brand-black text-white rounded hover:bg-gray-800"
+          className="px-4 py-2 bg-brand-black text-white rounded hover:bg-gray-800 transition focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 outline-none"
+          aria-label={commonT('refresh')}
         >
-          <RefreshCw className="w-4 h-4 inline mr-2" />
-          Refresh
+          <RefreshCw className="w-4 h-4 inline mr-2" aria-hidden="true" />
+          {commonT('refresh')}
         </button>
       </div>
 
       {organizations.length === 0 ? (
-        <div className="text-center py-12 text-gray-500">
-          No pending verifications
+        <div className="text-center py-12 text-gray-500" role="status">
+          {t('noPending')}
         </div>
       ) : (
-        <div className="grid gap-4">
+        <div className="grid gap-4" role="list" aria-label="Verification Tasks">
           {organizations.map((org) => (
             <div
               key={org.id}
-              className={`border rounded-lg p-4 cursor-pointer transition ${getSyncStatusColor(
+              className={`border rounded-lg p-4 cursor-pointer transition focus-within:ring-2 focus-within:ring-black ${getSyncStatusColor(
                 org.syncStatus
               )}`}
               onClick={() => setSelectedOrg(selectedOrg?.id === org.id ? null : org)}
+              role="listitem"
+              aria-expanded={selectedOrg?.id === org.id}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3 flex-1">
@@ -129,13 +136,13 @@ export function VerificationConsole() {
                   <div>
                     <h3 className="font-semibold">{org.name}</h3>
                     <p className="text-sm text-gray-600">
-                      Status: {org.status} | Sync: {org.syncStatus}
+                      {t('syncStatuses.' + org.syncStatus)}
                     </p>
                   </div>
                 </div>
                 <div className="text-right">
                   <p className="text-xs text-gray-500">
-                    Retries: {org.syncRetryCount}/5
+                    {t('retries')}: {org.syncRetryCount}/5
                   </p>
                   {org.syncStatus === "failed" && org.syncRetryCount < 5 && (
                     <button
@@ -144,39 +151,39 @@ export function VerificationConsole() {
                         handleRetry(org.id);
                       }}
                       disabled={retrying === org.id}
-                      className="mt-2 px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 disabled:opacity-50"
+                      className="mt-2 px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-blue-500 outline-none"
                     >
-                      {retrying === org.id ? "Retrying..." : "Retry"}
+                      {retrying === org.id ? t('retrying') : t('retry')}
                     </button>
                   )}
                 </div>
               </div>
 
               {selectedOrg?.id === org.id && (
-                <div className="mt-4 pt-4 border-t space-y-2 text-sm">
+                <div className="mt-4 pt-4 border-t space-y-2 text-sm" role="region" aria-label={t('verifiedAt')}>
                   {org.verifiedAt && (
                     <p>
-                      <span className="font-semibold">Verified At:</span>{" "}
+                      <span className="font-semibold">{t('verifiedAt')}:</span>{" "}
                       {new Date(org.verifiedAt).toLocaleString()}
                     </p>
                   )}
                   {org.syncedAt && (
                     <p>
-                      <span className="font-semibold">Synced At:</span>{" "}
+                      <span className="font-semibold">{t('syncedAt')}:</span>{" "}
                       {new Date(org.syncedAt).toLocaleString()}
                     </p>
                   )}
                   {org.verificationTxHash && (
                     <p>
-                      <span className="font-semibold">TX Hash:</span>{" "}
+                      <span className="font-semibold">{t('txHash')}:</span>{" "}
                       <code className="bg-gray-200 px-2 py-1 rounded text-xs">
                         {org.verificationTxHash.slice(0, 16)}...
                       </code>
                     </p>
                   )}
                   {org.syncErrorMessage && (
-                    <p className="text-red-600">
-                      <span className="font-semibold">Error:</span>{" "}
+                    <p className="text-red-600" role="alert">
+                      <span className="font-semibold">{t('errorLabel')}:</span>{" "}
                       {org.syncErrorMessage}
                     </p>
                   )}
