@@ -1,5 +1,6 @@
 use soroban_sdk::{contracttype, Address, Bytes, String, Symbol, Vec};
 
+pub const DEFAULT_DISPUTE_TIMEOUT_SECS: u64 = 72 * 60 * 60;
 pub const HIGH_VALUE_THRESHOLD: i128 = 10_000;
 
 /// **Dispute evidence (beyond `Symbol` limits).**
@@ -71,6 +72,20 @@ pub struct Dispute {
     pub resolved_at: Option<u64>,
 }
 
+/// Additional dispute metadata that can evolve independently of the dispute record.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DisputeMetadata {
+    pub dispute_id: u64,
+    pub dispute_deadline: u64,
+}
+
+/// Aggregated refund stats for dispute timeout processing.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaymentStats {
+    pub count_auto_refunded: u64,
+    pub total_auto_refunded: i128,
 /// Proof bundle attached to a payment for escrow release
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -194,6 +209,15 @@ pub struct TransactionMetadata {
     pub tags: Vec<Symbol>,
     /// Reference identifier (not a full URL - use hash or ID)
     pub reference_url: Symbol,
+}
+
+impl PaymentStats {
+    pub fn new() -> Self {
+        Self {
+            count_auto_refunded: 0,
+            total_auto_refunded: 0,
+        }
+    }
 }
 
 impl Payment {
