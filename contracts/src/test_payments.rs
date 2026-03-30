@@ -1,11 +1,15 @@
 #![cfg(test)]
 
 use crate::payments::{
-    EscrowAccount, FeeStructure, Payment, PaymentError, PaymentStatus, ReleaseConditions,
-    TransactionMetadata,
+    EscrowAccount, FeeStructure, MultiSigConfig, Payment, PaymentError, PaymentStatus,
+    PendingApproval, ReleaseConditions, TransactionMetadata, HIGH_VALUE_THRESHOLD,
+};
+use crate::{
+    HealthChainContract, HealthChainContractClient, ADMIN, MULTISIG_CONFIG, PAYMENTS,
+    PENDING_APPROVALS,
 };
 
-use soroban_sdk::{testutils::Address as _, vec, Address, Bytes, Env, String, Symbol};
+use soroban_sdk::{testutils::Address as _, vec, Address, Bytes, Env, Map, String, Symbol};
 
 fn default_fee_structure(env: &Env) -> FeeStructure {
     FeeStructure {
@@ -463,4 +467,168 @@ fn transaction_metadata_is_valid() {
     };
 
     assert_eq!(metadata.tags.len(), 1);
+}
+
+#[test]
+fn multisig_config_validates_threshold_and_signers() {
+    let env = Env::default();
+    let signer = Address::generate(&env);
+
+    let empty = MultiSigConfig {
+        signers: vec![&env],
+        threshold: 1,
+    };
+    assert_eq!(empty.validate(), Err(PaymentError::InvalidMultiSigConfig));
+
+    let zero_threshold = MultiSigConfig {
+        signers: vec![&env, signer.clone()],
+        threshold: 0,
+    };
+    assert_eq!(
+        zero_threshold.validate(),
+        Err(PaymentError::InvalidMultiSigConfig)
+    );
+
+    let excessive_threshold = MultiSigConfig {
+        signers: vec![&env, signer.clone()],
+        threshold: 2,
+    };
+    assert_eq!(
+        excessive_threshold.validate(),
+        Err(PaymentError::InvalidMultiSigConfig)
+    );
+
+    let duplicate_signers = MultiSigConfig {
+        signers: vec![&env, signer.clone(), signer.clone()],
+        threshold: 2,
+    };
+    assert_eq!(
+        duplicate_signers.validate(),
+        Err(PaymentError::InvalidMultiSigConfig)
+    );
+}
+
+#[test]
+fn pending_approval_rejects_duplicate_votes() {
+    let env = Env::default();
+    let signer = Address::generate(&env);
+    let mut approval = PendingApproval::new(&env, 7);
+
+    assert!(approval.register_vote(signer.clone()).is_ok());
+    assert_eq!(
+        approval.register_vote(signer),
+        Err(PaymentError::DuplicateApproval)
+    );
+}
+
+#[test]
+fn low_value_release_keeps_single_admin_flow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(HealthChainContract, ());
+    let client = HealthChainContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    client.initialize(&admin);
+    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset);
+
+    env.as_contract(&contract_id, || {
+        let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
+        let mut payment = payments.get(payment_id).unwrap();
+        payment.status = PaymentStatus::Escrowed;
+        payments.set(payment_id, payment);
+        env.storage().persistent().set(&PAYMENTS, &payments);
+    });
+
+    assert!(client.propose_release(&payment_id, &admin));
+
+    env.as_contract(&contract_id, || {
+        let payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
+        let payment = payments.get(payment_id).unwrap();
+        assert_eq!(payment.status, PaymentStatus::Completed);
+        assert!(payment.escrow_released_at.is_some());
+    });
+}
+
+#[test]
+fn high_value_release_requires_threshold_votes_and_prevents_duplicates() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(HealthChainContract, ());
+    let client = HealthChainContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer_one = Address::generate(&env);
+    let signer_two = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    client.initialize(&admin);
+    client.configure_multisig(&vec![&env, signer_one.clone(), signer_two.clone()], &2);
+    let payment_id = client.create_payment(&1, &payer, &payee, &HIGH_VALUE_THRESHOLD, &asset);
+
+    env.as_contract(&contract_id, || {
+        let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
+        let mut payment = payments.get(payment_id).unwrap();
+        payment.status = PaymentStatus::Escrowed;
+        payments.set(payment_id, payment);
+        env.storage().persistent().set(&PAYMENTS, &payments);
+    });
+
+    assert!(!client.propose_release(&payment_id, &signer_one));
+
+    env.as_contract(&contract_id, || {
+        let approvals: Map<u64, PendingApproval> =
+            env.storage().persistent().get(&PENDING_APPROVALS).unwrap();
+        let approval = approvals.get(payment_id).unwrap();
+        assert_eq!(approval.approvals.len(), 1);
+        assert!(!approval.executed);
+    });
+
+    let duplicate_attempt = client.try_propose_release(&payment_id, &signer_one);
+    assert!(duplicate_attempt.is_err());
+
+    assert!(client.propose_release(&payment_id, &signer_two));
+
+    env.as_contract(&contract_id, || {
+        let payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
+        let payment = payments.get(payment_id).unwrap();
+        assert_eq!(payment.status, PaymentStatus::Completed);
+
+        let approvals: Map<u64, PendingApproval> =
+            env.storage().persistent().get(&PENDING_APPROVALS).unwrap();
+        let approval = approvals.get(payment_id).unwrap();
+        assert!(approval.executed);
+        assert_eq!(approval.approvals.len(), 2);
+    });
+}
+
+#[test]
+fn configure_multisig_is_admin_only_and_persists_storage() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(HealthChainContract, ());
+    let client = HealthChainContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer = Address::generate(&env);
+    client.initialize(&admin);
+    client.configure_multisig(&vec![&env, signer.clone()], &1);
+
+    env.as_contract(&contract_id, || {
+        let stored_admin: Address = env.storage().instance().get(&ADMIN).unwrap();
+        assert_eq!(stored_admin, admin);
+
+        let config: MultiSigConfig = env.storage().persistent().get(&MULTISIG_CONFIG).unwrap();
+        assert_eq!(config.threshold, 1);
+        assert!(config.signers.contains(signer));
+    });
 }
