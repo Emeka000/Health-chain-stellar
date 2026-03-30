@@ -6,64 +6,55 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
-import { OptimisticLockVersionMismatchError, Repository, DataSource } from 'typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
 
 import { PaginatedResponse, PaginationUtil } from '../common/pagination';
 import {
-  OrderConfirmedEvent,
-  OrderCancelledEvent,
-  OrderStatusUpdatedEvent,
-  OrderRiderAssignedEvent,
-  OrderDispatchedEvent,
-  OrderInTransitEvent,
-  OrderDeliveredEvent,
   OrderDisputedEvent,
+  OrderRiderAssignedEvent,
   OrderResolvedEvent,
 } from '../events';
 import { InventoryService } from '../inventory/inventory.service';
-import { OrderStatus } from './enums/order-status.enum';
-import { OrderEventType } from './enums/order-event-type.enum';
-import { RequestStatusAction } from './enums/request-status-action.enum';
-import { OrderEventStoreService } from './services/order-event-store.service';
-import { FeePolicyService } from '../fee-policy/fee-policy.service';
-import { FeePreviewDto } from '../fee-policy/dto/fee-policy.dto';
-import { RequestStatusService } from './services/request-status.service';
-import { OrderStateMachine } from './state-machine/order-state-machine';
-import { Order, BloodType } from './types/order.types';
-import { OrderEntity } from './entities/order.entity';
-import { OrderQueryParamsDto } from './dto/order-query-params.dto';
-import { CreateOrderDto } from './dto/create-order.dto';
-import { RaiseDisputeDto } from './dto/raise-dispute.dto';
-import { ResolveDisputeDto } from './dto/resolve-dispute.dto';
-import { UpdateRequestStatusDto } from './dto/update-request-status.dto';
-import { OrderEventEntity } from './entities/order-event.entity';
-import { SorobanService } from '../soroban/soroban.service';
 import { ApprovalService } from '../approvals/approval.service';
 import { ApprovalActionType } from '../approvals/enums/approval.enum';
 import { SlaService } from '../sla/sla.service';
 import { SlaStage } from '../sla/enums/sla-stage.enum';
 
+import { CreateOrderDto } from './dto/create-order.dto';
+import { OrderQueryParamsDto } from './dto/order-query-params.dto';
+import { RaiseDisputeDto } from './dto/raise-dispute.dto';
+import { ResolveDisputeDto } from './dto/resolve-dispute.dto';
+import { UpdateRequestStatusDto } from './dto/update-request-status.dto';
+import { OrderEventEntity } from './entities/order-event.entity';
+import { OrderEntity } from './entities/order.entity';
+import { OrderEventType } from './enums/order-event-type.enum';
+import { OrderStatus } from './enums/order-status.enum';
+import { RequestStatusAction } from './enums/request-status-action.enum';
+import { OrderStateMachine } from './state-machine/order-state-machine';
+import { Order } from './types/order.types';
+import { OrderEventStoreService } from './services/order-event-store.service';
+import { OrderFeeService } from './services/order-fee.service';
+import { RequestStatusService } from './services/request-status.service';
+import { FeePreviewDto } from '../fee-policy/dto/fee-policy.dto';
+
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
-  private readonly orders: Order[] = [];
 
   constructor(
-    @InjectDataSource()
-    private readonly dataSource: DataSource,
+    @InjectDataSource() private readonly dataSource: DataSource,
     @InjectRepository(OrderEntity)
     private readonly orderRepo: Repository<OrderEntity>,
     private readonly stateMachine: OrderStateMachine,
     private readonly eventStore: OrderEventStoreService,
     private readonly eventEmitter: EventEmitter2,
     private readonly inventoryService: InventoryService,
-    private readonly sorobanService: SorobanService,
     private readonly requestStatusService: RequestStatusService,
-    private readonly feePolicyService: FeePolicyService,
+    private readonly orderFeeService: OrderFeeService,
     private readonly approvalService: ApprovalService,
     private readonly slaService: SlaService,
-  ) { }
+  ) {}
 
   async findAll(status?: string, hospitalId?: string) {
     const where: Partial<OrderEntity> = {};
@@ -73,17 +64,28 @@ export class OrdersService {
     return { message: 'Orders retrieved successfully', data: orders };
   }
 
-  async findAllWithFilters(params: OrderQueryParamsDto): Promise<PaginatedResponse<Order>> {
-    const { hospitalId, page = 1, pageSize = 25, sortBy = 'placedAt', sortOrder = 'desc' } = params;
-    const query = this.orderRepo.createQueryBuilder('order')
+  async findAllWithFilters(
+    params: OrderQueryParamsDto,
+  ): Promise<PaginatedResponse<Order>> {
+    const {
+      hospitalId,
+      page = 1,
+      pageSize = 25,
+      sortBy = 'placedAt',
+      sortOrder = 'desc',
+    } = params;
+    const query = this.orderRepo
+      .createQueryBuilder('order')
       .where('order.hospitalId = :hospitalId', { hospitalId });
-    
-    if (params.startDate) query.andWhere('order.placedAt >= :startDate', { startDate: params.startDate });
-    if (params.endDate) query.andWhere('order.placedAt <= :endDate', { endDate: params.endDate });
+
+    if (params.startDate)
+      query.andWhere('order.placedAt >= :startDate', { startDate: params.startDate });
+    if (params.endDate)
+      query.andWhere('order.placedAt <= :endDate', { endDate: params.endDate });
 
     const [items, total] = await query
       .orderBy(`order.${sortBy}`, sortOrder.toUpperCase() as any)
-      .skip((page - 1) * pageSize)
+      .skip(PaginationUtil.calculateSkip(page, pageSize))
       .take(pageSize)
       .getManyAndCount();
 
@@ -109,70 +111,44 @@ export class OrdersService {
     return this.eventStore.getOrderHistory(orderId);
   }
 
-  async create(createOrderDto: CreateOrderDto, actorId?: string) {
-    if (!createOrderDto.bloodBankId) throw new BadRequestException('bloodBankId is required');
-    const saved = await this.createOrderEntity(createOrderDto, actorId);
-    if (saved.status === OrderStatus.CONFIRMED || saved.status === OrderStatus.DISPATCHED) {
-      await this.computeFees(saved);
+  async create(dto: CreateOrderDto, actorId?: string) {
+    if (!dto.bloodBankId) throw new BadRequestException('bloodBankId is required');
+    const saved = await this.createOrderEntity(dto, actorId);
+    if (
+      saved.status === OrderStatus.CONFIRMED ||
+      saved.status === OrderStatus.DISPATCHED
+    ) {
+      await this.orderFeeService.computeAndPersist(saved);
     }
     return { message: 'Order created successfully', data: saved };
   }
 
-  private async createOrderEntity(createOrderDto: CreateOrderDto, actorId?: string): Promise<OrderEntity> {
-    await this.inventoryService.reserveStockOrThrow(
-      createOrderDto.bloodBankId!,
-      createOrderDto.bloodType,
-      createOrderDto.quantity,
-    );
-    const order = this.orderRepo.create({
-      hospitalId: createOrderDto.hospitalId,
-      bloodBankId: createOrderDto.bloodBankId,
-      bloodType: createOrderDto.bloodType,
-      quantity: createOrderDto.quantity,
-      deliveryAddress: createOrderDto.deliveryAddress,
-      status: OrderStatus.PENDING,
-    });
-    const saved = await this.orderRepo.save(order);
-    await this.eventStore.persistEvent({
-      orderId: saved.id,
-      eventType: OrderEventType.ORDER_CREATED,
-      payload: createOrderDto,
-      actorId,
-    });
-    // Start TRIAGE SLA clock
-    await this.slaService.startStage(saved.id, SlaStage.TRIAGE, {
-      hospitalId: saved.hospitalId,
-      bloodBankId: saved.bloodBankId ?? undefined,
-    }).catch((err) => this.logger.error(`SLA TRIAGE start failed: ${err.message}`));
-    return saved;
-  }
-
-  async computeFees(order: OrderEntity): Promise<void> {
-    const previewDto: FeePreviewDto = {
-      geographyCode: 'LAG',
-      urgencyTier: 'STANDARD' as any,
-      distanceKm: 10,
-      serviceLevel: 'BASIC' as any,
-      quantity: order.quantity,
-    };
-    const breakdown = await this.feePolicyService.previewFees(previewDto);
-    order.feeBreakdown = breakdown as any;
-    order.appliedPolicyId = breakdown.appliedPolicyId;
-    await this.orderRepo.save(order);
-  }
-
-  async update(id: string, updateOrderDto: any) {
+  async update(id: string, updateDto: any) {
     const order = await this.findOrderOrFail(id);
-    Object.assign(order, updateOrderDto);
+    Object.assign(order, updateDto);
     const updated = await this.orderRepo.save(order);
     return { message: 'Order updated successfully', data: updated };
   }
 
-  async updateStatus(id: string, statusUpdate: UpdateRequestStatusDto | string, actorId?: string, actorRole?: string) {
-    const dto = typeof statusUpdate === 'string' ? { status: statusUpdate as OrderStatus } : statusUpdate;
+  async updateStatus(
+    id: string,
+    statusUpdate: UpdateRequestStatusDto | string,
+    actorId?: string,
+    actorRole?: string,
+  ) {
+    const dto =
+      typeof statusUpdate === 'string'
+        ? { status: statusUpdate as OrderStatus }
+        : statusUpdate;
     const order = await this.findOrderOrFail(id);
     const updated = await this.dataSource.transaction(async (manager) => {
-      await this.requestStatusService.applyStatusUpdate(order, dto, actorId, actorRole, manager);
+      await this.requestStatusService.applyStatusUpdate(
+        order,
+        dto,
+        actorId,
+        actorRole,
+        manager,
+      );
       return manager.save(OrderEntity, order);
     });
     return { message: 'Order status updated successfully', data: updated };
@@ -181,7 +157,13 @@ export class OrdersService {
   async remove(id: string, actorId?: string) {
     const order = await this.findOrderOrFail(id);
     await this.dataSource.transaction(async (manager) => {
-      await this.requestStatusService.applyStatusUpdate(order, { action: RequestStatusAction.CANCEL }, actorId, undefined, manager);
+      await this.requestStatusService.applyStatusUpdate(
+        order,
+        { action: RequestStatusAction.CANCEL },
+        actorId,
+        undefined,
+        manager,
+      );
       await manager.save(OrderEntity, order);
     });
     return { message: 'Order cancelled successfully', data: { id } };
@@ -191,13 +173,19 @@ export class OrdersService {
     const order = await this.findOrderOrFail(orderId);
     order.riderId = riderId;
     await this.orderRepo.save(order);
-    this.eventEmitter.emit('order.rider.assigned', new OrderRiderAssignedEvent(orderId, riderId));
-    // Start DISPATCH_ACCEPTANCE clock when rider is assigned
-    await this.slaService.startStage(orderId, SlaStage.DISPATCH_ACCEPTANCE, {
-      hospitalId: order.hospitalId,
-      bloodBankId: order.bloodBankId ?? undefined,
-      riderId,
-    }).catch((err) => this.logger.error(`SLA DISPATCH_ACCEPTANCE start failed: ${err.message}`));
+    this.eventEmitter.emit(
+      'order.rider.assigned',
+      new OrderRiderAssignedEvent(orderId, riderId),
+    );
+    await this.slaService
+      .startStage(orderId, SlaStage.DISPATCH_ACCEPTANCE, {
+        hospitalId: order.hospitalId,
+        bloodBankId: order.bloodBankId ?? undefined,
+        riderId,
+      })
+      .catch((err) =>
+        this.logger.error(`SLA DISPATCH_ACCEPTANCE start failed: ${err.message}`),
+      );
     return { message: 'Rider assigned successfully', data: { orderId, riderId } };
   }
 
@@ -214,68 +202,83 @@ export class OrdersService {
       payload: { reason: dto.reason, disputeId: order.disputeId },
       actorId,
     });
-    this.eventEmitter.emit('order.disputed', new OrderDisputedEvent(id, order.disputeId, dto.reason));
+    this.eventEmitter.emit(
+      'order.disputed',
+      new OrderDisputedEvent(id, order.disputeId, dto.reason),
+    );
     return { message: 'Dispute raised successfully', data: saved };
   }
 
   async resolveDispute(id: string, dto: ResolveDisputeDto, actorId?: string) {
     const order = await this.findOrderOrFail(id);
-    if (order.status !== OrderStatus.DISPUTED) throw new ConflictException('Order is not in DISPUTED state');
+    if (order.status !== OrderStatus.DISPUTED)
+      throw new ConflictException('Order is not in DISPUTED state');
     const approvalRequest = await this.approvalService.createRequest({
       targetId: id,
       actionType: ApprovalActionType.DISPUTE_RESOLUTION,
       requesterId: actorId!,
       requiredApprovals: 2,
       metadata: { orderId: id, resolution: dto.resolution },
-      finalPayload: { ...dto, orderId: id }
+      finalPayload: { ...dto, orderId: id },
     });
-    return { message: 'Dispute resolution requires multi-party approval.', approvalRequestId: approvalRequest.id };
+    return {
+      message: 'Dispute resolution requires multi-party approval.',
+      approvalRequestId: approvalRequest.id,
+    };
   }
 
-  /**
-   * Finalizes the dispute resolution after official approval.
-   */
   async finalizeDisputeResolution(id: string, resolution: any) {
     const order = await this.findOrderOrFail(id);
-    this.logger.log(`Finalizing dispute resolution for order ${id}: ${resolution}`);
-
-    // Persist event and update state
     order.status = OrderStatus.RESOLVED;
     await this.orderRepo.save(order);
-
     await this.eventStore.persistEvent({
       orderId: id,
       eventType: OrderEventType.ORDER_RESOLVED,
       payload: { resolution },
       actorId: 'SYSTEM_APPROVAL',
     });
-
     this.eventEmitter.emit('order.resolved', new OrderResolvedEvent(id, resolution));
-    
-    // Trigger blockchain settlement logic (Soroban call)
-    try {
-      await this.sorobanService.executeWithRetry(async () => {
-         // mock call to resolve on-chain
-         this.logger.log(`On-chain resolution triggered for order ${id}`);
-         return { success: true };
-      });
-    } catch (error) {
-       this.logger.error(`Failed to submit on-chain resolution proof for order ${id}: ${error.message}`);
-    }
-
     return { message: 'Dispute resolution finalized and settled.' };
   }
 
-  async previewOrderFees(id: string, previewData: Partial<FeePreviewDto>) {
+  async previewOrderFees(id: string, overrides: Partial<FeePreviewDto>) {
     const order = await this.findOrderOrFail(id);
-    const dto: FeePreviewDto = {
-      geographyCode: previewData.geographyCode || 'LAG',
-      urgencyTier: previewData.urgencyTier || 'STANDARD' as any,
-      distanceKm: previewData.distanceKm || 10,
-      serviceLevel: previewData.serviceLevel || 'BASIC' as any,
-      quantity: order.quantity,
-    };
-    return this.feePolicyService.previewFees(dto);
+    return this.orderFeeService.preview(order, overrides);
+  }
+
+  private async createOrderEntity(
+    dto: CreateOrderDto,
+    actorId?: string,
+  ): Promise<OrderEntity> {
+    await this.inventoryService.reserveStockOrThrow(
+      dto.bloodBankId!,
+      dto.bloodType,
+      dto.quantity,
+    );
+    const order = this.orderRepo.create({
+      hospitalId: dto.hospitalId,
+      bloodBankId: dto.bloodBankId,
+      bloodType: dto.bloodType,
+      quantity: dto.quantity,
+      deliveryAddress: dto.deliveryAddress,
+      status: OrderStatus.PENDING,
+    });
+    const saved = await this.orderRepo.save(order);
+    await this.eventStore.persistEvent({
+      orderId: saved.id,
+      eventType: OrderEventType.ORDER_CREATED,
+      payload: dto,
+      actorId,
+    });
+    await this.slaService
+      .startStage(saved.id, SlaStage.TRIAGE, {
+        hospitalId: saved.hospitalId,
+        bloodBankId: saved.bloodBankId ?? undefined,
+      })
+      .catch((err) =>
+        this.logger.error(`SLA TRIAGE start failed: ${err.message}`),
+      );
+    return saved;
   }
 
   private async findOrderOrFail(id: string): Promise<OrderEntity> {

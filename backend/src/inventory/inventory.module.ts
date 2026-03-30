@@ -8,6 +8,10 @@ import { BloodUnit } from '../blood-units/entities/blood-unit.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrderEntity } from '../orders/entities/order.entity';
 import { UsersModule } from '../users/users.module';
+import { InventoryStockRepository } from './repositories/inventory-stock.repository';
+import { InventoryStockEntity } from './entities/inventory-stock.entity';
+import { InventoryAlertEntity } from './entities/inventory-alert.entity';
+import { InventoryEntity } from './entities/inventory.entity';
 
 import { ExpirationForecastingController } from './controllers/expiration-forecasting.controller';
 import { InventoryAlertController } from './controllers/inventory-alert.controller';
@@ -51,6 +55,7 @@ import { RestockingCampaignService } from './services/restocking-campaign.servic
     ExpirationForecastingController,
   ],
   providers: [
+    InventoryStockRepository,
     InventoryService,
     InventoryForecastingService,
     InventoryAnalyticsService,

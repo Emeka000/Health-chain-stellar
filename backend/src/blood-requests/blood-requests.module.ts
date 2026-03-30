@@ -24,6 +24,9 @@ import { BloodBankAvailabilityService } from './services/blood-bank-availability
 import { BloodRequestReservationService } from './services/blood-request-reservation.service';
 import { InventoryStockEntity } from '../inventory/entities/inventory-stock.entity';
 
+import { BloodRequestChainService } from './services/blood-request-chain.service';
+import { BloodRequestEmailService } from './services/blood-request-email.service';
+
 @Module({
   imports: [
     TypeOrmModule.forFeature([
@@ -59,6 +62,8 @@ import { InventoryStockEntity } from '../inventory/entities/inventory-stock.enti
   controllers: [BloodRequestsController, RequestQueryController],
   providers: [
     BloodRequestsService,
+    BloodRequestChainService,
+    BloodRequestEmailService,
     BloodRequestProcessor,
     SlaBreachListener,
     RequestQueryService,

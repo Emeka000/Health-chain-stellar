@@ -1,19 +1,17 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { UserActivityModule } from '../user-activity/user-activity.module';
-import { ApprovalRequestEntity } from './entities/approval-request.entity';
 import { ApprovalDecisionEntity } from './entities/approval-decision.entity';
-import { ApprovalService } from './approval.service';
+import { ApprovalRequestEntity } from './entities/approval-request.entity';
 import { ApprovalController } from './approval.controller';
 import { ApprovalListener } from './approval.listener';
-import { OrdersModule } from '../orders/orders.module';
+import { ApprovalService } from './approval.service';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([ApprovalRequestEntity, ApprovalDecisionEntity]),
     UserActivityModule,
-    forwardRef(() => OrdersModule),
   ],
   providers: [ApprovalService, ApprovalListener],
   controllers: [ApprovalController],
