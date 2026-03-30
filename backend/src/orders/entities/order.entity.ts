@@ -51,6 +51,9 @@ export class OrderEntity {
   @Column({ name: 'dispute_reason', nullable: true, type: 'text' })
   disputeReason: string | null;
 
+  @Column({ name: 'patient_id', type: 'varchar', nullable: true })
+  patientId: string | null;
+
   @VersionColumn()
   version: number;
 
