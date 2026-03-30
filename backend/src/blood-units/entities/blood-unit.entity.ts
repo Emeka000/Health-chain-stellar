@@ -1,13 +1,22 @@
 import {
-  Entity,
-  PrimaryGeneratedColumn,
+  BaseEntity,
   Column,
   CreateDateColumn,
-  UpdateDateColumn,
+  Entity,
   Index,
+  OneToMany,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
 } from 'typeorm';
 
-@Entity('blood_units')
+import { BloodComponent } from '../enums/blood-component.enum';
+import { BloodStatus } from '../enums/blood-status.enum';
+import { BloodType } from '../enums/blood-type.enum';
+
+import { BloodStatusHistory } from './blood-status-history.entity';
+
+//  Legacy entity used by BloodUnitsService (soroban/QR flow) 
+@Entity('blood_units_legacy')
 @Index(['unitNumber'], { unique: true })
 @Index(['bloodType', 'bankId'])
 export class BloodUnitEntity {
@@ -51,14 +60,10 @@ export class BloodUnitEntity {
   createdAt: Date;
 
   @UpdateDateColumn()
-  OneToMany,
-  BaseEntity,
-} from 'typeorm';
-import { BloodType } from '../enums/blood-type.enum';
-import { BloodStatus } from '../enums/blood-status.enum';
-import { BloodComponent } from '../enums/blood-component.enum';
-import { BloodStatusHistory } from './blood-status-history.entity';
+  updatedAt: Date;
+}
 
+//  Current entity used by blood-unit status/history flow 
 @Entity('blood_units')
 @Index('idx_blood_units_blood_type', ['bloodType'])
 @Index('idx_blood_units_status', ['status'])
@@ -71,24 +76,13 @@ export class BloodUnit extends BaseEntity {
   @Column({ name: 'unit_code', type: 'varchar', unique: true })
   unitCode: string;
 
-  @Column({
-    name: 'blood_type',
-    type: 'enum',
-    enum: BloodType,
-  })
+  @Column({ name: 'blood_type', type: 'enum', enum: BloodType })
   bloodType: BloodType;
 
-  @Column({
-    type: 'enum',
-    enum: BloodStatus,
-    default: BloodStatus.AVAILABLE,
-  })
+  @Column({ type: 'enum', enum: BloodStatus, default: BloodStatus.AVAILABLE })
   status: BloodStatus;
 
-  @Column({
-    type: 'enum',
-    enum: BloodComponent,
-  })
+  @Column({ type: 'enum', enum: BloodComponent })
   component: BloodComponent;
 
   @Column({ name: 'organization_id', type: 'varchar' })
@@ -121,9 +115,7 @@ export class BloodUnit extends BaseEntity {
   @Column({ name: 'blockchain_tx_hash', type: 'varchar', nullable: true })
   blockchainTxHash: string | null;
 
-  @OneToMany(() => BloodStatusHistory, (history) => history.bloodUnit, {
-    cascade: true,
-  })
+  @OneToMany(() => BloodStatusHistory, (history) => history.bloodUnit, { cascade: true })
   statusHistory: BloodStatusHistory[];
 
   @CreateDateColumn({ name: 'created_at' })

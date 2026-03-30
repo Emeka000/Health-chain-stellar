@@ -15,7 +15,6 @@ import {
 
 import { OrderEntity } from '../orders/entities/order.entity';
 import { OrderStatus } from '../orders/enums/order-status.enum';
-import { UserEntity } from '../users/entities/user.entity';
 
 import { InventoryEntity } from './entities/inventory.entity';
 import { InventoryForecastingService } from './inventory-forecasting.service';
@@ -80,13 +79,12 @@ describe('InventoryForecasting Integration (SQLite)', () => {
         TypeOrmModule.forRoot({
           type: 'sqlite',
           database: ':memory:',
-          entities: [TestOrderEntity, InventoryEntity, UserEntity],
+          entities: [TestOrderEntity, InventoryEntity],
           synchronize: true,
         }),
         TypeOrmModule.forFeature([
           TestOrderEntity,
           InventoryEntity,
-          UserEntity,
         ]),
       ],
       providers: [

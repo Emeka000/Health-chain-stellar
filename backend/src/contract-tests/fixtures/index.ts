@@ -34,6 +34,11 @@ export {
   ValidAuthorizationInteraction,
 } from './auth.fixture';
 
+import { BloodRequestsInventoryContract } from './blood-requests-inventory.fixture';
+import { BloodRequestsSorobanContract } from './blood-requests-soroban.fixture';
+import { DispatchRidersContract } from './dispatch-riders.fixture';
+import { AuthContract } from './auth.fixture';
+
 /**
  * Get contract by name
  */
