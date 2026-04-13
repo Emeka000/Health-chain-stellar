@@ -103,7 +103,7 @@ jobs:
 
       - name: Post audit summary to PR
         if: github.event_name == 'pull_request' && always()
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const critical = '${{ steps.audit-eval.outputs.critical }}';

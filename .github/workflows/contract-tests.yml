@@ -106,7 +106,7 @@ jobs:
 
       - name: Comment PR with Contract Test Results
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
@@ -196,7 +196,7 @@ jobs:
     steps:
       - name: Comment PR - All Checks Pass
         if: needs.contract-tests.result == 'success' && needs.boundary-check.result == 'success'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             github.rest.issues.createComment({
@@ -208,7 +208,7 @@ jobs:
 
       - name: Comment PR - Checks Failed
         if: needs.contract-tests.result != 'success' || needs.boundary-check.result != 'success'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             github.rest.issues.createComment({
