@@ -13,6 +13,8 @@ import { DeliveryProofEntity } from './entities/delivery-proof.entity';
 import { SorobanService } from '../soroban/soroban.service';
 import { CustodyService } from '../custody/custody.service';
 import { UploadValidationService } from './upload-validation.service';
+import { FileMetadataService } from '../file-metadata/file-metadata.service';
+import { FileOwnerType } from '../file-metadata/entities/file-metadata.entity';
 
 // Blood products must be stored between 2°C and 6°C (backend compliance threshold)
 const TEMP_MIN_CELSIUS = 2;
@@ -38,6 +40,7 @@ export class DeliveryProofService {
     private readonly sorobanService: SorobanService,
     private readonly custodyService: CustodyService,
     private readonly uploadValidation: UploadValidationService,
+    private readonly fileMetadata: FileMetadataService,
   ) {}
 
   async uploadPhoto(orderId: string, file: Express.Multer.File) {
@@ -62,6 +65,16 @@ export class DeliveryProofService {
     }
 
     const storageUrl = `${storagePath}/${fileName}`;
+
+    await this.fileMetadata.replace({
+      ownerType: FileOwnerType.DELIVERY_PROOF,
+      ownerId: orderId,
+      storagePath: path.join(storagePath, fileName),
+      originalFilename: file.originalname,
+      contentType: file.mimetype,
+      sizeBytes: file.size,
+      sha256Hash: hash,
+    });
 
     let proof = await this.proofRepo.findOne({ where: { orderId } });
     if (!proof) {
