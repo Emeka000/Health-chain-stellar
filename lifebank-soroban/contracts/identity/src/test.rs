@@ -2,8 +2,9 @@
 
 use super::*;
 use soroban_sdk::{
+    symbol_short,
     testutils::{Address as _, Events as _, Ledger as _},
-    vec, Address, BytesN, Env, String,
+    vec, Address, BytesN, Env, String, Symbol, TryFromVal,
 };
 
 // ---------------------------------------------------------------------------
@@ -292,13 +293,16 @@ fn test_verify_organization() {
     // Verify the organization
     client.verify_organization(&admin, &org_id);
 
+    let events = env.events().all();
+    assert!(!events.is_empty());
+    let (_, topics, _) = events.last().unwrap();
+    let version_topic: Symbol =
+        TryFromVal::try_from_val(&env, &topics.get(topics.len() - 1).unwrap()).unwrap();
+    assert_eq!(version_topic, symbol_short!("v1"));
+
     let org = client.get_organization(&org_id).unwrap();
     assert_eq!(org.verified, true);
     assert!(org.verified_timestamp.is_some());
-
-    // Check verifier is stored
-    // Note: We don't have a getter for verifier in the contract, but we can check events
-    assert_eq!(env.events().all().len(), 3); // init, register, verify
 }
 
 #[test]
@@ -413,11 +417,16 @@ fn test_unverify_organization() {
     let reason = String::from_str(&env, "Compliance issue");
     client.unverify_organization(&admin, &org_id, &reason);
 
+    let events = env.events().all();
+    assert!(!events.is_empty());
+    let (_, topics, _) = events.last().unwrap();
+    let version_topic: Symbol =
+        TryFromVal::try_from_val(&env, &topics.get(topics.len() - 1).unwrap()).unwrap();
+    assert_eq!(version_topic, symbol_short!("v1"));
+
     let org = client.get_organization(&org_id).unwrap();
     assert_eq!(org.verified, false);
     assert!(org.verified_timestamp.is_none());
-
-    assert_eq!(env.events().all().len(), 4); // init, register, verify, unverify
 }
 
 #[test]

@@ -803,8 +803,8 @@ fn test_reputation_pause_allows_get_score() {
     c.pause(&admin);
 
     // Read still works
-    let score = c.get_score(&ENTITY, &1000u64);
-    assert!(score.composite_score >= 0);
+    let score = c.get_score(&ENTITY).unwrap();
+    assert!(score.score >= 0);
 }
 
 #[test]

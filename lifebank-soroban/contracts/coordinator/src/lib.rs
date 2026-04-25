@@ -9,7 +9,6 @@
 ///
 /// Any step that finds the prerequisite state missing returns an error and makes
 /// no state changes, providing safe rollback semantics within a single transaction.
-
 mod error;
 mod types;
 
@@ -82,8 +81,8 @@ pub struct Payment {
 // ── Cross-contract client traits ──────────────────────────────────────────────
 
 mod request_client {
-    use soroban_sdk::{contractclient, Address, Env};
     use super::BloodRequest;
+    use soroban_sdk::{contractclient, Address, Env};
 
     #[contractclient(name = "RequestContractClient")]
     pub trait RequestContractInterface {
@@ -92,8 +91,8 @@ mod request_client {
 }
 
 mod inventory_client {
-    use soroban_sdk::{contractclient, Address, Env, String};
     use super::{BloodStatus, BloodUnit};
+    use soroban_sdk::{contractclient, Address, Env, String};
 
     #[contractclient(name = "InventoryContractClient")]
     pub trait InventoryContractInterface {
@@ -116,8 +115,8 @@ mod inventory_client {
 }
 
 mod payment_client {
-    use soroban_sdk::{contractclient, contracttype, Env, String};
     use super::{Payment, PaymentStatus};
+    use soroban_sdk::{contractclient, contracttype, Env, String};
 
     #[contracttype]
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -189,8 +188,14 @@ impl CoordinatorContract {
         env.storage()
             .instance()
             .set(&DataKey::PaymentContract, &payment_contract);
-        env.events()
-            .publish((symbol_short!("coord"), symbol_short!("init")), admin);
+        env.events().publish(
+            (
+                symbol_short!("coord"),
+                symbol_short!("init"),
+                symbol_short!("v1"),
+            ),
+            admin,
+        );
         Ok(())
     }
 
@@ -305,7 +310,11 @@ impl CoordinatorContract {
         }
 
         env.events().publish(
-            (symbol_short!("coord"), symbol_short!("alloc")),
+            (
+                symbol_short!("coord"),
+                symbol_short!("alloc"),
+                symbol_short!("v1"),
+            ),
             (request_id, unit_ids.len()),
         );
 
@@ -333,8 +342,7 @@ impl CoordinatorContract {
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
 
-        let mut wf =
-            load_workflow(&env, request_id).ok_or(CoordinatorError::WorkflowNotFound)?;
+        let mut wf = load_workflow(&env, request_id).ok_or(CoordinatorError::WorkflowNotFound)?;
 
         if wf.status != WorkflowStatus::Allocated {
             return Err(CoordinatorError::InvalidWorkflowState);
@@ -367,7 +375,11 @@ impl CoordinatorContract {
         save_workflow(&env, &wf);
 
         env.events().publish(
-            (symbol_short!("coord"), symbol_short!("dlvrd")),
+            (
+                symbol_short!("coord"),
+                symbol_short!("dlvrd"),
+                symbol_short!("v1"),
+            ),
             request_id,
         );
 
@@ -384,8 +396,7 @@ impl CoordinatorContract {
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
 
-        let mut wf =
-            load_workflow(&env, request_id).ok_or(CoordinatorError::WorkflowNotFound)?;
+        let mut wf = load_workflow(&env, request_id).ok_or(CoordinatorError::WorkflowNotFound)?;
 
         if !wf.delivery_confirmed || wf.status != WorkflowStatus::Delivered {
             return Err(CoordinatorError::DeliveryNotConfirmed);
@@ -416,7 +427,11 @@ impl CoordinatorContract {
         save_workflow(&env, &wf);
 
         env.events().publish(
-            (symbol_short!("coord"), symbol_short!("settld")),
+            (
+                symbol_short!("coord"),
+                symbol_short!("settld"),
+                symbol_short!("v1"),
+            ),
             (request_id, wf.payment_id),
         );
 
@@ -429,8 +444,7 @@ impl CoordinatorContract {
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
 
-        let mut wf =
-            load_workflow(&env, request_id).ok_or(CoordinatorError::WorkflowNotFound)?;
+        let mut wf = load_workflow(&env, request_id).ok_or(CoordinatorError::WorkflowNotFound)?;
 
         if wf.status == WorkflowStatus::Settled {
             return Err(CoordinatorError::CannotRollbackSettled);
@@ -446,12 +460,7 @@ impl CoordinatorContract {
 
         for i in 0..wf.unit_ids.len() {
             let uid = wf.unit_ids.get(i).unwrap();
-            let _ = inv_client.try_update_status(
-                &uid,
-                &BloodStatus::Available,
-                &inv_admin,
-                &None,
-            );
+            let _ = inv_client.try_update_status(&uid, &BloodStatus::Available, &inv_admin, &None);
         }
 
         let pay_addr: Address = env
@@ -470,7 +479,11 @@ impl CoordinatorContract {
         save_workflow(&env, &wf);
 
         env.events().publish(
-            (symbol_short!("coord"), symbol_short!("rollbk")),
+            (
+                symbol_short!("coord"),
+                symbol_short!("rollbk"),
+                symbol_short!("v1"),
+            ),
             request_id,
         );
 

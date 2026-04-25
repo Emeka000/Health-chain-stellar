@@ -1,5 +1,5 @@
 use crate::types::{AuditEvent, BloodRegisteredEvent, BloodStatus, BloodType, StatusChangeEvent};
-use soroban_sdk::{Address, Env, String, Symbol};
+use soroban_sdk::{symbol_short, Address, Env, String, Symbol};
 
 /// Emit a BloodRegistered event
 ///
@@ -29,10 +29,11 @@ pub fn emit_blood_registered(
         registered_at,
     };
 
-    env.events()
-        .publish((Symbol::new(env, "blood_registered"),), event);
+    env.events().publish(
+        (Symbol::new(env, "blood_registered"), symbol_short!("v1")),
+        event,
+    );
 }
-
 
 pub fn emit_status_change(
     env: &Env,
@@ -54,10 +55,12 @@ pub fn emit_status_change(
         reason,
     };
 
-    env.events()
-        .publish((Symbol::new(env, "status_changed"),), event);
+    env.events().publish(
+        (Symbol::new(env, "status_changed"), symbol_short!("v1")),
+        event,
+    );
 
-    // Canonical audit event — immutable on-chain audit trail
+    // Canonical audit event: immutable on-chain audit trail.
     let audit = AuditEvent {
         unit_id: blood_unit_id,
         previous_status: from_status,
@@ -66,8 +69,10 @@ pub fn emit_status_change(
         timestamp: changed_at,
     };
 
-    env.events()
-        .publish((Symbol::new(env, "bld_unit_chg"),), audit);
+    env.events().publish(
+        (Symbol::new(env, "bld_unit_chg"), symbol_short!("v1")),
+        audit,
+    );
 }
 
 /// Emit an event when an invalid status transition is attempted.
@@ -79,21 +84,24 @@ pub fn emit_invalid_transition(
     to_status: BloodStatus,
 ) {
     env.events().publish(
-        (Symbol::new(env, "invalid_transition"),),
+        (Symbol::new(env, "invalid_transition"), symbol_short!("v1")),
         (blood_unit_id, from_status as u32, to_status as u32),
     );
 }
 
 pub fn emit_blood_reserved(env: &Env, reservation_id: u64, requester: &Address, unit_count: u32) {
     env.events().publish(
-        (Symbol::new(env, "blood_reserved"),),
+        (Symbol::new(env, "blood_reserved"), symbol_short!("v1")),
         (reservation_id, requester.clone(), unit_count),
     );
 }
 
 pub fn emit_reservation_released(env: &Env, reservation_id: u64) {
     env.events().publish(
-        (Symbol::new(env, "reservation_released"),),
+        (
+            Symbol::new(env, "reservation_released"),
+            symbol_short!("v1"),
+        ),
         reservation_id,
     );
 }

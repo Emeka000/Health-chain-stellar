@@ -619,7 +619,12 @@ fn pending_approval_rejects_duplicate_votes() {
     );
 }
 
-fn satisfy_escrow_conditions(env: &Env, contract_id: &Address, payment_id: u64, approver: &Address) {
+fn satisfy_escrow_conditions(
+    env: &Env,
+    contract_id: &Address,
+    payment_id: u64,
+    approver: &Address,
+) {
     env.as_contract(contract_id, || {
         let mut escrow_accounts: Map<u64, EscrowAccount> =
             env.storage().persistent().get(&ESCROW_ACCOUNTS).unwrap();
@@ -630,7 +635,9 @@ fn satisfy_escrow_conditions(env: &Env, contract_id: &Address, payment_id: u64, 
             authorized_approver: Some(approver.clone()),
         };
         escrow_accounts.set(payment_id, escrow);
-        env.storage().persistent().set(&ESCROW_ACCOUNTS, &escrow_accounts);
+        env.storage()
+            .persistent()
+            .set(&ESCROW_ACCOUNTS, &escrow_accounts);
     });
 }
 
@@ -752,7 +759,11 @@ fn high_value_release_requires_threshold_votes_and_prevents_duplicates() {
         let payment = payments.get(payment_id).unwrap();
         assert_eq!(payment.status, PaymentStatus::Completed);
 
-        let stats: PaymentStats = env.storage().persistent().get(&PAYMENT_STATS).unwrap_or(PaymentStats::new());
+        let stats: PaymentStats = env
+            .storage()
+            .persistent()
+            .get(&PAYMENT_STATS)
+            .unwrap_or(PaymentStats::new());
         assert_eq!(stats.count_auto_refunded, 0);
         assert_eq!(stats.total_auto_refunded, 0);
         let approvals: Map<u64, PendingApproval> =
@@ -804,7 +815,10 @@ fn escrow_conditions_block_release_when_unmet() {
 
     // Default conditions: medical_records_verified=false — release must be blocked.
     let result = client.try_propose_release(&payment_id, &admin);
-    assert!(result.is_err(), "release must fail when escrow conditions are unmet");
+    assert!(
+        result.is_err(),
+        "release must fail when escrow conditions are unmet"
+    );
 }
 
 #[test]
@@ -839,7 +853,9 @@ fn escrow_conditions_block_release_before_min_timestamp() {
             authorized_approver: Some(admin.clone()),
         };
         escrow_accounts.set(payment_id, escrow);
-        env.storage().persistent().set(&ESCROW_ACCOUNTS, &escrow_accounts);
+        env.storage()
+            .persistent()
+            .set(&ESCROW_ACCOUNTS, &escrow_accounts);
     });
 
     // Ledger timestamp is 0 < 9_999_999 — must be blocked.
@@ -880,11 +896,16 @@ fn escrow_conditions_block_release_wrong_approver() {
             authorized_approver: Some(other.clone()),
         };
         escrow_accounts.set(payment_id, escrow);
-        env.storage().persistent().set(&ESCROW_ACCOUNTS, &escrow_accounts);
+        env.storage()
+            .persistent()
+            .set(&ESCROW_ACCOUNTS, &escrow_accounts);
     });
 
     let result = client.try_propose_release(&payment_id, &admin);
-    assert!(result.is_err(), "release must fail when approver does not match");
+    assert!(
+        result.is_err(),
+        "release must fail when approver does not match"
+    );
 }
 
 #[test]
@@ -916,7 +937,10 @@ fn escrow_conditions_allow_release_when_all_met() {
 
     env.as_contract(&contract_id, || {
         let payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
-        assert_eq!(payments.get(payment_id).unwrap().status, PaymentStatus::Completed);
+        assert_eq!(
+            payments.get(payment_id).unwrap().status,
+            PaymentStatus::Completed
+        );
     });
 }
 

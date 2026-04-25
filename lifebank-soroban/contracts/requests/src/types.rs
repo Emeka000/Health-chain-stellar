@@ -85,6 +85,8 @@ pub struct BloodRequest {
     pub status: RequestStatus,
     pub assigned_units: Vec<u64>,
     pub fulfilled_quantity_ml: u32,
+    /// Reservation ID on the inventory contract, set when units are reserved.
+    pub reservation_id: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

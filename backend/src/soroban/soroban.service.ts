@@ -30,6 +30,7 @@ import {
 } from '../blockchain/contracts/lifebank-contracts';
 
 import { BlockchainEvent } from './entities/blockchain-event.entity';
+import { CONTRACT_EVENT_SCHEMA_VERSION } from './event-schema-version';
 import {
   ContractError,
   TemperatureThreshold,
@@ -661,7 +662,10 @@ export class SorobanService implements OnModuleInit {
       const event = this.eventRepository.create({
         eventType: params.eventType,
         transactionHash: params.transactionHash,
-        eventData: params.data,
+        eventData: {
+          ...params.data,
+          schemaVersion: CONTRACT_EVENT_SCHEMA_VERSION,
+        },
         blockchainTimestamp: new Date(),
       });
 

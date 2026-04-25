@@ -14,7 +14,16 @@ pub mod storage_lifecycle;
 #[cfg(test)]
 mod test_payments;
 #[cfg(test)]
+mod test_protocol_invariants;
+#[cfg(test)]
 mod test_storage_layout;
+
+/// Current schema version for contract events emitted by this crate.
+///
+/// Events identify their payload schema by appending `symbol_short!("v1")` as
+/// the final topic. Backend/indexer consumers must treat events without this
+/// marker as legacy and must not silently decode future version markers.
+pub const EVENT_SCHEMA_VERSION: u32 = 1;
 
 /// Error types for blood registration and transfer
 #[contracterror]
@@ -62,6 +71,7 @@ pub enum Error {
     NotCurrentCustodian = 29,
     InvalidMultiSigConfig = 30,
     DuplicateApproval = 31,
+    EscrowNotReleasable = 32,
 }
 
 // Alias for issue/docs terminology.
@@ -1022,7 +1032,11 @@ impl HealthChainContract {
         );
 
         env.events().publish(
-            (symbol_short!("blood"), symbol_short!("allocate")),
+            (
+                symbol_short!("blood"),
+                symbol_short!("allocate"),
+                symbol_short!("v1"),
+            ),
             (unit_id, hospital, current_time),
         );
 
@@ -1098,7 +1112,11 @@ impl HealthChainContract {
 
             // Emit event
             env.events().publish(
-                (symbol_short!("blood"), symbol_short!("allocate")),
+                (
+                    symbol_short!("blood"),
+                    symbol_short!("allocate"),
+                    symbol_short!("v1"),
+                ),
                 (unit_id, hospital.clone(), current_time),
             );
 
@@ -1154,8 +1172,14 @@ impl HealthChainContract {
         );
 
         // Emit event
-        env.events()
-            .publish((symbol_short!("blood"), symbol_short!("cancel")), unit_id);
+        env.events().publish(
+            (
+                symbol_short!("blood"),
+                symbol_short!("cancel"),
+                symbol_short!("v1"),
+            ),
+            unit_id,
+        );
 
         Ok(())
     }
@@ -1247,7 +1271,11 @@ impl HealthChainContract {
         );
 
         env.events().publish(
-            (symbol_short!("custody"), symbol_short!("initiate")),
+            (
+                symbol_short!("custody"),
+                symbol_short!("initiate"),
+                symbol_short!("v1"),
+            ),
             custody_event,
         );
 
@@ -1393,7 +1421,11 @@ impl HealthChainContract {
 
         // Emit event
         env.events().publish(
-            (symbol_short!("custody"), symbol_short!("confirm")),
+            (
+                symbol_short!("custody"),
+                symbol_short!("confirm"),
+                symbol_short!("v1"),
+            ),
             custody_event,
         );
 
@@ -1486,7 +1518,11 @@ impl HealthChainContract {
 
         // Emit event
         env.events().publish(
-            (symbol_short!("blood"), symbol_short!("tr_cancel")),
+            (
+                symbol_short!("blood"),
+                symbol_short!("tr_cancel"),
+                symbol_short!("v1"),
+            ),
             (
                 (unit_id, current_time),
                 (symbol_short!("custody"), symbol_short!("cancel")),
@@ -1543,7 +1579,11 @@ impl HealthChainContract {
 
         // Emit event
         env.events().publish(
-            (symbol_short!("blood"), symbol_short!("withdraw")),
+            (
+                symbol_short!("blood"),
+                symbol_short!("withdraw"),
+                symbol_short!("v1"),
+            ),
             (unit_id, reason, current_time),
         );
 
@@ -1605,8 +1645,10 @@ impl HealthChainContract {
             timestamp: current_time,
         };
 
-        env.events()
-            .publish((symbol_short!("quar"), symbol_short!("place")), quarantine_event);
+        env.events().publish(
+            (symbol_short!("quar"), symbol_short!("place")),
+            quarantine_event,
+        );
 
         Ok(())
     }
@@ -1663,8 +1705,10 @@ impl HealthChainContract {
             timestamp: env.ledger().timestamp(),
         };
 
-        env.events()
-            .publish((symbol_short!("quar"), symbol_short!("final")), quarantine_event);
+        env.events().publish(
+            (symbol_short!("quar"), symbol_short!("final")),
+            quarantine_event,
+        );
 
         Ok(())
     }
@@ -1793,8 +1837,14 @@ pub(crate) fn record_status_change(
     env.storage().persistent().set(&history_key, &history);
 
     // Also emit event
-    env.events()
-        .publish((symbol_short!("status"), symbol_short!("change")), event);
+    env.events().publish(
+        (
+            symbol_short!("status"),
+            symbol_short!("change"),
+            symbol_short!("v1"),
+        ),
+        event,
+    );
 }
 
 pub(crate) fn record_request_status_change(
@@ -1814,8 +1864,14 @@ pub(crate) fn record_request_status_change(
         reason,
     };
 
-    env.events()
-        .publish((symbol_short!("blood"), symbol_short!("request")), event);
+    env.events().publish(
+        (
+            symbol_short!("request"),
+            symbol_short!("status"),
+            symbol_short!("v1"),
+        ),
+        event,
+    );
 }
 
 /// Append a custody event_id to the paginated trail for a unit
@@ -2158,8 +2214,14 @@ impl HealthChainContract {
             created_at: current_time,
         };
 
-        env.events()
-            .publish((symbol_short!("blood"), symbol_short!("request")), event);
+        env.events().publish(
+            (
+                symbol_short!("blood"),
+                symbol_short!("request"),
+                symbol_short!("v1"),
+            ),
+            event,
+        );
 
         Ok(request_id)
     }
@@ -2226,7 +2288,9 @@ impl HealthChainContract {
             .get(&ESCROW_ACCOUNTS)
             .unwrap_or(Map::new(&env));
         escrow_accounts.set(payment_id, escrow);
-        env.storage().persistent().set(&ESCROW_ACCOUNTS, &escrow_accounts);
+        env.storage()
+            .persistent()
+            .set(&ESCROW_ACCOUNTS, &escrow_accounts);
 
         payments.set(payment_id, payment);
         env.storage().persistent().set(&PAYMENTS, &payments);
@@ -2258,14 +2322,18 @@ impl HealthChainContract {
             .get(&ESCROW_ACCOUNTS)
             .ok_or(Error::PaymentNotFound)?;
 
-        let mut escrow = escrow_accounts.get(payment_id).ok_or(Error::PaymentNotFound)?;
+        let mut escrow = escrow_accounts
+            .get(payment_id)
+            .ok_or(Error::PaymentNotFound)?;
         escrow.release_conditions = ReleaseConditions {
             medical_records_verified,
             min_timestamp,
             authorized_approver,
         };
         escrow_accounts.set(payment_id, escrow);
-        env.storage().persistent().set(&ESCROW_ACCOUNTS, &escrow_accounts);
+        env.storage()
+            .persistent()
+            .set(&ESCROW_ACCOUNTS, &escrow_accounts);
         Ok(())
     }
 
@@ -2348,7 +2416,9 @@ impl HealthChainContract {
             .persistent()
             .get(&ESCROW_ACCOUNTS)
             .unwrap_or(Map::new(&env));
-        let escrow = escrow_accounts.get(payment_id).ok_or(Error::PaymentNotFound)?;
+        let escrow = escrow_accounts
+            .get(payment_id)
+            .ok_or(Error::PaymentNotFound)?;
         let current_timestamp = env.ledger().timestamp();
         if !escrow.can_release(current_timestamp, Some(&approver)) {
             return Err(Error::EscrowNotReleasable);
@@ -2504,7 +2574,11 @@ impl HealthChainContract {
 
         // Emit DisputeRaisedEvent
         env.events().publish(
-            (symbol_short!("dispute"), symbol_short!("raised")),
+            (
+                symbol_short!("dispute"),
+                symbol_short!("raised"),
+                symbol_short!("v1"),
+            ),
             DisputeRaisedEvent {
                 dispute_id,
                 payment_id,
@@ -2589,7 +2663,11 @@ impl HealthChainContract {
 
         // Emit DisputeResolvedEvent
         env.events().publish(
-            (symbol_short!("dispute"), symbol_short!("resolved")),
+            (
+                symbol_short!("dispute"),
+                symbol_short!("resolved"),
+                symbol_short!("v1"),
+            ),
             DisputeResolvedEvent {
                 dispute_id,
                 payment_id: dispute.payment_id,
@@ -2786,7 +2864,11 @@ impl HealthChainContract {
             );
 
             env.events().publish(
-                (symbol_short!("blood"), symbol_short!("allocate")),
+                (
+                    symbol_short!("blood"),
+                    symbol_short!("allocate"),
+                    symbol_short!("v1"),
+                ),
                 (unit_id, request.hospital_id.clone(), current_time),
             );
         }
@@ -2815,7 +2897,11 @@ impl HealthChainContract {
         );
 
         env.events().publish(
-            (symbol_short!("request"), symbol_short!("approve")),
+            (
+                symbol_short!("request"),
+                symbol_short!("approve"),
+                symbol_short!("v1"),
+            ),
             RequestApprovedEvent {
                 request_id,
                 blood_bank: bank_id,
@@ -2930,7 +3016,7 @@ impl HealthChainContract {
             return Err(Error::InvalidStatus);
         }
 
-        // Update blood units to Delivered status
+        // Validate delivery quantity before mutating any unit or request state.
         let mut units: Map<u64, BloodUnit> = env
             .storage()
             .persistent()
@@ -2941,21 +3027,35 @@ impl HealthChainContract {
 
         for i in 0..unit_ids.len() {
             let unit_id = unit_ids.get(i).unwrap();
-            let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
+            let unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
 
             // Verify unit is reserved for this hospital
             if unit.recipient_hospital != Some(request.hospital_id.clone()) {
                 return Err(Error::Unauthorized);
             }
 
+            if unit.status != BloodStatus::Reserved && unit.status != BloodStatus::InTransit {
+                return Err(Error::InvalidStatus);
+            }
+
+            delivered_quantity = delivered_quantity
+                .checked_add(unit.quantity)
+                .ok_or(Error::ArithmeticError)?;
+        }
+
+        if delivered_quantity > request.quantity_ml {
+            return Err(Error::InvalidQuantity);
+        }
+
+        for i in 0..unit_ids.len() {
+            let unit_id = unit_ids.get(i).unwrap();
+            let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
+
             // Update to delivered
             let old_status = unit.status;
             unit.status = BloodStatus::Delivered;
             let current_time = env.ledger().timestamp();
             unit.delivery_timestamp = Some(current_time);
-            delivered_quantity = delivered_quantity
-                .checked_add(unit.quantity)
-                .ok_or(Error::ArithmeticError)?;
 
             units.set(unit_id, unit.clone());
 
@@ -2973,26 +3073,39 @@ impl HealthChainContract {
 
         // Update request
         let old_status = request.status;
-        request.status = RequestStatus::Fulfilled;
+        request.status = if delivered_quantity == request.quantity_ml {
+            RequestStatus::Fulfilled
+        } else {
+            RequestStatus::InProgress
+        };
         request.fulfilled_quantity_ml = delivered_quantity;
-        request.fulfillment_timestamp = Some(env.ledger().timestamp());
+        request.fulfillment_timestamp = if request.status == RequestStatus::Fulfilled {
+            Some(env.ledger().timestamp())
+        } else {
+            None
+        };
         request.reserved_unit_ids = unit_ids.clone();
 
-        requests.set(request_id, request);
+        requests.set(request_id, request.clone());
         env.storage().persistent().set(&REQUESTS, &requests);
 
-        // Record and emit status change
-        record_request_status_change(
-            &env,
-            request_id,
-            old_status,
-            RequestStatus::Fulfilled,
-            bank_id.clone(),
-            None,
-        );
+        if old_status != request.status {
+            record_request_status_change(
+                &env,
+                request_id,
+                old_status,
+                request.status,
+                bank_id.clone(),
+                None,
+            );
+        }
 
         env.events().publish(
-            (symbol_short!("request"), symbol_short!("fulfill")),
+            (
+                symbol_short!("request"),
+                symbol_short!("fulfill"),
+                symbol_short!("v1"),
+            ),
             RequestFulfilledEvent {
                 request_id,
                 blood_bank: bank_id,
@@ -3310,8 +3423,14 @@ impl HealthChainContract {
 
         env.storage().persistent().set(&org_key, &organization);
 
-        env.events()
-            .publish((symbol_short!("org"), symbol_short!("reg")), org_id);
+        env.events().publish(
+            (
+                symbol_short!("org"),
+                symbol_short!("reg"),
+                symbol_short!("v1"),
+            ),
+            org_id,
+        );
 
         Ok(())
     }
@@ -3484,20 +3603,14 @@ impl HealthChainContract {
     ///
     /// Returns `None` if the history has not been archived yet (full history
     /// is still available via `get_transfer_history`).
-    pub fn get_history_summary(
-        env: Env,
-        unit_id: u64,
-    ) -> Option<ArchivedHistorySummary> {
+    pub fn get_history_summary(env: Env, unit_id: u64) -> Option<ArchivedHistorySummary> {
         storage_lifecycle::get_archived_history_summary(&env, unit_id)
     }
 
     /// Retrieve the archived custody summary for a unit.
     ///
     /// Returns `None` if custody events have not been archived yet.
-    pub fn get_custody_summary(
-        env: Env,
-        unit_id: u64,
-    ) -> Option<ArchivedCustodySummary> {
+    pub fn get_custody_summary(env: Env, unit_id: u64) -> Option<ArchivedCustodySummary> {
         storage_lifecycle::get_archived_custody_summary(&env, unit_id)
     }
 }
@@ -3555,7 +3668,14 @@ mod test {
         let expiration = current_time + (7 * 86400);
 
         env.mock_all_auths();
-        client.register_blood(&hospital, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
+        client.register_blood(
+            &hospital,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &expiration,
+            &None,
+        );
     }
 
     #[test]
@@ -3668,7 +3788,14 @@ mod test {
 
         // Attempt to register blood using revoked bank (should fail Unauthorized)
         env.mock_all_auths();
-        client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &100, &expiration, &None);
+        client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &100,
+            &expiration,
+            &None,
+        );
 
         // Attempt to allocate using revoked bank (should also fail Unauthorized)
         env.mock_all_auths();
@@ -4751,12 +4878,15 @@ mod test {
 
         let (event_contract_id, topics, data) = events.get(0).unwrap();
         assert_eq!(event_contract_id, contract_id);
-        assert_eq!(topics.len(), 2);
+        assert_eq!(topics.len(), 3);
 
         let topic0: Symbol = TryFromVal::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
         let topic1: Symbol = TryFromVal::try_from_val(&env, &topics.get(1).unwrap()).unwrap();
+        let version_topic: Symbol =
+            TryFromVal::try_from_val(&env, &topics.get(2).unwrap()).unwrap();
         assert_eq!(topic0, symbol_short!("blood"));
         assert_eq!(topic1, symbol_short!("request"));
+        assert_eq!(version_topic, symbol_short!("v1"));
 
         let event: RequestCreatedEvent = TryFromVal::try_from_val(&env, &data).unwrap();
         assert_eq!(event.request_id, request_id);
@@ -4793,8 +4923,13 @@ mod test {
         // 1. Verify the Contract ID
         assert_eq!(last_event.0, contract_id);
 
-        // 2. Verify the Topics (blood, request)
-        let expected_topics = (symbol_short!("blood"), symbol_short!("request")).into_val(&env);
+        // 2. Verify the Topics (blood, request, v1)
+        let expected_topics = (
+            symbol_short!("blood"),
+            symbol_short!("request"),
+            symbol_short!("v1"),
+        )
+            .into_val(&env);
         assert_eq!(last_event.1, expected_topics);
 
         // 3. Verify the Data (Optional: Deserialize it to be sure)
@@ -4802,6 +4937,35 @@ mod test {
         let event_data: RequestCreatedEvent = last_event.2.into_val(&env);
         assert_eq!(event_data.request_id, req_id);
         assert_eq!(event_data.hospital_id, hospital);
+    }
+
+    #[test]
+    fn test_event_schema_version_topic_distinguishes_current_from_legacy() {
+        let env = Env::default();
+        let (_, _, hospital, client) = setup_contract_with_hospital(&env);
+
+        env.mock_all_auths();
+        client.create_request(
+            &hospital,
+            &BloodType::BPositive,
+            &300,
+            &UrgencyLevel::Critical,
+            &(env.ledger().timestamp() + 3600),
+            &String::from_str(&env, "ER_Room"),
+        );
+
+        let (_, topics, _) = env.events().all().last().unwrap();
+        let legacy_topics = (symbol_short!("blood"), symbol_short!("request")).into_val(&env);
+        let current_topics = (
+            symbol_short!("blood"),
+            symbol_short!("request"),
+            symbol_short!("v1"),
+        )
+            .into_val(&env);
+
+        assert_ne!(topics, legacy_topics);
+        assert_eq!(topics, current_topics);
+        assert_eq!(EVENT_SCHEMA_VERSION, 1);
     }
 
     #[test]
@@ -5299,6 +5463,174 @@ mod test {
     }
 
     #[test]
+    fn test_fulfill_request_rejects_over_delivery_before_mutation() {
+        let env = Env::default();
+        let (contract_id, _, hospital, client) = setup_contract_with_hospital(&env);
+
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (7 * 86400);
+
+        let unit_id_1 = client.register_blood(
+            &bank,
+            &BloodType::APositive,
+            &BloodComponent::WholeBlood,
+            &300,
+            &expiration,
+            &Some(symbol_short!("over1")),
+        );
+        let unit_id_2 = client.register_blood(
+            &bank,
+            &BloodType::APositive,
+            &BloodComponent::WholeBlood,
+            &300,
+            &expiration,
+            &Some(symbol_short!("over2")),
+        );
+
+        client.allocate_blood(&bank, &unit_id_1, &hospital);
+        client.allocate_blood(&bank, &unit_id_2, &hospital);
+
+        let request_id = client.create_request(
+            &hospital,
+            &BloodType::APositive,
+            &500,
+            &UrgencyLevel::Urgent,
+            &(current_time + 3600),
+            &String::from_str(&env, "Ward O"),
+        );
+        client.update_request_status(&request_id, &RequestStatus::Approved);
+
+        let unit_ids = vec![&env, unit_id_1, unit_id_2];
+        let result = client.try_fulfill_request(&bank, &request_id, &unit_ids);
+        assert!(matches!(result, Err(Ok(Error::InvalidQuantity))));
+
+        let unit1 = client.get_blood_unit(&unit_id_1);
+        let unit2 = client.get_blood_unit(&unit_id_2);
+        assert_eq!(unit1.status, BloodStatus::Reserved);
+        assert_eq!(unit2.status, BloodStatus::Reserved);
+        assert!(unit1.delivery_timestamp.is_none());
+        assert!(unit2.delivery_timestamp.is_none());
+
+        let request: BloodRequest = env.as_contract(&contract_id, || {
+            let requests: Map<u64, BloodRequest> =
+                env.storage().persistent().get(&REQUESTS).unwrap();
+            requests.get(request_id).unwrap()
+        });
+        assert_eq!(request.status, RequestStatus::Approved);
+        assert_eq!(request.fulfilled_quantity_ml, 0);
+        assert!(request.fulfillment_timestamp.is_none());
+    }
+
+    #[test]
+    fn test_fulfill_request_exact_delivery_marks_fulfilled() {
+        let env = Env::default();
+        let (contract_id, _, hospital, client) = setup_contract_with_hospital(&env);
+
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (7 * 86400);
+
+        let unit_id_1 = client.register_blood(
+            &bank,
+            &BloodType::ONegative,
+            &BloodComponent::WholeBlood,
+            &250,
+            &expiration,
+            &Some(symbol_short!("exact1")),
+        );
+        let unit_id_2 = client.register_blood(
+            &bank,
+            &BloodType::ONegative,
+            &BloodComponent::WholeBlood,
+            &250,
+            &expiration,
+            &Some(symbol_short!("exact2")),
+        );
+
+        client.allocate_blood(&bank, &unit_id_1, &hospital);
+        client.allocate_blood(&bank, &unit_id_2, &hospital);
+
+        let request_id = client.create_request(
+            &hospital,
+            &BloodType::ONegative,
+            &500,
+            &UrgencyLevel::Urgent,
+            &(current_time + 3600),
+            &String::from_str(&env, "Ward E"),
+        );
+        client.update_request_status(&request_id, &RequestStatus::Approved);
+
+        let unit_ids = vec![&env, unit_id_1, unit_id_2];
+        client.fulfill_request(&bank, &request_id, &unit_ids);
+
+        let request: BloodRequest = env.as_contract(&contract_id, || {
+            let requests: Map<u64, BloodRequest> =
+                env.storage().persistent().get(&REQUESTS).unwrap();
+            requests.get(request_id).unwrap()
+        });
+        assert_eq!(request.status, RequestStatus::Fulfilled);
+        assert_eq!(request.fulfilled_quantity_ml, 500);
+        assert!(request.fulfillment_timestamp.is_some());
+    }
+
+    #[test]
+    fn test_fulfill_request_partial_delivery_remains_in_progress() {
+        let env = Env::default();
+        let (contract_id, _, hospital, client) = setup_contract_with_hospital(&env);
+
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (7 * 86400);
+
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::BPositive,
+            &BloodComponent::WholeBlood,
+            &250,
+            &expiration,
+            &Some(symbol_short!("part1")),
+        );
+
+        client.allocate_blood(&bank, &unit_id, &hospital);
+
+        let request_id = client.create_request(
+            &hospital,
+            &BloodType::BPositive,
+            &500,
+            &UrgencyLevel::Urgent,
+            &(current_time + 3600),
+            &String::from_str(&env, "Ward P"),
+        );
+        client.update_request_status(&request_id, &RequestStatus::Approved);
+
+        let unit_ids = vec![&env, unit_id];
+        client.fulfill_request(&bank, &request_id, &unit_ids);
+
+        let unit = client.get_blood_unit(&unit_id);
+        assert_eq!(unit.status, BloodStatus::Delivered);
+        assert!(unit.delivery_timestamp.is_some());
+
+        let request: BloodRequest = env.as_contract(&contract_id, || {
+            let requests: Map<u64, BloodRequest> =
+                env.storage().persistent().get(&REQUESTS).unwrap();
+            requests.get(request_id).unwrap()
+        });
+        assert_eq!(request.status, RequestStatus::InProgress);
+        assert_eq!(request.fulfilled_quantity_ml, 250);
+        assert!(request.fulfillment_timestamp.is_none());
+    }
+
+    #[test]
     #[should_panic(expected = "Error(Contract, #6)")] // InvalidStatus
     fn test_fulfill_request_invalid_status_pending() {
         let env = Env::default();
@@ -5394,7 +5726,7 @@ mod test {
 
         let unit_ids = vec![&env, unit_id_1, unit_id_2];
         env.mock_all_auths();
-        client.approve_request(&bank, &request_id, &unit_ids);
+        client.update_request_status(&request_id, &RequestStatus::Approved);
 
         env.as_contract(&contract_id, || {
             let mut units: Map<u64, BloodUnit> = env
@@ -5574,7 +5906,6 @@ mod test {
         client.fulfill_request(&bank, &999u64, &unit_ids);
     }
 
-
     // ======================================================
     // Custodian Check Tests (#101)
     // ======================================================
@@ -5590,15 +5921,14 @@ mod test {
 
         let current_time = env.ledger().timestamp();
         let expiration = current_time + (7 * 86400);
-        let unit_id =
-            client.register_blood(
-                &bank,
-                &BloodType::OPositive,
-                &BloodComponent::WholeBlood,
-                &450,
-                &expiration,
-                &None,
-            );
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &expiration,
+            &None,
+        );
         client.allocate_blood(&bank, &unit_id, &hospital);
 
         // Current custodian (bank) can initiate transfer
@@ -5621,15 +5951,14 @@ mod test {
         let current_time = env.ledger().timestamp();
         let expiration = current_time + (7 * 86400);
         // bank_a registers and allocates the unit — bank_a is the custodian
-        let unit_id =
-            client.register_blood(
-                &bank_a,
-                &BloodType::OPositive,
-                &BloodComponent::WholeBlood,
-                &450,
-                &expiration,
-                &None,
-            );
+        let unit_id = client.register_blood(
+            &bank_a,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &expiration,
+            &None,
+        );
         client.allocate_blood(&bank_a, &unit_id, &hospital);
 
         // bank_b is authorized but is NOT the custodian — must fail
@@ -5649,15 +5978,14 @@ mod test {
 
         let current_time = env.ledger().timestamp();
         let expiration = current_time + (7 * 86400);
-        let unit_id =
-            client.register_blood(
-                &bank,
-                &BloodType::OPositive,
-                &BloodComponent::WholeBlood,
-                &450,
-                &expiration,
-                &None,
-            );
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &expiration,
+            &None,
+        );
         client.allocate_blood(&bank, &unit_id, &hospital);
 
         // Completely unregistered address — must fail with Unauthorized, not NotCurrentCustodian
@@ -5983,7 +6311,14 @@ mod test {
 
         // Register blood without donor_id (anonymous)
         env.mock_all_auths();
-        client.register_blood(&bank, &BloodType::ABPositive, &BloodComponent::WholeBlood, &300, &expiration, &None);
+        client.register_blood(
+            &bank,
+            &BloodType::ABPositive,
+            &BloodComponent::WholeBlood,
+            &300,
+            &expiration,
+            &None,
+        );
 
         // Anonymous donors are stored as "ANON"
         let units = client.get_units_by_donor(&symbol_short!("ANON"));
@@ -6008,7 +6343,14 @@ mod test {
 
         // Register and allocate blood
         env.mock_all_auths();
-        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &expiration,
+            &None,
+        );
 
         env.mock_all_auths();
         client.allocate_blood(&bank, &unit_id, &hospital);
@@ -6045,7 +6387,14 @@ mod test {
         let expiration = current_time + (7 * 86400);
 
         env.mock_all_auths();
-        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &expiration,
+            &None,
+        );
 
         let mut event_ids = vec![&env];
 
@@ -6100,7 +6449,14 @@ mod test {
 
         // Register blood
         env.mock_all_auths();
-        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &expiration,
+            &None,
+        );
 
         let mut all_event_ids = vec![&env];
 
@@ -6167,7 +6523,14 @@ mod test {
         let expiration = current_time + (30 * 86400);
 
         env.mock_all_auths();
-        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &expiration,
+            &None,
+        );
 
         for i in 0..100 {
             env.as_contract(&contract_id, || {
@@ -6219,7 +6582,14 @@ mod test {
 
         // Register blood but don't create any custody events
         env.mock_all_auths();
-        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &expiration,
+            &None,
+        );
 
         // Check custody trail - should be empty
         let trail = client.get_custody_trail(&unit_id, &0);
@@ -6245,7 +6615,14 @@ mod test {
 
         // Register and create one custody event
         env.mock_all_auths();
-        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &expiration,
+            &None,
+        );
 
         env.mock_all_auths();
         client.allocate_blood(&bank, &unit_id, &hospital);
@@ -6275,7 +6652,14 @@ mod test {
 
         // Register blood
         env.mock_all_auths();
-        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &expiration,
+            &None,
+        );
 
         // Migrate (should initialize empty metadata)
         env.mock_all_auths();
@@ -6308,7 +6692,14 @@ mod test {
         let expiration = current_time + (7 * 86400);
 
         env.mock_all_auths();
-        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &expiration,
+            &None,
+        );
 
         // With mock_all_auths, this will succeed even without admin
         // This test documents that behavior
@@ -6328,7 +6719,14 @@ mod test {
         let expiration = current_time + (30 * 86400);
 
         env.mock_all_auths();
-        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &expiration,
+            &None,
+        );
 
         for i in 0..20 {
             env.as_contract(&contract_id, || {
@@ -6481,7 +6879,7 @@ mod test {
         let events = env.events().all();
         assert!(!events.is_empty());
         let (_, topics, _) = events.last().unwrap();
-        assert_eq!(topics.len(), 2);
+        assert_eq!(topics.len(), 3);
         assert_eq!(
             Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
             symbol_short!("org")
@@ -6489,6 +6887,10 @@ mod test {
         assert_eq!(
             Symbol::try_from_val(&env, &topics.get(1).unwrap()).unwrap(),
             symbol_short!("reg")
+        );
+        assert_eq!(
+            Symbol::try_from_val(&env, &topics.get(2).unwrap()).unwrap(),
+            symbol_short!("v1")
         );
 
         // Verify organization
@@ -6498,7 +6900,7 @@ mod test {
         let events = env.events().all();
         assert!(!events.is_empty());
         let (_, topics, _) = events.last().unwrap();
-        assert_eq!(topics.len(), 2);
+        assert_eq!(topics.len(), 3);
         assert_eq!(
             Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
             symbol_short!("org")
@@ -6506,6 +6908,10 @@ mod test {
         assert_eq!(
             Symbol::try_from_val(&env, &topics.get(1).unwrap()).unwrap(),
             symbol_short!("verified")
+        );
+        assert_eq!(
+            Symbol::try_from_val(&env, &topics.get(2).unwrap()).unwrap(),
+            symbol_short!("v1")
         );
 
         // Unverify organization
@@ -6516,7 +6922,7 @@ mod test {
         let events = env.events().all();
         assert!(!events.is_empty());
         let (_, topics, _) = events.last().unwrap();
-        assert_eq!(topics.len(), 2);
+        assert_eq!(topics.len(), 3);
         assert_eq!(
             Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
             symbol_short!("org")
@@ -6524,6 +6930,10 @@ mod test {
         assert_eq!(
             Symbol::try_from_val(&env, &topics.get(1).unwrap()).unwrap(),
             symbol_short!("unverif")
+        );
+        assert_eq!(
+            Symbol::try_from_val(&env, &topics.get(2).unwrap()).unwrap(),
+            symbol_short!("v1")
         );
     }
 

@@ -1,9 +1,9 @@
 #![no_std]
-use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Map,
-    String, Vec,
-};
 use soroban_sdk::token;
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Map, String,
+    Vec,
+};
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -182,7 +182,10 @@ fn status_index_key(status: PaymentStatus) -> (u32, &'static str) {
 }
 
 fn get_counter(env: &Env) -> u64 {
-    env.storage().instance().get(&PAYMENT_COUNTER).unwrap_or(0u64)
+    env.storage()
+        .instance()
+        .get(&PAYMENT_COUNTER)
+        .unwrap_or(0u64)
 }
 
 fn set_counter(env: &Env, val: u64) {
@@ -190,7 +193,10 @@ fn set_counter(env: &Env, val: u64) {
 }
 
 fn get_pledge_counter(env: &Env) -> u64 {
-    env.storage().instance().get(&PLEDGE_COUNTER).unwrap_or(0u64)
+    env.storage()
+        .instance()
+        .get(&PLEDGE_COUNTER)
+        .unwrap_or(0u64)
 }
 
 fn set_pledge_counter(env: &Env, val: u64) {
@@ -198,7 +204,9 @@ fn set_pledge_counter(env: &Env, val: u64) {
 }
 
 fn store_payment(env: &Env, payment: &Payment) {
-    env.storage().persistent().set(&payment_key(payment.id), payment);
+    env.storage()
+        .persistent()
+        .set(&payment_key(payment.id), payment);
 }
 
 fn load_payment(env: &Env, id: u64) -> Option<Payment> {
@@ -206,7 +214,9 @@ fn load_payment(env: &Env, id: u64) -> Option<Payment> {
 }
 
 fn store_pledge(env: &Env, pledge: &DonationPledge) {
-    env.storage().persistent().set(&pledge_key(pledge.id), pledge);
+    env.storage()
+        .persistent()
+        .set(&pledge_key(pledge.id), pledge);
 }
 
 fn load_pledge(env: &Env, id: u64) -> Option<DonationPledge> {
@@ -231,21 +241,33 @@ fn load_vesting(env: &Env, donor: &Address) -> Option<VestingSchedule> {
 
 fn index_by_payer(env: &Env, payer: &Address, id: u64) {
     let key = payer_index_key(payer);
-    let mut ids: Vec<u64> = env.storage().persistent().get(&key).unwrap_or(Vec::new(env));
+    let mut ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env));
     ids.push_back(id);
     env.storage().persistent().set(&key, &ids);
 }
 
 fn index_by_payee(env: &Env, payee: &Address, id: u64) {
     let key = payee_index_key(payee);
-    let mut ids: Vec<u64> = env.storage().persistent().get(&key).unwrap_or(Vec::new(env));
+    let mut ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env));
     ids.push_back(id);
     env.storage().persistent().set(&key, &ids);
 }
 
 fn index_by_status(env: &Env, status: PaymentStatus, id: u64) {
     let key = status_index_key(status);
-    let mut ids: Vec<u64> = env.storage().persistent().get(&key).unwrap_or(Vec::new(env));
+    let mut ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env));
     ids.push_back(id);
     env.storage().persistent().set(&key, &ids);
 }
@@ -263,7 +285,11 @@ fn index_by_request(env: &Env, request_id: u64, payment_id: u64) {
 /// Remove `id` from the persistent Vec stored under the given status index key.
 fn remove_from_status_index(env: &Env, status: PaymentStatus, id: u64) {
     let key = status_index_key(status);
-    let ids: Vec<u64> = env.storage().persistent().get(&key).unwrap_or(Vec::new(env));
+    let ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env));
     let mut new_ids: Vec<u64> = Vec::new(env);
     for i in 0..ids.len() {
         let existing = ids.get(i).unwrap();
@@ -277,26 +303,24 @@ fn remove_from_status_index(env: &Env, status: PaymentStatus, id: u64) {
 // ── Stats helpers ──────────────────────────────────────────────────────────────
 
 fn load_stats(env: &Env) -> PaymentStats {
-    env.storage().instance().get(&STATS_KEY).unwrap_or(PaymentStats {
-        total_locked: 0,
-        total_released: 0,
-        total_refunded: 0,
-        count_locked: 0,
-        count_released: 0,
-        count_refunded: 0,
-    })
+    env.storage()
+        .instance()
+        .get(&STATS_KEY)
+        .unwrap_or(PaymentStats {
+            total_locked: 0,
+            total_released: 0,
+            total_refunded: 0,
+            count_locked: 0,
+            count_released: 0,
+            count_refunded: 0,
+        })
 }
 
 fn store_stats(env: &Env, stats: &PaymentStats) {
     env.storage().instance().set(&STATS_KEY, stats);
 }
 
-fn update_stats_on_transition(
-    env: &Env,
-    amount: i128,
-    old: PaymentStatus,
-    new: PaymentStatus,
-) {
+fn update_stats_on_transition(env: &Env, amount: i128, old: PaymentStatus, new: PaymentStatus) {
     let mut stats = load_stats(env);
     match old {
         PaymentStatus::Locked => {
@@ -422,7 +446,11 @@ impl PaymentContract {
 
     pub fn pause(env: Env, admin: Address) -> Result<(), Error> {
         admin.require_auth();
-        let stored: Address = env.storage().instance().get(&ADMIN_KEY).ok_or(Error::Unauthorized)?;
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&ADMIN_KEY)
+            .ok_or(Error::Unauthorized)?;
         if admin != stored {
             return Err(Error::Unauthorized);
         }
@@ -432,7 +460,11 @@ impl PaymentContract {
 
     pub fn unpause(env: Env, admin: Address) -> Result<(), Error> {
         admin.require_auth();
-        let stored: Address = env.storage().instance().get(&ADMIN_KEY).ok_or(Error::Unauthorized)?;
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&ADMIN_KEY)
+            .ok_or(Error::Unauthorized)?;
         if admin != stored {
             return Err(Error::Unauthorized);
         }
@@ -519,7 +551,15 @@ impl PaymentContract {
         index_by_status(&env, PaymentStatus::Pending, id);
         index_by_request(&env, request_id, id);
 
-        env.events().publish((symbol_short!("payment"), symbol_short!("created")), id);
+        env.events().publish(
+            (
+                symbol_short!("payment"),
+                symbol_short!("created"),
+                symbol_short!("v1"),
+            ),
+            id,
+        );
+
         Ok(id)
     }
 
@@ -605,18 +645,22 @@ impl PaymentContract {
         index_by_request(&env, request_id, id);
         update_stats_on_transition(&env, amount, PaymentStatus::Pending, PaymentStatus::Locked);
 
-        env.events().publish((symbol_short!("payment"), symbol_short!("escrowed")), id);
+        env.events().publish(
+            (
+                symbol_short!("payment"),
+                symbol_short!("escrowed"),
+                symbol_short!("v1"),
+            ),
+            id,
+        );
+
         Ok(id)
     }
 
     /// Release escrowed funds to the payee. Admin only.
     /// Transfers the locked amount from the contract to the payee and marks
     /// the payment as Released.
-    pub fn release_escrow(
-        env: Env,
-        caller: Address,
-        payment_id: u64,
-    ) -> Result<(), Error> {
+    pub fn release_escrow(env: Env, caller: Address, payment_id: u64) -> Result<(), Error> {
         caller.require_auth();
         Self::require_not_paused(&env)?;
         Self::require_admin(&env, &caller)?;
@@ -654,11 +698,7 @@ impl PaymentContract {
     /// Refund escrowed funds to the payer. Admin only.
     /// Transfers the locked amount from the contract back to the payer and
     /// marks the payment as Refunded.
-    pub fn refund_escrow(
-        env: Env,
-        caller: Address,
-        payment_id: u64,
-    ) -> Result<(), Error> {
+    pub fn refund_escrow(env: Env, caller: Address, payment_id: u64) -> Result<(), Error> {
         caller.require_auth();
         Self::require_not_paused(&env)?;
         Self::require_admin(&env, &caller)?;
@@ -725,8 +765,12 @@ impl PaymentContract {
         index_by_status(&env, PaymentStatus::Disputed, payment_id);
         update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Disputed);
         env.events().publish(
-            (symbol_short!("payment"), symbol_short!("disputed")),
-            (payment_id, dispute_reason_to_code(reason)),
+            (
+                symbol_short!("payment"),
+                symbol_short!("disputed"),
+                symbol_short!("v1"),
+            ),
+            (payment_id, dispute_reason_to_code(reason), case_id),
         );
         Ok(())
     }
@@ -740,7 +784,11 @@ impl PaymentContract {
         payment.updated_at = env.ledger().timestamp();
         store_payment(&env, &payment);
         env.events().publish(
-            (symbol_short!("payment"), symbol_short!("resolved")),
+            (
+                symbol_short!("payment"),
+                symbol_short!("resolved"),
+                symbol_short!("v1"),
+            ),
             payment_id,
         );
         Ok(())
@@ -814,16 +862,41 @@ impl PaymentContract {
     pub fn get_payment_timeline(env: Env, page: u32, page_size: u32) -> PaymentPage {
         let page_size = if page_size == 0 { 20 } else { page_size };
         let total = get_counter(&env);
-        let start = (page as u64) * (page_size as u64) + 1;
-        let end = (start + page_size as u64 - 1).min(total);
 
-        let mut items: Vec<Payment> = Vec::new(&env);
-        for id in start..=end {
+        let mut all: Vec<Payment> = Vec::new(&env);
+        for id in 1..=total {
             if let Some(p) = load_payment(&env, id) {
-                items.push_back(p);
+                all.push_back(p);
             }
         }
-        PaymentPage { items, total, page, page_size }
+
+        let len = all.len();
+        for i in 0..len {
+            for j in 0..len.saturating_sub(i + 1) {
+                let current = all.get(j).unwrap();
+                let next = all.get(j + 1).unwrap();
+                if current.created_at > next.created_at {
+                    all.set(j, next);
+                    all.set(j + 1, current);
+                }
+            }
+        }
+
+        let start = (page as u64) * (page_size as u64);
+        let end = (start + page_size as u64).min(total);
+        let mut items: Vec<Payment> = Vec::new(&env);
+        if start < total {
+            for i in start..end {
+                items.push_back(all.get(i as u32).unwrap());
+            }
+        }
+
+        PaymentPage {
+            items,
+            total,
+            page,
+            page_size,
+        }
     }
 
     pub fn get_payment_count(env: Env) -> u64 {
@@ -865,7 +938,16 @@ impl PaymentContract {
             created_at: env.ledger().timestamp(),
         };
         store_pledge(&env, &pledge);
-        env.events().publish((symbol_short!("pledge"), symbol_short!("create")), id);
+
+        env.events().publish(
+            (
+                symbol_short!("pledge"),
+                symbol_short!("create"),
+                symbol_short!("v1"),
+            ),
+            id,
+        );
+
         Ok(id)
     }
 
@@ -992,7 +1074,9 @@ impl PaymentContract {
     pub fn set_dispute_timeout(env: Env, admin: Address, timeout_secs: u64) -> Result<(), Error> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
-        env.storage().instance().set(&DISPUTE_TIMEOUT, &timeout_secs);
+        env.storage()
+            .instance()
+            .set(&DISPUTE_TIMEOUT, &timeout_secs);
         Ok(())
     }
 
@@ -1025,9 +1109,15 @@ impl PaymentContract {
                 Some(p) => p,
                 None => continue,
             };
-            if payment.status != PaymentStatus::Disputed { continue; }
-            if payment.token.is_none() { continue; }
-            if now < payment.updated_at + timeout { continue; }
+            if payment.status != PaymentStatus::Disputed {
+                continue;
+            }
+            if payment.token.is_none() {
+                continue;
+            }
+            if now < payment.updated_at + timeout {
+                continue;
+            }
 
             let token_client = token::Client::new(&env, payment.token.as_ref().unwrap());
             token_client.transfer(
@@ -1081,7 +1171,12 @@ impl PaymentContract {
             }
         }
 
-        PaymentPage { items, total, page, page_size }
+        PaymentPage {
+            items,
+            total,
+            page,
+            page_size,
+        }
     }
 }
 

@@ -251,7 +251,14 @@ fn test_expire_unit_updates_status_field_no_deletion() {
 
     // Register unit with short expiration
     let expiration = env.ledger().timestamp() + 86400; // 1 day
-    let unit_id = client.register_blood(&bank, &BloodType::ONegative, &BloodComponent::WholeBlood, &250, &expiration, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &BloodType::ONegative,
+        &BloodComponent::WholeBlood,
+        &250,
+        &expiration,
+        &None,
+    );
 
     // Fast-forward time past expiration
     env.ledger().with_mut(|li| {

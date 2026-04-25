@@ -18,6 +18,17 @@ mod validation;
 
 use soroban_sdk::{contract, contractimpl, Address, Env};
 
+mod inventory_client {
+    use soroban_sdk::{contractclient, Env};
+
+    #[contractclient(name = "InventoryContractClient")]
+    pub trait InventoryContractInterface {
+        fn release_reservation(env: Env, reservation_id: u64);
+    }
+}
+
+use inventory_client::InventoryContractClient;
+
 #[contract]
 pub struct RequestContract;
 
@@ -92,6 +103,7 @@ impl RequestContract {
             status: RequestStatus::Pending,
             assigned_units: soroban_sdk::Vec::new(&env),
             fulfilled_quantity_ml: 0,
+            reservation_id: None,
         };
 
         storage::set_request(&env, &request);
@@ -135,6 +147,7 @@ impl RequestContract {
                 status: RequestStatus::Pending,
                 assigned_units: soroban_sdk::Vec::new(&env),
                 fulfilled_quantity_ml: 0,
+                reservation_id: None,
             };
             storage::set_request(&env, &request);
             events::emit_request_created(&env, &request);
@@ -168,6 +181,12 @@ impl RequestContract {
 
         request.status = RequestStatus::Cancelled;
         storage::set_request(&env, &request);
+
+        if let Some(res_id) = request.reservation_id {
+            let inventory_addr = storage::get_inventory_contract(&env);
+            let inv_client = InventoryContractClient::new(&env, &inventory_addr);
+            inv_client.release_reservation(&res_id);
+        }
 
         events::emit_request_cancelled(
             &env,

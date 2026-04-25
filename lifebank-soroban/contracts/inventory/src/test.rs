@@ -1420,11 +1420,14 @@ fn test_transition_pure_all_valid_pairs_succeeds() {
     let valid = [
         (Available, Reserved),
         (Available, Expired),
+        (Available, Compromised),
         (Reserved, InTransit),
         (Reserved, Available),
         (Reserved, Expired),
+        (Reserved, Compromised),
         (InTransit, Delivered),
         (InTransit, Expired),
+        (InTransit, Compromised),
         (Expired, Disposed),
         (Compromised, Disposed),
     ];
@@ -1451,11 +1454,14 @@ fn test_transition_pure_all_invalid_pairs_fails() {
     let valid_set = [
         (Available, Reserved),
         (Available, Expired),
+        (Available, Compromised),
         (Reserved, InTransit),
         (Reserved, Available),
         (Reserved, Expired),
+        (Reserved, Compromised),
         (InTransit, Delivered),
         (InTransit, Expired),
+        (InTransit, Compromised),
         (Expired, Disposed),
         (Compromised, Disposed),
     ];
@@ -1528,6 +1534,7 @@ fn test_unpause_restores_functionality() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #102)")]
 fn test_non_admin_cannot_pause() {
     let (env, _admin, client, _) = create_test_contract();
     let attacker = Address::generate(&env);

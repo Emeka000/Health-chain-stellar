@@ -10,25 +10,25 @@ const MAX_SCORE: i64 = 100_00;
 const MIN_SCORE: i64 = 0;
 
 /// Weights — must sum to 100
-const W_RATING: i64 = 35;       // weighted average rating
-const W_COMPLETION: i64 = 25;   // completion rate
-const W_RESPONSE: i64 = 20;     // response time
-const W_CONSISTENCY: i64 = 10;  // consistency bonus
-const W_FRAUD: i64 = 10;        // fraud penalty (subtracted)
+const W_RATING: i64 = 35; // weighted average rating
+const W_COMPLETION: i64 = 25; // completion rate
+const W_RESPONSE: i64 = 20; // response time
+const W_CONSISTENCY: i64 = 10; // consistency bonus
+const W_FRAUD: i64 = 10; // fraud penalty (subtracted)
 
 /// Decay: score loses 1 point per DECAY_PERIOD_SECS of inactivity
 const DECAY_PERIOD_SECS: u64 = 30 * 24 * 3600; // 30 days
-const MAX_DECAY: i64 = 20_00;                   // cap decay at 20 points
+const MAX_DECAY: i64 = 20_00; // cap decay at 20 points
 
 /// Recency half-life: ratings older than HALF_LIFE_SECS count at half weight
 const HALF_LIFE_SECS: u64 = 90 * 24 * 3600; // 90 days
 
 /// Fraud thresholds
-const FRAUD_FLAG_PENALTY: i64 = 15_00;   // per confirmed fraud flag
-const MAX_FRAUD_PENALTY: i64 = 50_00;    // cap total fraud penalty
+const FRAUD_FLAG_PENALTY: i64 = 15_00; // per confirmed fraud flag
+const MAX_FRAUD_PENALTY: i64 = 50_00; // cap total fraud penalty
 
 /// Consistency bonus: awarded when std-dev of ratings is low
-const CONSISTENCY_LOW_STDDEV: i64 = 50;  // ×100 → 0.50 stars
+const CONSISTENCY_LOW_STDDEV: i64 = 50; // ×100 → 0.50 stars
 const CONSISTENCY_BONUS_HIGH: i64 = 10_00;
 const CONSISTENCY_BONUS_MED: i64 = 5_00;
 
@@ -45,7 +45,6 @@ const DEFAULT_MAX_RATING: i64 = 5;
 const DEFAULT_MIN_INTERACTIONS: u32 = 3;
 const DEFAULT_BADGE_MIN_SCORE: i64 = 80_00;
 const DEFAULT_BADGE_MIN_INTERACTIONS: u32 = 10;
-
 
 /// Violation types for penalties
 #[contracttype]
@@ -164,9 +163,9 @@ pub enum Error {
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DataKey {
-    Score(u64),   // entity_id → ReputationScore
-    Input(u64),   // entity_id → ReputationInput
-    Admin,        // Address → Admin identity
+    Score(u64), // entity_id → ReputationScore
+    Input(u64), // entity_id → ReputationInput
+    Admin,      // Address → Admin identity
     RatingScaleConfig,
     DecayConfig,
     MinimumInteractions,
@@ -217,7 +216,8 @@ impl ReputationContract {
             },
         );
 
-        env.events().publish((symbol_short!("init"),), admin);
+        env.events()
+            .publish((symbol_short!("init"), symbol_short!("v1")), admin);
 
         Ok(())
     }
@@ -348,7 +348,10 @@ impl ReputationContract {
             });
 
         // Append rating (score stored ×100)
-        input.ratings.push_back(RatingEvent { score: score * 100, timestamp });
+        input.ratings.push_back(RatingEvent {
+            score: score * 100,
+            timestamp,
+        });
         // Keep only the 100 most recent ratings to bound storage
         if input.ratings.len() > 100 {
             let mut trimmed = Vec::new(&env);
@@ -360,7 +363,9 @@ impl ReputationContract {
         }
         input.last_active_at = timestamp;
 
-        env.storage().persistent().set(&DataKey::Input(entity_id), &input);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Input(entity_id), &input);
 
         let result = Self::calculate_reputation(env.clone(), entity_id)?;
         Ok(result)
@@ -398,17 +403,15 @@ impl ReputationContract {
         input.response_count += 1;
         input.last_active_at = timestamp;
 
-        env.storage().persistent().set(&DataKey::Input(entity_id), &input);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Input(entity_id), &input);
 
         Self::calculate_reputation(env, entity_id)
     }
 
     /// Flag an entity for fraud and recalculate score.
-    pub fn flag_fraud(
-        env: Env,
-        entity_id: u64,
-        timestamp: u64,
-    ) -> Result<ReputationScore, Error> {
+    pub fn flag_fraud(env: Env, entity_id: u64, timestamp: u64) -> Result<ReputationScore, Error> {
         Self::require_not_paused(&env)?;
         let mut input: ReputationInput = env
             .storage()
@@ -418,7 +421,9 @@ impl ReputationContract {
 
         input.fraud_flags += 1;
         input.last_active_at = timestamp;
-        env.storage().persistent().set(&DataKey::Input(entity_id), &input);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Input(entity_id), &input);
 
         Self::calculate_reputation(env, entity_id)
     }
@@ -429,7 +434,11 @@ impl ReputationContract {
         entity_id: u64,
         violation: ViolationType,
     ) -> Result<ReputationScore, Error> {
-        let admin: soroban_sdk::Address = env.storage().instance().get(&DataKey::Admin).ok_or(Error::NotAuthorized)?;
+        let admin: soroban_sdk::Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotAuthorized)?;
         admin.require_auth();
         Self::require_not_paused(&env)?;
 
@@ -448,17 +457,15 @@ impl ReputationContract {
             is_appealed: false,
         });
 
-        env.storage().persistent().set(&DataKey::Input(entity_id), &input);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Input(entity_id), &input);
 
         Self::calculate_reputation(env, entity_id)
     }
 
     /// File an appeal for a specific penalty.
-    pub fn appeal_penalty(
-        env: Env,
-        entity_id: u64,
-        penalty_id: u32,
-    ) -> Result<(), Error> {
+    pub fn appeal_penalty(env: Env, entity_id: u64, penalty_id: u32) -> Result<(), Error> {
         Self::require_not_paused(&env)?;
         let mut input: ReputationInput = env
             .storage()
@@ -481,7 +488,9 @@ impl ReputationContract {
             return Err(Error::PenaltyNotFound);
         }
 
-        env.storage().persistent().set(&DataKey::Input(entity_id), &input);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Input(entity_id), &input);
         Ok(())
     }
 
@@ -492,7 +501,11 @@ impl ReputationContract {
         penalty_id: u32,
         should_remove: bool,
     ) -> Result<ReputationScore, Error> {
-        let admin: soroban_sdk::Address = env.storage().instance().get(&DataKey::Admin).ok_or(Error::NotAuthorized)?;
+        let admin: soroban_sdk::Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotAuthorized)?;
         admin.require_auth();
 
         let mut input: ReputationInput = env
@@ -510,7 +523,7 @@ impl ReputationContract {
         }
 
         let idx = found_idx.ok_or(Error::PenaltyNotFound)?;
-        
+
         if should_remove {
             input.penalties.remove(idx);
         } else {
@@ -519,7 +532,9 @@ impl ReputationContract {
             input.penalties.set(idx, p);
         }
 
-        env.storage().persistent().set(&DataKey::Input(entity_id), &input);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Input(entity_id), &input);
         Self::calculate_reputation(env, entity_id)
     }
 
@@ -549,16 +564,12 @@ impl ReputationContract {
         let rating_component = Self::weighted_rating_score(&input.ratings, now);
 
         // 2. Completion rate component
-        let completion_component = Self::completion_rate_score(
-            input.total_completed,
-            input.total_assigned,
-        );
+        let completion_component =
+            Self::completion_rate_score(input.total_completed, input.total_assigned);
 
         // 3. Response time component
-        let response_component = Self::response_time_score(
-            input.total_response_secs,
-            input.response_count,
-        );
+        let response_component =
+            Self::response_time_score(input.total_response_secs, input.response_count);
 
         // 4. Consistency bonus
         let consistency_bonus = Self::consistency_bonus(&input.ratings);
@@ -601,7 +612,11 @@ impl ReputationContract {
             .set(&DataKey::Score(entity_id), &result);
 
         env.events().publish(
-            (symbol_short!("rep"), symbol_short!("updated")),
+            (
+                symbol_short!("rep"),
+                symbol_short!("updated"),
+                symbol_short!("v1"),
+            ),
             (entity_id, final_score),
         );
 
@@ -648,7 +663,7 @@ impl ReputationContract {
         }
 
         let avg = weighted_sum / weight_total; // 100–500 range
-        // Normalise: (avg - 100) / 400 × 100_00
+                                               // Normalise: (avg - 100) / 400 × 100_00
         ((avg - 100) * 100_00) / 400
     }
 
@@ -669,8 +684,8 @@ impl ReputationContract {
             return 50_00;
         }
         let avg_secs = (total_secs / count as u64) as i64;
-        let min_secs: i64 = 5 * 60;   // 5 minutes → perfect
-        let max_secs: i64 = 60 * 60;  // 60 minutes → zero
+        let min_secs: i64 = 5 * 60; // 5 minutes → perfect
+        let max_secs: i64 = 60 * 60; // 60 minutes → zero
 
         if avg_secs <= min_secs {
             return 100_00;
@@ -775,10 +790,10 @@ impl ReputationContract {
                 points /= 2;
             }
 
-            // Appeals might reduce weight or suspend penalty? 
+            // Appeals might reduce weight or suspend penalty?
             // For now, let's say appealed penalties still count but maybe less?
             // Actually, let's keep it simple: they count full until resolved.
-            
+
             total += points;
         }
         total

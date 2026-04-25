@@ -77,7 +77,7 @@ use soroban_sdk::{contracttype, symbol_short, Env, Vec};
 use crate::{
     BloodStatus, BloodUnit, CustodyEvent, CustodyStatus, DataKey, Error, StatusChangeEvent,
     BLOOD_BANKS, BLOOD_UNITS, CUSTODY_EVENTS, DISPUTES, DISPUTE_METADATA, HISTORY, HOSPITALS,
-    PAYMENT_STATS, PAYMENTS, PENDING_APPROVALS, REQUESTS, REQUEST_KEYS,
+    PAYMENTS, PAYMENT_STATS, PENDING_APPROVALS, REQUESTS, REQUEST_KEYS,
 };
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -146,10 +146,10 @@ pub struct ArchivedCustodySummary {
 ///
 /// Call this after every write to a persistent key to prevent rent expiry.
 /// No-op if the key does not exist.
-pub fn bump_persistent<K: soroban_sdk::TryIntoVal<Env, soroban_sdk::Val>>(
-    env: &Env,
-    key: &K,
-) {
+pub fn bump_persistent<K>(env: &Env, key: &K)
+where
+    K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
+{
     env.storage()
         .persistent()
         .extend_ttl(key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
@@ -215,7 +215,11 @@ pub fn is_terminal_status(status: BloodStatus) -> bool {
 /// 1. The unit is in a terminal status.
 /// 2. At least `ARCHIVE_AFTER_DAYS` have elapsed since the last status change,
 ///    giving off-chain indexers time to ingest all events.
-pub fn is_eligible_for_archival(env: &Env, unit: &BloodUnit, history: &Vec<StatusChangeEvent>) -> bool {
+pub fn is_eligible_for_archival(
+    env: &Env,
+    unit: &BloodUnit,
+    history: &Vec<StatusChangeEvent>,
+) -> bool {
     if !is_terminal_status(unit.status) {
         return false;
     }
@@ -224,7 +228,10 @@ pub fn is_eligible_for_archival(env: &Env, unit: &BloodUnit, history: &Vec<Statu
     }
     let last_event = history.get(history.len() - 1).unwrap();
     let current_time = env.ledger().timestamp();
-    current_time >= last_event.timestamp.saturating_add(ARCHIVE_AFTER_DAYS * SECONDS_PER_DAY)
+    current_time
+        >= last_event
+            .timestamp
+            .saturating_add(ARCHIVE_AFTER_DAYS * SECONDS_PER_DAY)
 }
 
 /// Compact the status history for a terminal blood unit.
@@ -379,20 +386,14 @@ pub fn archive_custody_events(env: &Env, unit_id: u64) -> Result<bool, Error> {
 // ── Read helpers for archived data ─────────────────────────────────────────────
 
 /// Retrieve the archived history summary for a unit, if it has been compacted.
-pub fn get_archived_history_summary(
-    env: &Env,
-    unit_id: u64,
-) -> Option<ArchivedHistorySummary> {
+pub fn get_archived_history_summary(env: &Env, unit_id: u64) -> Option<ArchivedHistorySummary> {
     env.storage()
         .persistent()
         .get(&ArchiveKey::HistorySummary(unit_id))
 }
 
 /// Retrieve the archived custody summary for a unit, if it has been compacted.
-pub fn get_archived_custody_summary(
-    env: &Env,
-    unit_id: u64,
-) -> Option<ArchivedCustodySummary> {
+pub fn get_archived_custody_summary(env: &Env, unit_id: u64) -> Option<ArchivedCustodySummary> {
     env.storage()
         .persistent()
         .get(&ArchiveKey::CustodySummary(unit_id))

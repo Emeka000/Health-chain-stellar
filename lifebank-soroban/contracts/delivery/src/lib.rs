@@ -68,7 +68,9 @@ impl DeliveryContract {
         env.storage()
             .instance()
             .set(&DataKey::RequestContract, &request_contract);
-        env.storage().instance().set(&DataKey::DeliveryCounter, &0u64);
+        env.storage()
+            .instance()
+            .set(&DataKey::DeliveryCounter, &0u64);
         env.storage()
             .instance()
             .set(&DataKey::TemperatureThresholds, &thresholds);
@@ -76,8 +78,10 @@ impl DeliveryContract {
             .instance()
             .set(&DataKey::ProofRequirements, &proof_requirements);
 
-        env.events()
-            .publish((symbol_short!("init"),), (admin, request_contract));
+        env.events().publish(
+            (symbol_short!("init"), symbol_short!("v1")),
+            (admin, request_contract),
+        );
 
         Ok(())
     }
@@ -135,12 +139,13 @@ impl DeliveryContract {
             return Err(Error::NotInitialized);
         }
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::ComplianceAttestation(delivery_id), &(compliance_hash.clone(), is_compliant));
+        env.storage().persistent().set(
+            &DataKey::ComplianceAttestation(delivery_id),
+            &(compliance_hash.clone(), is_compliant),
+        );
 
         env.events().publish(
-            (symbol_short!("comply"),),
+            (symbol_short!("comply"), symbol_short!("v1")),
             (delivery_id, compliance_hash, is_compliant),
         );
 
@@ -148,10 +153,7 @@ impl DeliveryContract {
     }
 
     /// Retrieve the stored compliance attestation for a delivery.
-    pub fn get_compliance_attestation(
-        env: Env,
-        delivery_id: u64,
-    ) -> Result<(Bytes, bool), Error> {
+    pub fn get_compliance_attestation(env: Env, delivery_id: u64) -> Result<(Bytes, bool), Error> {
         env.storage()
             .persistent()
             .get(&DataKey::ComplianceAttestation(delivery_id))

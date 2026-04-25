@@ -36,6 +36,7 @@ import { PolicyCenterModule } from './policy-center/policy-center.module';
 import { ProofBundleModule } from './proof-bundle/proof-bundle.module';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
 import { RouteDeviationModule } from './route-deviation/route-deviation.module';
+import { FileMetadataModule } from './file-metadata/file-metadata.module';
 import { TrackingModule } from './tracking/tracking.module';
 import { TransparencyModule } from './transparency/transparency.module';
 import { UserActivityModule } from './user-activity/user-activity.module';
@@ -121,6 +122,7 @@ import type Redis from 'ioredis';
     PolicyCenterModule,
     ReconciliationModule,
     RouteDeviationModule,
+    FileMetadataModule,
   ],
   controllers: [AppController],
   providers: [

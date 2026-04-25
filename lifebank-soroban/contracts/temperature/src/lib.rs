@@ -677,14 +677,12 @@ mod tests {
         let (_env, admin, client) = create_test_contract();
 
         let unit_id = 102u64;
-        client.set_threshold(&admin, &unit_id, &200, &600);
+        client.set_threshold(&admin, &unit_id, &0, &60_000_000);
 
-        // Log 50,000 readings at 450 (4.50°C)
-        // With i32 accumulator: sum would be 22,500,000 which exceeds i32::MAX (2,147,483,647)
-        // This would cause overflow and corrupt the average
-        // With i64 accumulator: sum is 22,500,000 which is well within i64 range
-        let test_temp = 450i32;
-        let num_readings = 50_000u64;
+        // Keep this small enough for CI while still proving the accumulator
+        // must be wider than i32: 30,000,000 * 100 = 3,000,000,000.
+        let test_temp = 30_000_000i32;
+        let num_readings = 100u64;
 
         for i in 0..num_readings {
             client.log_reading(&unit_id, &test_temp, &(1000 + i));
@@ -693,7 +691,7 @@ mod tests {
         let summary = client.get_temperature_summary(&unit_id);
         
         // Verify correct count
-        assert_eq!(summary.count, num_readings as u32, "Count should be 50,000");
+        assert_eq!(summary.count, num_readings as u32, "Count should be 100");
         
         // Verify average is correct (should be exactly 450)
         assert_eq!(
@@ -754,7 +752,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "UnitNotFound")]
+    #[should_panic(expected = "Error(Contract, #601)")]
     fn test_temperature_summary_no_readings() {
         let (_env, admin, client) = create_test_contract();
 
