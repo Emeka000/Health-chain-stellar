@@ -14,6 +14,8 @@ pub mod storage_lifecycle;
 #[cfg(test)]
 mod test_payments;
 #[cfg(test)]
+mod test_protocol_invariants;
+#[cfg(test)]
 mod test_storage_layout;
 
 /// Current schema version for contract events emitted by this crate.
@@ -69,6 +71,7 @@ pub enum Error {
     NotCurrentCustodian = 29,
     InvalidMultiSigConfig = 30,
     DuplicateApproval = 31,
+    EscrowNotReleasable = 32,
 }
 
 // Alias for issue/docs terminology.
@@ -1366,11 +1369,7 @@ impl HealthChainContract {
         };
 
         env.events().publish(
-            (
-                symbol_short!("quar"),
-                symbol_short!("place"),
-                symbol_short!("v1"),
-            ),
+            (symbol_short!("quar"), symbol_short!("place")),
             quarantine_event,
         );
 
@@ -1430,11 +1429,7 @@ impl HealthChainContract {
         };
 
         env.events().publish(
-            (
-                symbol_short!("quar"),
-                symbol_short!("final"),
-                symbol_short!("v1"),
-            ),
+            (symbol_short!("quar"), symbol_short!("final")),
             quarantine_event,
         );
 
@@ -2019,7 +2014,9 @@ impl HealthChainContract {
             .get(&ESCROW_ACCOUNTS)
             .unwrap_or(Map::new(&env));
         escrow_accounts.set(payment_id, escrow);
-        env.storage().persistent().set(&ESCROW_ACCOUNTS, &escrow_accounts);
+        env.storage()
+            .persistent()
+            .set(&ESCROW_ACCOUNTS, &escrow_accounts);
 
         payments.set(payment_id, payment);
         env.storage().persistent().set(&PAYMENTS, &payments);
@@ -2051,14 +2048,18 @@ impl HealthChainContract {
             .get(&ESCROW_ACCOUNTS)
             .ok_or(Error::PaymentNotFound)?;
 
-        let mut escrow = escrow_accounts.get(payment_id).ok_or(Error::PaymentNotFound)?;
+        let mut escrow = escrow_accounts
+            .get(payment_id)
+            .ok_or(Error::PaymentNotFound)?;
         escrow.release_conditions = ReleaseConditions {
             medical_records_verified,
             min_timestamp,
             authorized_approver,
         };
         escrow_accounts.set(payment_id, escrow);
-        env.storage().persistent().set(&ESCROW_ACCOUNTS, &escrow_accounts);
+        env.storage()
+            .persistent()
+            .set(&ESCROW_ACCOUNTS, &escrow_accounts);
         Ok(())
     }
 
@@ -2141,7 +2142,9 @@ impl HealthChainContract {
             .persistent()
             .get(&ESCROW_ACCOUNTS)
             .unwrap_or(Map::new(&env));
-        let escrow = escrow_accounts.get(payment_id).ok_or(Error::PaymentNotFound)?;
+        let escrow = escrow_accounts
+            .get(payment_id)
+            .ok_or(Error::PaymentNotFound)?;
         let current_timestamp = env.ledger().timestamp();
         if !escrow.can_release(current_timestamp, Some(&approver)) {
             return Err(Error::EscrowNotReleasable);
@@ -3273,20 +3276,14 @@ impl HealthChainContract {
     ///
     /// Returns `None` if the history has not been archived yet (full history
     /// is still available via `get_transfer_history`).
-    pub fn get_history_summary(
-        env: Env,
-        unit_id: u64,
-    ) -> Option<ArchivedHistorySummary> {
+    pub fn get_history_summary(env: Env, unit_id: u64) -> Option<ArchivedHistorySummary> {
         storage_lifecycle::get_archived_history_summary(&env, unit_id)
     }
 
     /// Retrieve the archived custody summary for a unit.
     ///
     /// Returns `None` if custody events have not been archived yet.
-    pub fn get_custody_summary(
-        env: Env,
-        unit_id: u64,
-    ) -> Option<ArchivedCustodySummary> {
+    pub fn get_custody_summary(env: Env, unit_id: u64) -> Option<ArchivedCustodySummary> {
         storage_lifecycle::get_archived_custody_summary(&env, unit_id)
     }
 }
