@@ -33,10 +33,15 @@ export class AuditLogInterceptor implements NestInterceptor {
     const user = req.user as { id?: string; role?: string } | undefined;
     const actorId = user?.id ?? 'anonymous';
     const actorRole = user?.role ?? 'unknown';
+
+    // Extract request metadata
     const ipAddress: string | null =
       (req.headers?.['x-forwarded-for'] as string)?.split(',')[0]?.trim() ??
       req.ip ??
       null;
+
+    const userAgent: string | null = req.headers?.['user-agent'] ?? null;
+    const correlationId: string | null = req.correlationId ?? null;
 
     const paramKey = options.resourceIdParam ?? 'id';
     const resourceId: string =
@@ -45,6 +50,15 @@ export class AuditLogInterceptor implements NestInterceptor {
     // Capture request body as "previous intent" — actual before/after state
     // is captured from the handler response.
     const requestBody = req.body ? { ...req.body } : null;
+
+    // Extract metadata from options or request
+    const metadata = {
+      ...(options.metadata ?? {}),
+      endpoint: `${req.method} ${req.url}`,
+      ...(req.body?.reason && { reason: req.body.reason }),
+      ...(req.body?.comment && { comment: req.body.comment }),
+      ...(req.body?.note && { note: req.body.note }),
+    };
 
     return next.handle().pipe(
       tap({
@@ -64,6 +78,9 @@ export class AuditLogInterceptor implements NestInterceptor {
             previousValue: requestBody,
             nextValue: nextValue as Record<string, unknown> | null,
             ipAddress,
+            userAgent,
+            correlationId,
+            metadata: Object.keys(metadata).length > 0 ? metadata : null,
           });
         },
       }),
