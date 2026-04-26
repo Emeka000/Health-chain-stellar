@@ -25,6 +25,7 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderQueryParamsDto } from './dto/order-query-params.dto';
 import { UpdateRequestStatusDto } from './dto/update-request-status.dto';
 import { OrdersService } from './orders.service';
+import { OrderStateAuditService } from './services/order-state-audit.service';
 import { Order } from './types/order.types';
 import { SlaService } from '../sla/sla.service';
 
@@ -37,7 +38,21 @@ interface AuthenticatedRequest {
 
 @Controller('orders')
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService, private readonly slaService: SlaService) {}
+  constructor(
+    private readonly ordersService: OrdersService,
+    private readonly slaService: SlaService,
+    private readonly auditService: OrderStateAuditService,
+  ) {}
+
+  /**
+   * GET /orders/state-audit
+   * Returns all orders with inconsistent or invalid materialized state (Issue #617).
+   */
+  @RequirePermissions(Permission.ADMIN_ACCESS)
+  @Get('state-audit')
+  auditOrderStates() {
+    return this.auditService.auditAll();
+  }
 
   @RequirePermissions(Permission.VIEW_ORDER)
   @Get()

@@ -18,6 +18,7 @@ import { OrdersService } from './orders.service';
 import { DisputePolicyService } from './services/dispute-policy.service';
 import { OrderEventStoreService } from './services/order-event-store.service';
 import { OrderFeeService } from './services/order-fee.service';
+import { OrderStateAuditService } from './services/order-state-audit.service';
 import { RequestStatusService } from './services/request-status.service';
 import { OrderStateMachine } from './state-machine/order-state-machine';
 
@@ -41,7 +42,8 @@ import { OrderStateMachine } from './state-machine/order-state-machine';
     OrderFeeService,
     RequestStatusService,
     OrdersGateway,
+    OrderStateAuditService,
   ],
-  exports: [OrdersService, OrderStateMachine, OrderEventStoreService],
+  exports: [OrdersService, OrderStateMachine, OrderEventStoreService, OrderStateAuditService],
 })
 export class OrdersModule {}
