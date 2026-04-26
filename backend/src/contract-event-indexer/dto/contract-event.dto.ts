@@ -1,5 +1,11 @@
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 
 import { ContractDomain } from '../entities/contract-event.entity';
 
@@ -38,6 +44,13 @@ export class ReplayFromLedgerDto {
   @IsOptional()
   @IsEnum(ContractDomain)
   domain?: ContractDomain;
+
+  /**
+   * Scope replay to a specific projection. Omit to reset all projections for the domain.
+   */
+  @IsOptional()
+  @IsString()
+  projectionName?: string;
 }
 
 export class IngestEventDto {
@@ -65,4 +78,49 @@ export class IngestEventDto {
   @IsOptional()
   @IsString()
   entityRef?: string;
+
+  /**
+   * Canonical idempotency key: ledger:txHash:eventIndex:schemaVersion.
+   * When provided, overrides the auto-generated SHA-256 dedup key.
+   */
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
+}
+
+export class QuarantinePoisonEventDto {
+  @IsString()
+  dedupKey: string;
+
+  @IsString()
+  projectionName: string;
+
+  payload: Record<string, unknown>;
+
+  @IsString()
+  errorMessage: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Type(() => Number)
+  attemptCount?: number;
+}
+
+export class ReplayPoisonEventDto {
+  @IsString()
+  poisonEventId: string;
+
+  @IsOptional()
+  @IsString()
+  operatorNotes?: string;
+}
+
+export class DiscardPoisonEventDto {
+  @IsString()
+  poisonEventId: string;
+
+  @IsOptional()
+  @IsString()
+  operatorNotes?: string;
 }

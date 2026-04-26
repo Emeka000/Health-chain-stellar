@@ -2,16 +2,20 @@ import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 
 import { ContractEventIndexerService } from './contract-event-indexer.service';
 import {
+  DiscardPoisonEventDto,
   IngestEventDto,
   QueryContractEventsDto,
+  QuarantinePoisonEventDto,
   ReplayFromLedgerDto,
+  ReplayPoisonEventDto,
 } from './dto/contract-event.dto';
+import { PoisonEventStatus } from './entities/poison-event.entity';
 
 @Controller('api/v1/contract-events')
 export class ContractEventIndexerController {
   constructor(private readonly service: ContractEventIndexerService) {}
 
-  /** Ingest a single contract event (called by indexer workers or webhooks) */
+  /** Ingest a single contract event (idempotent — duplicates are silently ignored) */
   @Post('ingest')
   ingest(@Body() dto: IngestEventDto) {
     return this.service.ingest(dto);
@@ -35,7 +39,7 @@ export class ContractEventIndexerController {
     return this.service.findByEntityRef(ref);
   }
 
-  /** Get current indexer cursor positions per domain */
+  /** Get current indexer cursor positions per domain+projection */
   @Get('cursors')
   getCursors() {
     return this.service.getCursors();
@@ -45,5 +49,31 @@ export class ContractEventIndexerController {
   @Post('replay')
   replay(@Body() dto: ReplayFromLedgerDto) {
     return this.service.replayFromLedger(dto);
+  }
+
+  // ── Poison-event operator endpoints ──────────────────────────────────
+
+  /** List quarantined poison events (optionally filtered by status) */
+  @Get('poison-events')
+  getPoisonEvents(@Query('status') status?: PoisonEventStatus) {
+    return this.service.getPoisonEvents(status);
+  }
+
+  /** Quarantine a poison event (called by projection workers on failure) */
+  @Post('poison-events/quarantine')
+  quarantine(@Body() dto: QuarantinePoisonEventDto) {
+    return this.service.quarantinePoisonEvent(dto);
+  }
+
+  /** Operator: mark a poison event as replayed and re-process it */
+  @Post('poison-events/replay')
+  replayPoison(@Body() dto: ReplayPoisonEventDto) {
+    return this.service.replayPoisonEvent(dto);
+  }
+
+  /** Operator: discard a poison event (no further processing) */
+  @Post('poison-events/discard')
+  discardPoison(@Body() dto: DiscardPoisonEventDto) {
+    return this.service.discardPoisonEvent(dto);
   }
 }
