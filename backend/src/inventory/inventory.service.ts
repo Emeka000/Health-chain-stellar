@@ -1,11 +1,31 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { InjectRepository } from '@nestjs/typeorm';
+import { LessThan, Repository } from 'typeorm';
+
 import { PaginatedResponse, PaginationQueryDto, PaginationUtil } from '../common/pagination';
+import { BloodRequestReservationEntity, ReservationStatus } from '../blood-requests/entities/blood-request-reservation.entity';
+import { ReservationAuditAction, ReservationAuditEntity } from './entities/reservation-audit.entity';
 import { InventoryStockEntity } from './entities/inventory-stock.entity';
 import { InventoryStockRepository } from './repositories/inventory-stock.repository';
 
+export interface ReserveOptions {
+  /** Urgency for priority tie-breaking: CRITICAL > URGENT > ROUTINE > SCHEDULED */
+  urgency?: 'CRITICAL' | 'URGENT' | 'ROUTINE' | 'SCHEDULED';
+  requestId?: string;
+}
+
 @Injectable()
 export class InventoryService {
-  constructor(private readonly stockRepo: InventoryStockRepository) {}
+  private readonly logger = new Logger(InventoryService.name);
+
+  constructor(
+    private readonly stockRepo: InventoryStockRepository,
+    @InjectRepository(ReservationAuditEntity)
+    private readonly auditRepo: Repository<ReservationAuditEntity>,
+    @InjectRepository(BloodRequestReservationEntity)
+    private readonly reservationRepo: Repository<BloodRequestReservationEntity>,
+  ) {}
 
   async findAll(
     hospitalId?: string,
@@ -84,6 +104,7 @@ export class InventoryService {
     bloodBankId: string,
     bloodType: string,
     quantity: number,
+    opts?: ReserveOptions,
   ): Promise<void> {
     if (quantity <= 0) {
       throw new ConflictException('Requested quantity must be greater than zero.');
@@ -101,7 +122,12 @@ export class InventoryService {
         );
       }
       const result = await this.stockRepo.atomicDecrement(stock.id, stock.version, quantity);
-      if (result.affected === 1) return;
+      if (result.affected === 1) {
+        if (opts?.requestId) {
+          await this.writeAudit(opts.requestId, bloodBankId, bloodType, quantity, ReservationAuditAction.RESERVED, opts.urgency);
+        }
+        return;
+      }
       if (attempt === 0) continue;
       throw new ConflictException('Inventory was updated by another order request. Please retry.');
     }
@@ -149,5 +175,68 @@ export class InventoryService {
     quantity: number,
   ): Promise<void> {
     return this.restoreStockOrThrow(bloodBankId, bloodType, quantity);
+  }
+
+  // ── Expiration auto-release ──────────────────────────────────────────
+
+  /**
+   * Scan for expired RESERVED reservations, release their stock, and write audit records.
+   * Runs every minute. Each release uses optimistic locking to prevent double-release.
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async releaseExpiredReservations(): Promise<void> {
+    const nowTs = Math.floor(Date.now() / 1000);
+    const expired = await this.reservationRepo.find({
+      where: { status: ReservationStatus.RESERVED, expiresAt: LessThan(nowTs) },
+      take: 100,
+    });
+
+    for (const res of expired) {
+      try {
+        // Mark expired first to prevent double-release
+        const result = await this.reservationRepo
+          .createQueryBuilder()
+          .update(BloodRequestReservationEntity)
+          .set({ status: ReservationStatus.EXPIRED })
+          .where('id = :id', { id: res.id })
+          .andWhere('status = :status', { status: ReservationStatus.RESERVED })
+          .execute();
+
+        if (!result.affected) continue; // already handled by another worker
+
+        await this.restoreStockOrThrow(res.bloodBankId, res.bloodUnitId, res.quantityMl);
+
+        await this.auditRepo.save(
+          this.auditRepo.create({
+            requestId: res.requestId,
+            bloodBankId: res.bloodBankId,
+            bloodType: res.bloodUnitId,
+            quantityMl: res.quantityMl,
+            action: ReservationAuditAction.EXPIRED_RELEASED,
+            notes: `Reservation ${res.id} expired at ${res.expiresAt}`,
+          }),
+        );
+
+        this.logger.log(`Released expired reservation ${res.id} requestId=${res.requestId}`);
+      } catch (err) {
+        this.logger.error(`Failed to release expired reservation ${res.id}`, err);
+      }
+    }
+  }
+
+  // ── Audit helpers ────────────────────────────────────────────────────
+
+  private async writeAudit(
+    requestId: string,
+    bloodBankId: string,
+    bloodType: string,
+    quantityMl: number,
+    action: ReservationAuditAction,
+    urgency?: string,
+    notes?: string,
+  ): Promise<void> {
+    await this.auditRepo.save(
+      this.auditRepo.create({ requestId, bloodBankId, bloodType, quantityMl, action, urgency: urgency ?? null, notes: notes ?? null }),
+    );
   }
 }
