@@ -46,7 +46,7 @@
     "@stellar/stellar-sdk": "^14.5.0",
     "@types/bull": "^3.15.9",
     "africastalking": "^0.7.9",
-    "bullmq": "^5.69.3",
+    "bullmq": "^5.76.2",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.3",
     "exceljs": "^4.4.0",
