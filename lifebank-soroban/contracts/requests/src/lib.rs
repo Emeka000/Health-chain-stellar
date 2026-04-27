@@ -11,12 +11,12 @@ mod test;
 pub use crate::error::ContractError;
 pub use crate::types::{
     BloodComponent, BloodRequest, BloodType, ContractMetadata, DataKey, RequestCreatedEvent,
-    RequestStatus, Urgency,
+    RequestHistoryEntry, RequestStatus, Urgency,
 };
 
 mod validation;
 
-use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_sdk::{contract, contractimpl, Address, Env, String};
 
 mod inventory_client {
     use soroban_sdk::{contractclient, Env};
@@ -34,6 +34,49 @@ pub struct RequestContract;
 
 #[contractimpl]
 impl RequestContract {
+    fn append_history(
+        env: &Env,
+        request: &mut BloodRequest,
+        actor: &Address,
+        previous_status: RequestStatus,
+        is_initial_transition: bool,
+        new_status: RequestStatus,
+        reason: String,
+        fulfilled_delta_ml: u32,
+        released_reservation: bool,
+    ) {
+        request.history.push_back(RequestHistoryEntry {
+            previous_status,
+            is_initial_transition,
+            new_status,
+            actor: actor.clone(),
+            reason,
+            fulfilled_delta_ml,
+            released_reservation,
+            timestamp: env.ledger().timestamp(),
+        });
+    }
+
+    fn ensure_non_empty_reason(reason: &String) -> Result<(), ContractError> {
+        if reason.len() == 0 {
+            Err(ContractError::InvalidReason)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn release_reservation_if_present(env: &Env, request: &mut BloodRequest) -> bool {
+        if let Some(res_id) = request.reservation_id {
+            let inventory_addr = storage::get_inventory_contract(env);
+            let inv_client = InventoryContractClient::new(env, &inventory_addr);
+            inv_client.release_reservation(&res_id);
+            request.reservation_id = None;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -104,7 +147,20 @@ impl RequestContract {
             assigned_units: soroban_sdk::Vec::new(&env),
             fulfilled_quantity_ml: 0,
             reservation_id: None,
+            history: soroban_sdk::Vec::new(&env),
         };
+        let mut request = request;
+        Self::append_history(
+            &env,
+            &mut request,
+            &hospital,
+            RequestStatus::Pending,
+            true,
+            RequestStatus::Pending,
+            String::from_str(&env, "Request created"),
+            0,
+            false,
+        );
 
         storage::set_request(&env, &request);
         events::emit_request_created(&env, &request);
@@ -148,7 +204,20 @@ impl RequestContract {
                 assigned_units: soroban_sdk::Vec::new(&env),
                 fulfilled_quantity_ml: 0,
                 reservation_id: None,
+                history: soroban_sdk::Vec::new(&env),
             };
+            let mut request = request;
+            Self::append_history(
+                &env,
+                &mut request,
+                &hospital,
+                RequestStatus::Pending,
+                true,
+                RequestStatus::Pending,
+                String::from_str(&env, "Request created"),
+                0,
+                false,
+            );
             storage::set_request(&env, &request);
             events::emit_request_created(&env, &request);
             ids.push_back(request_id);
@@ -162,9 +231,11 @@ impl RequestContract {
         env: Env,
         caller: Address,
         request_id: u64,
+        reason: String,
     ) -> Result<(), ContractError> {
         caller.require_auth();
         storage::require_initialized(&env)?;
+        Self::ensure_non_empty_reason(&reason)?;
 
         let mut request = storage::get_request(&env, request_id)
             .ok_or(ContractError::RequestNotFound)?;
@@ -175,18 +246,25 @@ impl RequestContract {
         }
 
         match request.status {
-            RequestStatus::Pending | RequestStatus::Approved => {}
+            RequestStatus::Pending | RequestStatus::Approved | RequestStatus::InProgress => {}
             _ => return Err(ContractError::InvalidRequestStatus),
         }
 
+        let old_status = request.status;
         request.status = RequestStatus::Cancelled;
+        let released_reservation = Self::release_reservation_if_present(&env, &mut request);
+        Self::append_history(
+            &env,
+            &mut request,
+            &caller,
+            old_status,
+            false,
+            RequestStatus::Cancelled,
+            reason,
+            0,
+            released_reservation,
+        );
         storage::set_request(&env, &request);
-
-        if let Some(res_id) = request.reservation_id {
-            let inventory_addr = storage::get_inventory_contract(&env);
-            let inv_client = InventoryContractClient::new(&env, &inventory_addr);
-            inv_client.release_reservation(&res_id);
-        }
 
         events::emit_request_cancelled(
             &env,
@@ -205,6 +283,7 @@ impl RequestContract {
         caller: Address,
         request_id: u64,
         new_status: RequestStatus,
+        reason: String,
     ) -> Result<(), ContractError> {
         caller.require_auth();
         storage::require_initialized(&env)?;
@@ -222,7 +301,47 @@ impl RequestContract {
         }
 
         let old_status = request.status;
+        let mut released_reservation = false;
+        let mut fulfilled_delta_ml = 0;
+
+        match new_status {
+            RequestStatus::Approved => {
+                if old_status != RequestStatus::Pending {
+                    return Err(ContractError::InvalidRequestStatus);
+                }
+            }
+            RequestStatus::Rejected => {
+                if old_status != RequestStatus::Pending && old_status != RequestStatus::Approved {
+                    return Err(ContractError::InvalidRequestStatus);
+                }
+                Self::ensure_non_empty_reason(&reason)?;
+                released_reservation = Self::release_reservation_if_present(&env, &mut request);
+            }
+            RequestStatus::Fulfilled => {
+                if old_status != RequestStatus::Approved && old_status != RequestStatus::InProgress {
+                    return Err(ContractError::InvalidRequestStatus);
+                }
+                let remaining = request.quantity_ml.saturating_sub(request.fulfilled_quantity_ml);
+                fulfilled_delta_ml = remaining;
+                request.fulfilled_quantity_ml = request.quantity_ml;
+            }
+            RequestStatus::InProgress | RequestStatus::Pending | RequestStatus::Cancelled => {
+                return Err(ContractError::InvalidRequestStatus);
+            }
+        }
+
         request.status = new_status;
+        Self::append_history(
+            &env,
+            &mut request,
+            &caller,
+            old_status,
+            false,
+            new_status,
+            reason.clone(),
+            fulfilled_delta_ml,
+            released_reservation,
+        );
         storage::set_request(&env, &request);
 
         events::emit_request_status_updated(
@@ -235,6 +354,77 @@ impl RequestContract {
         );
 
         Ok(())
+    }
+
+    /// Register partial fulfillment. Admin only.
+    /// Allows Approved/InProgress requests, transitions to InProgress or Fulfilled.
+    pub fn partial_fulfill_request(
+        env: Env,
+        caller: Address,
+        request_id: u64,
+        fulfilled_delta_ml: u32,
+        reason: String,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        storage::require_initialized(&env)?;
+        Self::ensure_non_empty_reason(&reason)?;
+        validation::validate_quantity(fulfilled_delta_ml)?;
+
+        let admin = storage::get_admin(&env);
+        if caller != admin {
+            return Err(ContractError::Unauthorized);
+        }
+
+        let mut request =
+            storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
+        if request.status != RequestStatus::Approved && request.status != RequestStatus::InProgress {
+            return Err(ContractError::InvalidRequestStatus);
+        }
+
+        let remaining = request.quantity_ml.saturating_sub(request.fulfilled_quantity_ml);
+        if fulfilled_delta_ml > remaining {
+            return Err(ContractError::InvalidQuantity);
+        }
+
+        let old_status = request.status;
+        request.fulfilled_quantity_ml += fulfilled_delta_ml;
+        let new_status = if request.fulfilled_quantity_ml == request.quantity_ml {
+            RequestStatus::Fulfilled
+        } else {
+            RequestStatus::InProgress
+        };
+        request.status = new_status;
+        Self::append_history(
+            &env,
+            &mut request,
+            &caller,
+            old_status,
+            false,
+            new_status,
+            reason,
+            fulfilled_delta_ml,
+            false,
+        );
+        storage::set_request(&env, &request);
+
+        events::emit_request_status_updated(
+            &env,
+            request_id,
+            &caller,
+            old_status,
+            new_status,
+            env.ledger().timestamp(),
+        );
+        Ok(())
+    }
+
+    pub fn get_request_history(
+        env: Env,
+        request_id: u64,
+    ) -> Result<soroban_sdk::Vec<RequestHistoryEntry>, ContractError> {
+        storage::require_initialized(&env)?;
+        let request = storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
+        Ok(request.history)
     }
 
     pub fn get_request(env: Env, request_id: u64) -> Result<BloodRequest, ContractError> {
