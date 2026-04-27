@@ -42,7 +42,7 @@
     "@nestjs/swagger": "^11.2.6",
     "@nestjs/throttler": "^6.5.0",
     "@nestjs/typeorm": "^11.0.0",
-    "@nestjs/websockets": "^11.1.14",
+    "@nestjs/websockets": "^11.1.19",
     "@stellar/stellar-sdk": "^14.5.0",
     "@types/bull": "^3.15.9",
     "africastalking": "^0.7.9",
