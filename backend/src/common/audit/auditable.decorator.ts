@@ -7,6 +7,8 @@ export interface AuditableOptions {
   resourceType: string;
   /** Path to the resource ID in route params, defaults to 'id'. */
   resourceIdParam?: string;
+  /** Additional metadata to include in the audit log */
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -17,6 +19,15 @@ export interface AuditableOptions {
  * @Auditable({ action: 'blood-unit.status-changed', resourceType: 'BloodUnit' })
  * @Patch(':id/status')
  * updateStatus(...) {}
+ *
+ * @example
+ * @Auditable({
+ *   action: 'financial.fee-policy.updated',
+ *   resourceType: 'FeePolicy',
+ *   metadata: { category: 'financial' }
+ * })
+ * @Put(':id')
+ * update(...) {}
  */
 export const Auditable = (options: AuditableOptions) =>
   SetMetadata(AUDITABLE_KEY, options);
