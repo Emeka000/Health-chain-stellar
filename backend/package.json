@@ -50,7 +50,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.3",
     "exceljs": "^4.4.0",
-    "firebase-admin": "^13.6.1",
+    "firebase-admin": "^13.8.0",
     "ioredis": "^5.9.3",
     "nest-winston": "^1.10.2",
     "nodemailer": "^8.0.1",
