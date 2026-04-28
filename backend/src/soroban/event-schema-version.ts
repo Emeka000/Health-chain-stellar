@@ -6,7 +6,7 @@ export const SUPPORTED_CONTRACT_EVENT_SCHEMA_VERSIONS = [
   CONTRACT_EVENT_SCHEMA_VERSION,
 ] as const;
 
-type EventLike = {
+export type EventLike = {
   eventData?: Record<string, unknown> | null;
   topics?: unknown[] | null;
 };

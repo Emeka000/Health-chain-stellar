@@ -5,7 +5,7 @@ import { ConfigService } from '@nestjs/config';
 
 import { Repository, DataSource } from 'typeorm';
 
-import { OrderEntity } from '../orders/entities/order.entity';
+import { ContractEventIndexerService } from '../contract-event-indexer/contract-event-indexer.service';
 
 import { BlockchainEvent } from './entities/blockchain-event.entity';
 import { assertSupportedContractEventSchemaVersion } from './event-schema-version';
@@ -292,22 +292,60 @@ export class SorobanIndexerService {
   // ── Existing private methods ──────────────────────────────────────────
 
   private async processEvent(event: BlockchainEvent): Promise<void> {
-    const schemaVersion = assertSupportedContractEventSchemaVersion(event);
+    try {
+      // Try to decode using registered decoders
+      const decoded = tryDecodeEvent(event);
 
-    switch (event.eventType) {
-      case 'blood_registered':
-        await this.handleBloodRegistered(event);
-        break;
-      case 'custody_transferred':
-        await this.handleCustodyTransferred(event);
-        break;
-      case 'temperature_logged':
-        await this.handleTemperatureLogged(event);
-        break;
-      default:
+      if (decoded === undefined) {
+        // No decoder registered for this event type/version — quarantine
+        const partialMetadata = extractPartialMetadata(event);
+        await this.contractEventIndexer.quarantinePoisonEvent({
+          dedupKey: `${event.eventType}:${event.transactionHash}:${event.id}`,
+          projectionName: 'soroban-indexer',
+          payload: { ...event.eventData, partialMetadata },
+          errorMessage: `No decoder registered for event type '${event.eventType}' schema version ${partialMetadata.schemaVersion}`,
+          attemptCount: 1,
+        });
         this.logger.warn(
-          `Unknown event type: ${event.eventType} (schema v${schemaVersion})`,
+          `Quarantined undecodable event: ${event.eventType} schema v${partialMetadata.schemaVersion} tx=${event.transactionHash}`,
         );
+        return;
+      }
+
+      // Process decoded event
+      switch (event.eventType) {
+        case 'blood_registered':
+          await this.handleBloodRegistered(decoded);
+          break;
+        case 'custody_transferred':
+          await this.handleCustodyTransferred(decoded);
+          break;
+        case 'temperature_logged':
+          await this.handleTemperatureLogged(decoded);
+          break;
+        default:
+          this.logger.warn(
+            `Unknown event type: ${event.eventType} (processed with decoder)`,
+          );
+      }
+    } catch (error) {
+      if (error instanceof UnsupportedContractEventSchemaVersionError) {
+        // Future schema version — quarantine for operator review
+        const partialMetadata = extractPartialMetadata(event);
+        await this.contractEventIndexer.quarantinePoisonEvent({
+          dedupKey: `${event.eventType}:${event.transactionHash}:${event.id}`,
+          projectionName: 'soroban-indexer',
+          payload: { ...event.eventData, partialMetadata },
+          errorMessage: `Unsupported schema version: ${error.message}`,
+          attemptCount: 1,
+        });
+        this.logger.warn(
+          `Quarantined future schema event: ${event.eventType} ${error.message} tx=${event.transactionHash}`,
+        );
+      } else {
+        // Other processing error — rethrow to fail the event
+        throw error;
+      }
     }
   }
 
