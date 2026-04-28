@@ -473,13 +473,13 @@ fn transaction_metadata_is_valid() {
     assert_eq!(metadata.tags.len(), 1);
 }
 
-fn setup_dispute_contract(env: &Env) -> (soroban_sdk::Address, HealthChainContractClient<'_>) {
+fn setup_dispute_contract(env: &Env) -> (soroban_sdk::Address, HealthChainContractClient<'_>, Address) {
     env.mock_all_auths();
     let contract_id = env.register(HealthChainContract, ());
     let client = HealthChainContractClient::new(env, &contract_id);
     let admin = Address::generate(env);
     client.initialize(&admin);
-    (contract_id, client)
+    (contract_id, client, admin)
 }
 
 fn move_payment_to_disputed_ready_state(env: &Env, contract_id: &Address, payment_id: u64) {
@@ -495,14 +495,14 @@ fn move_payment_to_disputed_ready_state(env: &Env, contract_id: &Address, paymen
 #[test]
 fn auto_refund_after_timeout() {
     let env = Env::default();
-    let (contract_id, client) = setup_dispute_contract(&env);
+    let (contract_id, client, admin) = setup_dispute_contract(&env);
     let payer = Address::generate(&env);
     let payee = Address::generate(&env);
     let asset = Address::generate(&env);
     let raiser = Address::generate(&env);
 
     client.set_dispute_timeout(&10);
-    let payment_id = client.create_payment(&1, &payer, &payee, &5_000, &asset);
+    let payment_id = client.create_payment(&1, &payer, &payee, &5_000, &asset, &default_fee_structure(&env), &admin);
     move_payment_to_disputed_ready_state(&env, &contract_id, payment_id);
 
     let dispute_id = client.raise_dispute(
@@ -542,14 +542,14 @@ fn auto_refund_after_timeout() {
 #[test]
 fn no_refund_before_deadline() {
     let env = Env::default();
-    let (contract_id, client) = setup_dispute_contract(&env);
+    let (contract_id, client, admin) = setup_dispute_contract(&env);
     let payer = Address::generate(&env);
     let payee = Address::generate(&env);
     let asset = Address::generate(&env);
     let raiser = Address::generate(&env);
 
     client.set_dispute_timeout(&10);
-    let payment_id = client.create_payment(&1, &payer, &payee, &2_000, &asset);
+    let payment_id = client.create_payment(&1, &payer, &payee, &2_000, &asset, &default_fee_structure(&env), &admin);
     move_payment_to_disputed_ready_state(&env, &contract_id, payment_id);
 
     client.raise_dispute(
@@ -655,7 +655,7 @@ fn low_value_release_keeps_single_admin_flow() {
     let asset = Address::generate(&env);
 
     client.initialize(&admin);
-    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset);
+    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset, &default_fee_structure(&env), &admin);
 
     env.as_contract(&contract_id, || {
         let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
@@ -681,14 +681,14 @@ fn low_value_release_keeps_single_admin_flow() {
 #[test]
 fn manual_resolution_prevents_refund() {
     let env = Env::default();
-    let (contract_id, client) = setup_dispute_contract(&env);
+    let (contract_id, client, admin) = setup_dispute_contract(&env);
     let payer = Address::generate(&env);
     let payee = Address::generate(&env);
     let asset = Address::generate(&env);
     let raiser = Address::generate(&env);
 
     client.set_dispute_timeout(&10);
-    let payment_id = client.create_payment(&1, &payer, &payee, &3_000, &asset);
+    let payment_id = client.create_payment(&1, &payer, &payee, &3_000, &asset, &default_fee_structure(&env), &admin);
     move_payment_to_disputed_ready_state(&env, &contract_id, payment_id);
 
     let dispute_id = client.raise_dispute(
@@ -725,7 +725,7 @@ fn high_value_release_requires_threshold_votes_and_prevents_duplicates() {
 
     client.initialize(&admin);
     client.configure_multisig(&vec![&env, signer_one.clone(), signer_two.clone()], &2);
-    let payment_id = client.create_payment(&1, &payer, &payee, &HIGH_VALUE_THRESHOLD, &asset);
+    let payment_id = client.create_payment(&1, &payer, &payee, &HIGH_VALUE_THRESHOLD, &asset, &default_fee_structure(&env), &admin);
 
     env.as_contract(&contract_id, || {
         let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
@@ -777,14 +777,14 @@ fn high_value_release_requires_threshold_votes_and_prevents_duplicates() {
 #[test]
 fn non_disputed_payments_are_ignored() {
     let env = Env::default();
-    let (_contract_id, client) = setup_dispute_contract(&env);
+    let (_contract_id, client, admin) = setup_dispute_contract(&env);
     let payer = Address::generate(&env);
     let payee = Address::generate(&env);
     let asset = Address::generate(&env);
 
     assert_eq!(client.get_dispute_timeout(), DEFAULT_DISPUTE_TIMEOUT_SECS);
 
-    let _payment_id = client.create_payment(&1, &payer, &payee, &1_500, &asset);
+    let _payment_id = client.create_payment(&1, &payer, &payee, &1_500, &asset, &default_fee_structure(&env), &admin);
     assert_eq!(client.process_expired_disputes(), 0);
     assert_eq!(client.get_payment_stats(), PaymentStats::new());
 }
@@ -803,7 +803,7 @@ fn escrow_conditions_block_release_when_unmet() {
     let asset = Address::generate(&env);
 
     client.initialize(&admin);
-    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset);
+    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset, &default_fee_structure(&env), &admin);
 
     env.as_contract(&contract_id, || {
         let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
@@ -834,7 +834,7 @@ fn escrow_conditions_block_release_before_min_timestamp() {
     let asset = Address::generate(&env);
 
     client.initialize(&admin);
-    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset);
+    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset, &default_fee_structure(&env), &admin);
 
     env.as_contract(&contract_id, || {
         let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
@@ -877,7 +877,7 @@ fn escrow_conditions_block_release_wrong_approver() {
     let asset = Address::generate(&env);
 
     client.initialize(&admin);
-    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset);
+    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset, &default_fee_structure(&env), &admin);
 
     env.as_contract(&contract_id, || {
         let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
@@ -921,7 +921,7 @@ fn escrow_conditions_allow_release_when_all_met() {
     let asset = Address::generate(&env);
 
     client.initialize(&admin);
-    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset);
+    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset, &default_fee_structure(&env), &admin);
 
     env.as_contract(&contract_id, || {
         let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
@@ -957,7 +957,7 @@ fn escrow_conditions_stored_at_payment_creation() {
     let asset = Address::generate(&env);
 
     client.initialize(&admin);
-    let payment_id = client.create_payment(&1, &payer, &payee, &500, &asset);
+    let payment_id = client.create_payment(&1, &payer, &payee, &500, &asset, &default_fee_structure(&env), &admin);
 
     env.as_contract(&contract_id, || {
         let escrow_accounts: Map<u64, EscrowAccount> =
@@ -990,4 +990,59 @@ fn configure_multisig_is_admin_only_and_persists_storage() {
         assert_eq!(config.threshold, 1);
         assert!(config.signers.contains(signer));
     });
+}
+
+#[test]
+fn test_create_payment_fails_with_tampered_fee_payload() {
+    let env = Env::default();
+    let (contract_id, client, admin) = setup_dispute_contract(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    let mut tampered_fee = default_fee_structure(&env);
+    tampered_fee.service_fee = -100; // Invalid negative fee
+
+    let result = client.try_create_payment(
+        &1,
+        &payer,
+        &payee,
+        &5_000,
+        &asset,
+        &tampered_fee,
+        &admin,
+    );
+
+    assert!(result.is_err());
+    // Soroban sdk client returns Result<Result<T, E>, ...>
+    if let Err(Ok(e)) = result {
+        assert_eq!(e, crate::Error::InvalidFeePayload);
+    }
+}
+
+#[test]
+fn test_create_payment_fails_with_unauthorized_backend_auth() {
+    let env = Env::default();
+    let (contract_id, client, _admin) = setup_dispute_contract(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+    let unauthorized_backend = Address::generate(&env);
+
+    let valid_fee = default_fee_structure(&env);
+
+    let result = client.try_create_payment(
+        &1,
+        &payer,
+        &payee,
+        &5_000,
+        &asset,
+        &valid_fee,
+        &unauthorized_backend,
+    );
+
+    assert!(result.is_err());
+    if let Err(Ok(e)) = result {
+        assert_eq!(e, crate::Error::Unauthorized);
+    }
 }
