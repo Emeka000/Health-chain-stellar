@@ -23,9 +23,8 @@ import { Request } from 'express';
 
 import { BlockchainCallbackDto } from '../dto/blockchain-callback.dto';
 import { AdminGuard } from '../guards/admin.guard';
-import { BlockchainHealthService } from '../services/blockchain-health.service';
-import { FailedSorobanTxService } from '../services/failed-soroban-tx.service';
-import { QueueMetricsService } from '../services/queue-metrics.service';
+import { RequireAdminScope } from '../decorators/require-admin-scope.decorator';
+import { AdminScope } from '../enums/admin-scope.enum';
 import { SorobanService } from '../services/soroban.service';
 
 import type {
@@ -179,6 +178,7 @@ export class BlockchainController {
    */
   @Get('queue/status')
   @UseGuards(AdminGuard)
+  @RequireAdminScope(AdminScope.READ_METRICS)
   @HttpCode(HttpStatus.OK)
   async getQueueStatus(): Promise<QueueMetrics> {
     return this.sorobanService.getQueueMetrics();

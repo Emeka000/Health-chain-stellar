@@ -1,8 +1,7 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-ork on thimport { EventEmitterModule } from '@nestjs/event-emitter';
-import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { CompensationModule } from '../common/compensation/compensation.module';
 
@@ -22,6 +21,15 @@ import { SorobanService } from './services/soroban.service';
 
 @Module({
   imports: [
+    ConfigModule,
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        secret: configService.get<string>('JWT_SECRET', 'default-secret'),
+        signOptions: { expiresIn: configService.get<string>('JWT_EXPIRES_IN', '1h') },
+      }),
+    }),
     CompensationModule,
     EventEmitterModule.forRoot(),
     TypeOrmModule.forFeature([FailedSorobanTxEntity, OnChainTxStateEntity]),

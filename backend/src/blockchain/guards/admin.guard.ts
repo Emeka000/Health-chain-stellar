@@ -2,102 +2,135 @@ import {
   Injectable,
   CanActivate,
   ExecutionContext,
+  UnauthorizedException,
   ForbiddenException,
   Logger,
 } from '@nestjs/common';
-
+import { Reflector } from '@nestjs/core';
+import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-
 import { Request } from 'express';
+import { UserRole } from '../../auth/enums/user-role.enum';
+import { AdminScope } from '../enums/admin-scope.enum';
+import { ADMIN_SCOPE_KEY } from '../decorators/require-admin-scope.decorator';
+import type { JwtPayload } from '../../auth/jwt.strategy';
 
 /**
- * Admin Guard
+ * BlockchainAdminGuard
  *
- * Protects admin endpoints by verifying admin permissions.
+ * Protects blockchain admin endpoints using JWT-based authentication
+ * and role/permission checks.
  *
- * Current implementation: Basic header-based authentication
- * Production implementation should use:
- * - JWT token verification
- * - Role-based access control (RBAC)
- * - Database permission checks
- * - Audit logging
+ * - Extracts the Bearer token from the Authorization header.
+ * - Verifies the JWT signature and expiry.
+ * - Ensures the authenticated user holds the `admin` role.
+ * - Optionally enforces a required AdminScope set via @RequireAdminScope().
+ * - Logs every access attempt (success and failure) with actor identity.
+ *
+ * Replaces the previous static x-admin-key header approach.
  */
 @Injectable()
 export class AdminGuard implements CanActivate {
   private readonly logger = new Logger(AdminGuard.name);
 
-  constructor(private configService: ConfigService) {}
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly configService: ConfigService,
+    private readonly reflector: Reflector,
+  ) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
+    const { method, path, ip } = request;
 
-    // Check admin permission
-    const isAdmin = this.checkAdminPermission(request);
-
-    if (!isAdmin) {
-      this.logger.warn(`Unauthorized admin access attempt from ${request.ip}`, {
-        path: request.path,
-        method: request.method,
-      });
-      throw new ForbiddenException('Admin permission required');
+    // ── 1. Extract Bearer token ─────────────────────────────────────────────
+    const authHeader = request.headers['authorization'];
+    if (!authHeader?.startsWith('Bearer ')) {
+      this.logger.warn(
+        `[AdminGuard] 401 — missing Bearer token | ${method} ${path} | ip=${ip}`,
+      );
+      throw new UnauthorizedException(
+        'Authentication required. Please provide a valid Bearer token.',
+      );
     }
 
-    this.logger.debug(`Admin access granted to ${request.ip}`, {
-      path: request.path,
-    });
+    const token = authHeader.substring(7);
+
+    // ── 2. Verify JWT ───────────────────────────────────────────────────────
+    let payload: JwtPayload;
+    try {
+      const secret = this.configService.get<string>('JWT_SECRET', 'default-secret');
+      payload = this.jwtService.verify<JwtPayload>(token, { secret });
+    } catch (err: any) {
+      const isExpired = err?.name === 'TokenExpiredError';
+      this.logger.warn(
+        `[AdminGuard] 401 — ${isExpired ? 'expired token' : 'invalid token'} | ${method} ${path} | ip=${ip}`,
+      );
+      throw new UnauthorizedException(
+        isExpired
+          ? 'Token has expired. Please re-authenticate.'
+          : 'Invalid token. Authentication failed.',
+      );
+    }
+
+    // ── 3. Check admin role ─────────────────────────────────────────────────
+    const userRole = payload.role as UserRole;
+    if (userRole !== UserRole.ADMIN) {
+      this.logger.warn(
+        `[AdminGuard] 403 — insufficient role | userId=${payload.sub} | role=${userRole} | ${method} ${path}`,
+      );
+      throw new ForbiddenException(
+        'Admin role required to access this resource.',
+      );
+    }
+
+    // ── 4. Check required AdminScope (if set on the handler) ───────────────
+    const requiredScope = this.reflector.getAllAndOverride<AdminScope>(
+      ADMIN_SCOPE_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+
+    if (requiredScope) {
+      const hasScope = this.checkScope(userRole, requiredScope);
+      if (!hasScope) {
+        this.logger.warn(
+          `[AdminGuard] 403 — insufficient scope | userId=${payload.sub} | required=${requiredScope} | ${method} ${path}`,
+        );
+        throw new ForbiddenException(
+          `Insufficient permissions. Required scope: ${requiredScope}`,
+        );
+      }
+    }
+
+    // ── 5. Attach user to request & audit log ──────────────────────────────
+    (request as any).user = {
+      id: payload.sub,
+      email: payload.email,
+      role: payload.role,
+    };
+
+    this.logger.log(
+      `[AdminGuard] Access granted | userId=${payload.sub} | email=${payload.email} | ${method} ${path}${requiredScope ? ` | scope=${requiredScope}` : ''}`,
+    );
+
     return true;
   }
 
   /**
-   * Check if request has admin permission.
-   *
-   * Current implementation: Header-based authentication
-   *
-   * TODO: Implement production authentication:
-   * 1. JWT token verification
-   *    - Extract token from Authorization header
-   *    - Verify signature with public key
-   *    - Check token expiration
-   *    - Verify admin role in claims
-   *
-   * 2. Role-based access control
-   *    - Query database for user roles
-   *    - Check if user has 'admin' role
-   *    - Cache role checks with TTL
-   *
-   * 3. Audit logging
-   *    - Log all admin access attempts
-   *    - Track who accessed what and when
-   *    - Alert on suspicious patterns
-   *
-   * @param request - Express request object
-   * @returns true if admin, false otherwise
+   * Checks whether the user's role satisfies the required AdminScope.
+   * ADMIN_FULL grants access to all scopes.
    */
-  private checkAdminPermission(request: Request): boolean {
-    // Current implementation: Check X-Admin-Key header
-    const adminKey = request.headers['x-admin-key'] as string;
-    const expectedKey = this.configService.get<string>('ADMIN_KEY');
+  private checkScope(role: UserRole, required: AdminScope): boolean {
+    if (role !== UserRole.ADMIN) return false;
 
-    if (!expectedKey) {
-      this.logger.warn('ADMIN_KEY environment variable not set');
-      return false;
-    }
+    // Admins have access to all scopes by default.
+    // This can be extended to a per-user scope claim from the JWT when needed.
+    const scopeHierarchy: AdminScope[] = [
+      AdminScope.READ_METRICS,
+      AdminScope.MANAGE_DLQ,
+      AdminScope.ADMIN_FULL,
+    ];
 
-    return adminKey === expectedKey;
-
-    // TODO: Production implementation example:
-    // const authHeader = request.headers.authorization;
-    // if (!authHeader?.startsWith('Bearer ')) {
-    //   return false;
-    // }
-    //
-    // const token = authHeader.substring(7);
-    // try {
-    //   const decoded = jwt.verify(token, this.configService.get('JWT_PUBLIC_KEY'));
-    //   return decoded.role === 'admin' && !this.isTokenExpired(decoded);
-    // } catch (error) {
-    //   this.logger.error('JWT verification failed', error.message);
-    //   return false;
-    // }
+    return scopeHierarchy.includes(required);
   }
 }
