@@ -1,9 +1,10 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { SorobanService } from '../blockchain/services/soroban.service';
 import { OrderEntity } from '../orders/entities/order.entity';
 import { OrderStatus } from '../orders/enums/order-status.enum';
+import { ActorRegistryService, ActorType } from '../registry/actor-registry.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
@@ -20,6 +21,7 @@ export class WorkflowOrchestrationService {
   constructor(
     private readonly soroban: SorobanService,
     private readonly config: ConfigService,
+    private readonly actorRegistry: ActorRegistryService,
     @InjectRepository(OrderEntity)
     private readonly orderRepo: Repository<OrderEntity>,
   ) {}
@@ -41,6 +43,9 @@ export class WorkflowOrchestrationService {
         `Order must be PENDING to allocate units, current status: ${order.status}`,
       );
     }
+
+    // Verify the caller is a registered hospital or blood bank before the on-chain write
+    await this.assertCallerIsRegisteredActor(params.callerAddress);
 
     const jobId = await this.soroban.submitTransaction({
       contractMethod: 'allocate_units',
@@ -77,6 +82,9 @@ export class WorkflowOrchestrationService {
       );
     }
 
+    // Verify the caller is a registered actor before the on-chain write
+    await this.assertCallerIsRegisteredActor(params.callerAddress);
+
     const jobId = await this.soroban.submitTransaction({
       contractMethod: 'confirm_delivery',
       args: [params.requestId, params.callerAddress],
@@ -105,6 +113,9 @@ export class WorkflowOrchestrationService {
       );
     }
 
+    // Verify the caller is a registered actor before the financial settlement write
+    await this.assertCallerIsRegisteredActor(params.callerAddress);
+
     const jobId = await this.soroban.submitTransaction({
       contractMethod: 'settle_payment',
       args: [params.requestId, params.callerAddress],
@@ -131,5 +142,22 @@ export class WorkflowOrchestrationService {
 
     this.logger.log(`Rollback queued for request ${params.requestId}, job ${jobId}`);
     return { jobId };
+  }
+
+  /**
+   * Verifies that a caller address belongs to a registered hospital or blood bank.
+   * Called before every sensitive on-chain write in this service.
+   */
+  private async assertCallerIsRegisteredActor(callerAddress: string): Promise<void> {
+    const [isHospital, isBloodBank] = await Promise.all([
+      this.actorRegistry.isVerifiedActor(callerAddress, ActorType.HOSPITAL),
+      this.actorRegistry.isVerifiedActor(callerAddress, ActorType.BLOOD_BANK),
+    ]);
+
+    if (!isHospital && !isBloodBank) {
+      throw new ForbiddenException(
+        `Caller '${callerAddress}' is not a verified hospital or blood bank in the registry.`,
+      );
+    }
   }
 }

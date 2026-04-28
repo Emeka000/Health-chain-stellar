@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrderEntity } from '../orders/entities/order.entity';
+import { RegistryModule } from '../registry/registry.module';
 import { BlockchainEvent } from '../soroban/entities/blockchain-event.entity';
 import { BloodUnitTrail } from '../soroban/entities/blood-unit-trail.entity';
 import { SorobanModule } from '../soroban/soroban.module';
@@ -45,6 +46,7 @@ import { TransferRecord } from './entities/transfer-record.entity';
     NotificationsModule,
     DonorEligibilityModule,
     PolicyCenterModule,
+    RegistryModule,
   ],
   controllers: [BloodUnitsController, DispositionController, QuarantineController],
   providers: [

@@ -18,6 +18,7 @@ import { PermissionsGuard } from './auth/guards/permissions.guard';
 import { BlockchainModule } from './blockchain/blockchain.module';
 import { BloodRequestsModule } from './blood-requests/blood-requests.module';
 import { BloodUnitsModule } from './blood-units/blood-units.module';
+import { ConsentModule } from './consent/consent.module';
 import { EventsModule } from './events/events.module';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { CorrelationIdService } from './common/middleware/correlation-id.service';
@@ -36,7 +37,6 @@ import { UsersModule } from './users/users.module';
 import { TrackingModule } from './tracking/tracking.module';
 import { TransparencyModule } from './transparency/transparency.module';
 import { PolicyCenterModule } from './policy-center/policy-center.module';
-
 import type Redis from 'ioredis';
 
 // Placeholder for activity logging interceptor (if exists, else will need to be implemented)
@@ -81,6 +81,7 @@ import type Redis from 'ioredis';
     MapsModule,
     TransparencyModule,
     PolicyCenterModule,
+    ConsentModule,
   ],
   controllers: [AppController],
   providers: [

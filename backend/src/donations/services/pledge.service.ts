@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 
+import { ConsentService } from '../../consent/consent.service';
 import { PledgeEntity } from '../entities/pledge.entity';
 import { DonationAsset } from '../enums/donation.enum';
 import { PledgeFrequency, PledgeStatus } from '../enums/pledge.enum';
@@ -30,6 +31,7 @@ export class PledgeService {
   constructor(
     @InjectRepository(PledgeEntity)
     private readonly pledgeRepo: Repository<PledgeEntity>,
+    private readonly consentService: ConsentService,
   ) {}
 
   async createPledge(params: {
@@ -44,6 +46,11 @@ export class PledgeService {
     donorUserId?: string;
     sorobanPledgeId?: string;
   }): Promise<PledgeEntity> {
+    // Enforce consent currency — no participant may enroll under superseded terms
+    if (params.donorUserId) {
+      await this.consentService.assertCurrentConsent(params.donorUserId);
+    }
+
     const memo = `PLG-${uuidv4().substring(0, 8).toUpperCase()}`;
     const now = new Date();
     const nextExecutionAt = addInterval(now, params.frequency);
