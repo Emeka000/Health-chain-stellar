@@ -35,6 +35,7 @@ import { DonationModule } from './donations/donation.module';
 import { DonorEligibilityModule } from './donor-eligibility/donor-eligibility.module';
 import { DonorImpactModule } from './donor-impact/donor-impact.module';
 import { EscalationModule } from './escalation/escalation.module';
+import { EscrowGovernanceModule } from './escrow-governance/escrow-governance.module';
 import { EventsModule } from './events/events.module';
 import { FeeCorrectionModule } from './fee-correction/fee-correction.module';
 import { HealthModule } from './health/health.module';
@@ -161,6 +162,7 @@ import type Redis from 'ioredis';
     DonorEligibilityModule,
     DonorImpactModule,
     EscalationModule,
+    EscrowGovernanceModule,
     EventsModule,
     FeeCorrectionModule,
     FileMetadataModule,
@@ -191,4 +193,4 @@ import type Redis from 'ioredis';
     CorrelationIdService,
   ],
 })
-export class AppModule {}
+export class AppModule { }
