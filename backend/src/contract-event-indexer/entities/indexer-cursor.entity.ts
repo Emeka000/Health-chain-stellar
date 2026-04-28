@@ -37,6 +37,14 @@ export class IndexerCursorEntity {
   @Column({ name: 'last_ledger', type: 'bigint', default: 0 })
   lastLedger: number;
 
+  /**
+   * Hash of the last indexed ledger (e.g. Stellar ledger hash).
+   * Used to detect chain reorganizations: if the incoming ledger hash
+   * for the same sequence differs, a reorg has occurred.
+   */
+  @Column({ name: 'last_ledger_hash', type: 'varchar', length: 128, nullable: true })
+  lastLedgerHash: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

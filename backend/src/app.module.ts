@@ -34,6 +34,7 @@ import { DonorEligibilityModule } from './donor-eligibility/donor-eligibility.mo
 import { DonorImpactModule } from './donor-impact/donor-impact.module';
 import { EscalationModule } from './escalation/escalation.module';
 import { EventsModule } from './events/events.module';
+import { FeeCorrectionModule } from './fee-correction/fee-correction.module';
 import { HealthModule } from './health/health.module';
 import { HospitalsModule } from './hospitals/hospitals.module';
 import { IncidentReviewsModule } from './incident-reviews/incident-reviews.module';
@@ -168,6 +169,7 @@ import type Redis from 'ioredis';
     DonorImpactModule,
     EscalationModule,
     EventsModule,
+    FeeCorrectionModule,
     FileMetadataModule,
     HospitalsModule,
     IncidentReviewsModule,

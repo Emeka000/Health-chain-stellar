@@ -23,9 +23,9 @@ import { Request } from 'express';
 
 import { BlockchainCallbackDto } from '../dto/blockchain-callback.dto';
 import { AdminGuard } from '../guards/admin.guard';
-import { BlockchainHealthService } from '../services/blockchain-health.service';
-import { FailedSorobanTxService } from '../services/failed-soroban-tx.service';
-import { QueueMetricsService } from '../services/queue-metrics.service';
+import { RequireAdminScope } from '../decorators/require-admin-scope.decorator';
+import { AdminScope } from '../enums/admin-scope.enum';
+import { DlqReplayAuditService } from '../services/dlq-replay-audit.service';
 import { SorobanService } from '../services/soroban.service';
 
 import type {
@@ -44,6 +44,7 @@ export class BlockchainController {
     private queueMetricsService: QueueMetricsService,
     private failedTxService: FailedSorobanTxService,
     private blockchainHealthService: BlockchainHealthService,
+    private dlqReplayAuditService: DlqReplayAuditService,
   ) {}
 
   /**
@@ -179,6 +180,7 @@ export class BlockchainController {
    */
   @Get('queue/status')
   @UseGuards(AdminGuard)
+  @RequireAdminScope(AdminScope.READ_METRICS)
   @HttpCode(HttpStatus.OK)
   async getQueueStatus(): Promise<QueueMetrics> {
     return this.sorobanService.getQueueMetrics();
@@ -297,6 +299,7 @@ export class BlockchainController {
    *
    * Finds all FailedSorobanTxEntity rows with status=FAILED, clears their
    * idempotency keys, and resubmits them to the main queue.
+   * Persists a DLQ replay audit record with actor identity and outcome.
    *
    * POST /blockchain/admin/retry-failed
    *
@@ -306,7 +309,10 @@ export class BlockchainController {
   @Post('admin/retry-failed')
   @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.OK)
-  async retryFailedOutboxEvents(): Promise<{
+  async retryFailedOutboxEvents(
+    @Body('actorId') actorId?: string,
+    @Body('reason') reason?: string,
+  ): Promise<{
     replayed: number;
     skipped: number;
     errors: Array<{ id: string; jobId: string; reason: string }>;
@@ -344,7 +350,31 @@ export class BlockchainController {
       }
     }
 
+    // Persist audit record
+    await this.dlqReplayAuditService.record({
+      actorId: actorId ?? 'unknown',
+      reason: reason ?? 'manual admin retry',
+      jobsAttempted: failed.length,
+      jobsReplayed: replayed,
+      jobsFailed: skipped,
+      errorDetails: errors.length > 0 ? JSON.stringify(errors) : undefined,
+    });
+
     return { replayed, skipped, errors };
+  }
+
+  /**
+   * List DLQ replay audit records (ADMIN only).
+   *
+   * GET /blockchain/admin/replay-audits
+   *
+   * @throws 403 if not authenticated as admin
+   */
+  @Get('admin/replay-audits')
+  @UseGuards(AdminGuard)
+  @HttpCode(HttpStatus.OK)
+  async getReplayAudits() {
+    return this.dlqReplayAuditService.findAll();
   }
 
   /**

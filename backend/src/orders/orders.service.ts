@@ -5,16 +5,12 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 
 import { PaginatedResponse, PaginationUtil } from '../common/pagination';
-import {
-  OrderDisputedEvent,
-  OrderRiderAssignedEvent,
-  OrderResolvedEvent,
-} from '../events';
+import { OutboxService } from '../events/outbox.service';
+import { OutboxEventType } from '../events/outbox-event.entity';
 import { InventoryService } from '../inventory/inventory.service';
 import { ApprovalService } from '../approvals/approval.service';
 import { ApprovalActionType } from '../approvals/enums/approval.enum';
@@ -48,12 +44,12 @@ export class OrdersService {
     private readonly orderRepo: Repository<OrderEntity>,
     private readonly stateMachine: OrderStateMachine,
     private readonly eventStore: OrderEventStoreService,
-    private readonly eventEmitter: EventEmitter2,
     private readonly inventoryService: InventoryService,
     private readonly requestStatusService: RequestStatusService,
     private readonly orderFeeService: OrderFeeService,
     private readonly approvalService: ApprovalService,
     private readonly slaService: SlaService,
+    private readonly outboxService: OutboxService,
   ) {}
 
   async findAll(status?: string, hospitalId?: string) {
@@ -171,12 +167,16 @@ export class OrdersService {
 
   async assignRider(orderId: string, riderId: string, actorId?: string) {
     const order = await this.findOrderOrFail(orderId);
-    order.riderId = riderId;
-    await this.orderRepo.save(order);
-    this.eventEmitter.emit(
-      'order.rider.assigned',
-      new OrderRiderAssignedEvent(orderId, riderId),
-    );
+    await this.dataSource.transaction(async (manager) => {
+      order.riderId = riderId;
+      await manager.save(OrderEntity, order);
+      await this.outboxService.publishInTransaction(
+        manager,
+        OutboxEventType.ORDER_DISPATCHED,
+        { orderId, riderId, actorId: actorId ?? null },
+        { aggregateId: orderId, aggregateType: 'Order' },
+      );
+    });
     await this.slaService
       .startStage(orderId, SlaStage.DISPATCH_ACCEPTANCE, {
         hospitalId: order.hospitalId,
@@ -195,17 +195,22 @@ export class OrdersService {
     order.status = OrderStatus.DISPUTED;
     order.disputeId = dto.disputeId || `DISP-${id.split('-')[0]}-${Date.now()}`;
     order.disputeReason = dto.reason;
-    const saved = await this.orderRepo.save(order);
-    await this.eventStore.persistEvent({
-      orderId: id,
-      eventType: OrderEventType.ORDER_DISPUTED,
-      payload: { reason: dto.reason, disputeId: order.disputeId },
-      actorId,
+    const saved = await this.dataSource.transaction(async (manager) => {
+      const s = await manager.save(OrderEntity, order);
+      await this.eventStore.persistEvent({
+        orderId: id,
+        eventType: OrderEventType.ORDER_DISPUTED,
+        payload: { reason: dto.reason, disputeId: order.disputeId },
+        actorId,
+      });
+      await this.outboxService.publishInTransaction(
+        manager,
+        OutboxEventType.ORDER_DISPUTED,
+        { orderId: id, disputeId: order.disputeId, reason: dto.reason, actorId: actorId ?? null },
+        { aggregateId: id, aggregateType: 'Order' },
+      );
+      return s;
     });
-    this.eventEmitter.emit(
-      'order.disputed',
-      new OrderDisputedEvent(id, order.disputeId, dto.reason),
-    );
     return { message: 'Dispute raised successfully', data: saved };
   }
 
@@ -229,15 +234,22 @@ export class OrdersService {
 
   async finalizeDisputeResolution(id: string, resolution: any) {
     const order = await this.findOrderOrFail(id);
-    order.status = OrderStatus.RESOLVED;
-    await this.orderRepo.save(order);
-    await this.eventStore.persistEvent({
-      orderId: id,
-      eventType: OrderEventType.ORDER_RESOLVED,
-      payload: { resolution },
-      actorId: 'SYSTEM_APPROVAL',
+    await this.dataSource.transaction(async (manager) => {
+      order.status = OrderStatus.RESOLVED;
+      await manager.save(OrderEntity, order);
+      await this.eventStore.persistEvent({
+        orderId: id,
+        eventType: OrderEventType.ORDER_RESOLVED,
+        payload: { resolution },
+        actorId: 'SYSTEM_APPROVAL',
+      });
+      await this.outboxService.publishInTransaction(
+        manager,
+        OutboxEventType.ORDER_RESOLVED,
+        { orderId: id, resolution },
+        { aggregateId: id, aggregateType: 'Order' },
+      );
     });
-    this.eventEmitter.emit('order.resolved', new OrderResolvedEvent(id, resolution));
     return { message: 'Dispute resolution finalized and settled.' };
   }
 

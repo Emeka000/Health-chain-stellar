@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { ApprovalModule } from '../approvals/approval.module';
+import { EventsModule } from '../events/events.module';
 import { FeePolicyModule } from '../fee-policy/fee-policy.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -32,6 +33,7 @@ import { OrderStateMachine } from './state-machine/order-state-machine';
     FeePolicyModule,
     ApprovalModule,
     SlaModule,
+    EventsModule,
   ],
   controllers: [OrdersController],
   providers: [

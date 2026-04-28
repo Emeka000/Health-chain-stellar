@@ -545,8 +545,12 @@ pub(crate) const ESCROW_ACCOUNTS: Symbol = symbol_short!("ESC_ACCS");
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DataKey {
+    /// Bank units index: bank_id -> Vec<u64>
+    BankUnits(Address),
     /// Donor units index: (bank_id, donor_id) -> Vec<u64>
     DonorUnits(Address, Symbol),
+    /// Status units index: BloodStatus -> Vec<u64>
+    StatusUnits(BloodStatus),
     /// Custody trail page: (unit_id, page_number) -> Vec<String> (max 20 event IDs)
     UnitTrailPage(u64, u32),
     /// Custody trail metadata: unit_id -> TrailMetadata
@@ -1119,6 +1123,9 @@ impl HealthChainContract {
         units.set(unit_id, unit.clone());
         env.storage().persistent().set(&BLOOD_UNITS, &units);
 
+        // Maintain status index
+        reindex_status(&env, unit_id, old_status, BloodStatus::Reserved);
+
         record_status_change(
             &env,
             unit_id,
@@ -1197,6 +1204,9 @@ impl HealthChainContract {
 
             units.set(unit_id, unit.clone());
 
+            // Maintain status index
+            reindex_status(&env, unit_id, old_status, BloodStatus::Reserved);
+
             // Record status change
             record_status_change(
                 &env,
@@ -1257,6 +1267,9 @@ impl HealthChainContract {
 
         units.set(unit_id, unit.clone());
         env.storage().persistent().set(&BLOOD_UNITS, &units);
+
+        // Maintain status index
+        reindex_status(&env, unit_id, old_status, BloodStatus::Available);
 
         // Record status change
         record_status_change(
@@ -1359,6 +1372,9 @@ impl HealthChainContract {
 
         units.set(unit_id, unit.clone());
         env.storage().persistent().set(&BLOOD_UNITS, &units);
+
+        // Maintain status index
+        reindex_status(&env, unit_id, old_status, BloodStatus::InTransit);
 
         record_status_change(
             &env,
@@ -1479,6 +1495,9 @@ impl HealthChainContract {
             units.set(unit_id, unit.clone());
             env.storage().persistent().set(&BLOOD_UNITS, &units);
 
+            // Maintain status index
+            reindex_status(&env, unit_id, old_status, BloodStatus::Expired);
+
             // Update custody event to Recovered status to indicate recovery action
             custody_event.status = CustodyStatus::Recovered;
             custody_events.set(event_id.clone(), custody_event.clone());
@@ -1532,6 +1551,9 @@ impl HealthChainContract {
 
         units.set(unit_id, unit.clone());
         env.storage().persistent().set(&BLOOD_UNITS, &units);
+
+        // Maintain status index
+        reindex_status(&env, unit_id, old_status, BloodStatus::Delivered);
 
         // Record status change
         record_status_change(
@@ -1634,6 +1656,9 @@ impl HealthChainContract {
         units.set(unit_id, unit.clone());
         env.storage().persistent().set(&BLOOD_UNITS, &units);
 
+        // Maintain status index
+        reindex_status(&env, unit_id, old_status, BloodStatus::Reserved);
+
         // Record status change
         record_status_change(
             &env,
@@ -1714,6 +1739,9 @@ impl HealthChainContract {
         units.set(unit_id, unit.clone());
         env.storage().persistent().set(&BLOOD_UNITS, &units);
 
+        // Maintain status index
+        reindex_status(&env, unit_id, old_status, BloodStatus::Discarded);
+
         // Record status change
         record_status_change(
             &env,
@@ -1772,6 +1800,9 @@ impl HealthChainContract {
         unit.status = BloodStatus::Quarantined;
         units.set(unit_id, unit.clone());
         env.storage().persistent().set(&BLOOD_UNITS, &units);
+
+        // Maintain status index
+        reindex_status(&env, unit_id, old_status, BloodStatus::Quarantined);
 
         record_status_change(
             &env,
@@ -1835,6 +1866,9 @@ impl HealthChainContract {
         unit.status = new_status;
         units.set(unit_id, unit.clone());
         env.storage().persistent().set(&BLOOD_UNITS, &units);
+
+        // Maintain status index
+        reindex_status(&env, unit_id, old_status, new_status);
 
         record_status_change(&env, unit_id, old_status, new_status, caller.clone());
 
@@ -1937,6 +1971,77 @@ impl HealthChainContract {
 
         results
     }
+}
+
+// ── INDEX HELPERS (Internal) ──
+
+/// Append `unit_id` to the BankUnits index for `bank_id`.
+pub(crate) fn index_bank_unit(env: &Env, bank_id: &Address, unit_id: u64) {
+    let key = DataKey::BankUnits(bank_id.clone());
+    let mut ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env));
+    ids.push_back(unit_id);
+    env.storage().persistent().set(&key, &ids);
+}
+
+/// Append `unit_id` to the DonorUnits index for `(bank_id, donor_id)` and the
+/// global sentinel index `(ZERO_ADDR, donor_id)` used by cross-bank donor queries.
+pub(crate) fn index_donor_unit(env: &Env, bank_id: &Address, donor_id: &Symbol, unit_id: u64) {
+    // Per-bank index
+    let key = DataKey::DonorUnits(bank_id.clone(), donor_id.clone());
+    let mut ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env));
+    ids.push_back(unit_id);
+    env.storage().persistent().set(&key, &ids);
+
+    // Global cross-bank index (sentinel zero-address)
+    let sentinel = Address::from_contract_id(env, &soroban_sdk::BytesN::from_array(env, &[0u8; 32]));
+    let global_key = DataKey::DonorUnits(sentinel, donor_id.clone());
+    let mut global_ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&global_key)
+        .unwrap_or(Vec::new(env));
+    global_ids.push_back(unit_id);
+    env.storage().persistent().set(&global_key, &global_ids);
+}
+
+/// Move `unit_id` from the `old_status` bucket to the `new_status` bucket.
+/// No-op when `old_status == new_status`.
+pub(crate) fn reindex_status(env: &Env, unit_id: u64, old_status: BloodStatus, new_status: BloodStatus) {
+    if old_status == new_status {
+        return;
+    }
+    // Remove from old bucket
+    let old_key = DataKey::StatusUnits(old_status);
+    let mut old_ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&old_key)
+        .unwrap_or(Vec::new(env));
+    let mut filtered = Vec::new(env);
+    for id in old_ids.iter() {
+        if id != unit_id {
+            filtered.push_back(id);
+        }
+    }
+    env.storage().persistent().set(&old_key, &filtered);
+
+    // Add to new bucket
+    let new_key = DataKey::StatusUnits(new_status);
+    let mut new_ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&new_key)
+        .unwrap_or(Vec::new(env));
+    new_ids.push_back(unit_id);
+    env.storage().persistent().set(&new_key, &new_ids);
 }
 
 // ── SHARED HELPERS (Internal) ──
@@ -3001,6 +3106,9 @@ impl HealthChainContract {
 
             units.set(unit_id, unit);
 
+            // Maintain status index
+            reindex_status(&env, unit_id, old_status, BloodStatus::Reserved);
+
             record_status_change(
                 &env,
                 unit_id,
@@ -3107,10 +3215,13 @@ impl HealthChainContract {
             let unit_id = request.reserved_unit_ids.get(i).unwrap();
             if let Some(mut unit) = units.get(unit_id) {
                 if unit.status == BloodStatus::Reserved {
+                    let old_unit_status = unit.status;
                     unit.status = BloodStatus::Available;
                     unit.recipient_hospital = None;
                     unit.allocation_timestamp = None;
                     units.set(unit_id, unit);
+                    // Maintain status index
+                    reindex_status(&env, unit_id, old_unit_status, BloodStatus::Available);
                 }
             }
         }
@@ -3226,6 +3337,9 @@ impl HealthChainContract {
             unit.delivery_timestamp = Some(current_time);
 
             units.set(unit_id, unit.clone());
+
+            // Maintain status index
+            reindex_status(&env, unit_id, old_status, BloodStatus::Delivered);
 
             // Record blood unit status change
             record_status_change(

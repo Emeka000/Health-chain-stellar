@@ -10,7 +10,7 @@
 
 use soroban_sdk::{symbol_short, vec, Address, Env, Map, Symbol, Vec};
 
-use crate::{BloodStatus, BloodUnit, Error, BLOOD_UNITS};
+use crate::{BloodStatus, BloodUnit, DataKey, Error, BLOOD_UNITS};
 
 // ── READ ──────────────────────────────────────────────────────────────────────
 
@@ -29,23 +29,28 @@ pub fn get_unit(env: &Env, unit_id: u64) -> Result<BloodUnit, Error> {
 
 /// Return all blood units registered by a specific blood bank.
 ///
-/// Performs a full-scan of the units map and filters by `bank_id`.
+/// Uses the BankUnits index — O(k) where k is the number of units for this bank.
 pub fn get_units_by_bank(env: &Env, bank_id: Address) -> Vec<BloodUnit> {
+    let key = DataKey::BankUnits(bank_id);
+    let ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env));
+
     let units: Map<u64, BloodUnit> = env
         .storage()
         .persistent()
         .get(&BLOOD_UNITS)
         .unwrap_or(Map::new(env));
 
-    let mut bank_units = vec![env];
-
-    for (_, unit) in units.iter() {
-        if unit.bank_id == bank_id {
-            bank_units.push_back(unit);
+    let mut result = vec![env];
+    for id in ids.iter() {
+        if let Some(unit) = units.get(id) {
+            result.push_back(unit);
         }
     }
-
-    bank_units
+    result
 }
 
 /// Return `true` when the blood unit's expiration date is in the past.
@@ -59,26 +64,36 @@ pub fn is_expired(env: &Env, unit_id: u64) -> Result<bool, Error> {
 
 /// Return all blood units donated by the given `donor_id` symbol.
 ///
-/// Performs a full-scan of the units map and filters by `donor_id` field.
+/// Uses the DonorUnits index with a sentinel zero-address for cross-bank queries.
+/// Anonymous units (donor_id == "ANON") are excluded unless the caller explicitly
+/// passes `symbol_short!("ANON")`.
 pub fn get_units_by_donor(env: &Env, donor_id: Symbol) -> Vec<BloodUnit> {
+    // Use a sentinel zero-address for global donor index
+    let sentinel = soroban_sdk::Address::from_contract_id(
+        env,
+        &soroban_sdk::BytesN::from_array(env, &[0u8; 32]),
+    );
+    let key = DataKey::DonorUnits(sentinel, donor_id.clone());
+    let ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env));
+
     let units: Map<u64, BloodUnit> = env
         .storage()
         .persistent()
         .get(&BLOOD_UNITS)
         .unwrap_or(Map::new(env));
 
-    let mut donor_units = vec![env];
-
-    for (_, unit) in units.iter() {
-        if unit.donor_id == donor_id {
-            // Exclude a generic "ANON" donor from per-donor queries unless
-            // the caller explicitly asks for it (i.e. passes symbol_short!("ANON")).
+    let mut result = vec![env];
+    for id in ids.iter() {
+        if let Some(unit) = units.get(id) {
             if unit.donor_id == symbol_short!("ANON") && donor_id != symbol_short!("ANON") {
                 continue;
             }
-            donor_units.push_back(unit);
+            result.push_back(unit);
         }
     }
-
-    donor_units
+    result
 }

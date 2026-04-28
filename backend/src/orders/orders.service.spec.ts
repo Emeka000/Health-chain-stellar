@@ -1,9 +1,9 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 
 import { ApprovalService } from '../approvals/approval.service';
+import { OutboxService } from '../events/outbox.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { SlaService } from '../sla/sla.service';
 import { SlaStage } from '../sla/enums/sla-stage.enum';
@@ -53,7 +53,9 @@ const mockEventStore = {
   getOrderHistory: jest.fn().mockResolvedValue([]),
 };
 
-const mockEventEmitter = { emit: jest.fn() };
+const mockOutbox = {
+  publishInTransaction: jest.fn().mockResolvedValue(undefined),
+};
 
 const mockInventory = {
   reserveStockOrThrow: jest.fn().mockResolvedValue(undefined),
@@ -104,7 +106,7 @@ describe('OrdersService', () => {
         { provide: getRepositoryToken(OrderEntity), useValue: mockOrderRepo },
         { provide: OrderStateMachine, useValue: new OrderStateMachine() },
         { provide: OrderEventStoreService, useValue: mockEventStore },
-        { provide: EventEmitter2, useValue: mockEventEmitter },
+        { provide: OutboxService, useValue: mockOutbox },
         { provide: InventoryService, useValue: mockInventory },
         { provide: RequestStatusService, useValue: mockRequestStatus },
         { provide: OrderFeeService, useValue: mockOrderFee },

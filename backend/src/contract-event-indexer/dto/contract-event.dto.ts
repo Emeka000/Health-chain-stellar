@@ -65,6 +65,14 @@ export class IngestEventDto {
   @Type(() => Number)
   ledgerSequence: number;
 
+  /**
+   * Hash of the ledger at ledgerSequence.
+   * When provided, the indexer uses it to detect chain reorganizations.
+   */
+  @IsOptional()
+  @IsString()
+  ledgerHash?: string;
+
   @IsOptional()
   @IsString()
   txHash?: string;
@@ -123,4 +131,44 @@ export class DiscardPoisonEventDto {
   @IsOptional()
   @IsString()
   operatorNotes?: string;
+}
+
+/**
+ * Operator-initiated cursor reset.
+ * Resets one or all cursors to a safe ledger without deleting indexed events.
+ * Use when a cursor is corrupted but events are still valid.
+ */
+export class CursorResetDto {
+  @IsInt()
+  @Min(0)
+  @Type(() => Number)
+  toLedger: number;
+
+  @IsOptional()
+  @IsEnum(ContractDomain)
+  domain?: ContractDomain;
+
+  @IsOptional()
+  @IsString()
+  projectionName?: string;
+}
+
+/**
+ * Verify indexed data integrity for a ledger range.
+ * Returns count of events and whether any gaps exist.
+ */
+export class VerifyIndexedDto {
+  @IsInt()
+  @Min(0)
+  @Type(() => Number)
+  fromLedger: number;
+
+  @IsInt()
+  @Min(0)
+  @Type(() => Number)
+  toLedger: number;
+
+  @IsOptional()
+  @IsEnum(ContractDomain)
+  domain?: ContractDomain;
 }

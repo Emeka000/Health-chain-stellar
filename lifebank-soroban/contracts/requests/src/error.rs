@@ -15,4 +15,6 @@ pub enum ContractError {
     InvalidRequestStatus = 307,
     /// Caller is not the hospital that owns this request.
     NotRequestOwner = 308,
+    /// Transition requires a non-empty human-readable reason.
+    InvalidReason = 309,
 }

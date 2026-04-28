@@ -6,9 +6,9 @@
 //! The public contract entry-points in `lib.rs` delegate to these free functions.
 //!
 //! ## Storage Write Audit (PR checklist)
-//! - [x] `register_unit`  — writes BLOOD_UNITS, NEXT_ID
-//! - [x] `update_status`  — writes BLOOD_UNITS
-//! - [x] `expire_unit`    — writes BLOOD_UNITS
+//! - [x] `register_unit`  — writes BLOOD_UNITS, NEXT_ID, BankUnits index, DonorUnits index, StatusUnits index
+//! - [x] `update_status`  — writes BLOOD_UNITS, StatusUnits index
+//! - [x] `expire_unit`    — writes BLOOD_UNITS, StatusUnits index
 //! - [x] `check_and_expire_batch` — delegates to `expire_unit`
 
 use soroban_sdk::{symbol_short, Address, Env, Map, Symbol, Vec};
@@ -18,8 +18,8 @@ use crate::{
         MAX_BATCH_EXPIRY_SIZE, MAX_QUANTITY_ML, MAX_SHELF_LIFE_DAYS, MIN_QUANTITY_ML,
         MIN_SHELF_LIFE_DAYS, SECONDS_PER_DAY,
     },
-    get_next_id, record_status_change, BloodComponent, BloodRegisteredEvent, BloodStatus,
-    BloodType, BloodUnit, Error, BLOOD_UNITS,
+    get_next_id, index_bank_unit, index_donor_unit, record_status_change, reindex_status,
+    BloodComponent, BloodRegisteredEvent, BloodStatus, BloodType, BloodUnit, Error, BLOOD_UNITS,
 };
 
 // ── WRITE ─────────────────────────────────────────────────────────────────────
@@ -83,6 +83,20 @@ pub fn register_unit(
     units.set(unit_id, blood_unit);
     env.storage().persistent().set(&BLOOD_UNITS, &units);
 
+    // Maintain bank and donor indexes
+    index_bank_unit(env, &bank_id, unit_id);
+    let resolved_donor = donor_id.clone().unwrap_or(symbol_short!("ANON"));
+    index_donor_unit(env, &bank_id, &resolved_donor, unit_id);
+    // New unit starts as Available — seed the status index directly
+    let status_key = crate::DataKey::StatusUnits(BloodStatus::Available);
+    let mut status_ids: soroban_sdk::Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&status_key)
+        .unwrap_or(soroban_sdk::Vec::new(env));
+    status_ids.push_back(unit_id);
+    env.storage().persistent().set(&status_key, &status_ids);
+
     // Record initial status
     record_status_change(
         env,
@@ -140,6 +154,9 @@ pub fn update_status(
     units.set(unit_id, unit);
     env.storage().persistent().set(&BLOOD_UNITS, &units);
 
+    // Maintain status index
+    reindex_status(env, unit_id, old_status, new_status);
+
     record_status_change(env, unit_id, old_status, new_status, actor);
 
     Ok(())
@@ -169,6 +186,9 @@ pub fn expire_unit(env: &Env, unit_id: u64) -> Result<(), Error> {
 
     units.set(unit_id, unit);
     env.storage().persistent().set(&BLOOD_UNITS, &units);
+
+    // Maintain status index
+    reindex_status(env, unit_id, old_status, BloodStatus::Expired);
 
     // Record in history
     record_status_change(

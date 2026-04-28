@@ -8,10 +8,8 @@ import { Repository } from 'typeorm';
 import { NotificationEntity } from '../entities/notification.entity';
 import { NotificationChannel } from '../enums/notification-channel.enum';
 import { NotificationStatus } from '../enums/notification-status.enum';
-import { EmailProvider } from '../providers/email.provider';
-import { InAppProvider } from '../providers/in-app.provider';
-import { PushProvider } from '../providers/push.provider';
-import { SmsProvider } from '../providers/sms.provider';
+import { ProviderFailoverService } from '../providers/provider-failover.service';
+import { NotificationDlqService } from '../services/notification-dlq.service';
 
 export interface NotificationJobData {
   notificationId: string;
@@ -19,45 +17,45 @@ export interface NotificationJobData {
   channel: NotificationChannel;
   renderedBody: string;
   templateKey?: string;
-  variables?: any;
+  variables?: Record<string, any>;
+  /** Set when this job was triggered by a DLQ replay */
+  dlqReplay?: boolean;
+  dlqId?: string;
+  /** Set when this job was triggered by the delivery repair cron */
+  repairRun?: boolean;
 }
 
-@Processor('notifications', {
-  concurrency: 5,
-})
+@Processor('notifications', { concurrency: 5 })
 export class NotificationProcessor extends WorkerHost {
   private readonly logger = new Logger(NotificationProcessor.name);
 
   constructor(
     @InjectRepository(NotificationEntity)
-    private notificationRepo: Repository<NotificationEntity>,
-    private smsProvider: SmsProvider,
-    private pushProvider: PushProvider,
-    private emailProvider: EmailProvider,
-    private inAppProvider: InAppProvider,
+    private readonly notificationRepo: Repository<NotificationEntity>,
+    private readonly failoverService: ProviderFailoverService,
+    private readonly dlqService: NotificationDlqService,
   ) {
     super();
   }
 
-  async process(job: Job<NotificationJobData, any, string>): Promise<any> {
-    const { notificationId, channel, recipientId, renderedBody } = job.data;
-
+  async process(job: Job<NotificationJobData>): Promise<any> {
+    const { notificationId, channel, recipientId, renderedBody, variables } =
+      job.data;
     const idempotencyKey = `${notificationId}:${channel}`;
 
     this.logger.log(
-      `Processing notification job ${job.id} for ${channel} -> ${recipientId}`,
+      `Processing notification job ${job.id} [${channel}] -> ${recipientId}` +
+        (job.data.dlqReplay ? ' [DLQ-REPLAY]' : '') +
+        (job.data.repairRun ? ' [REPAIR]' : ''),
     );
 
     const notification = await this.notificationRepo.findOne({
-      where: {
-        notificationId,
-        channel,
-      },
+      where: { id: notificationId },
     });
 
     if (!notification) {
-      this.logger.warn(`Notification ${notificationId} not found`);
-      return;
+      this.logger.warn(`Notification ${notificationId} not found — skipping`);
+      return { status: 'not_found', notificationId };
     }
 
     if (notification.status === NotificationStatus.SENT) {
@@ -67,70 +65,79 @@ export class NotificationProcessor extends WorkerHost {
       return { status: 'already_sent', notificationId };
     }
 
-    try {
-      switch (channel) {
-        case NotificationChannel.SMS:
-          await this.smsProvider.send(recipientId, renderedBody);
-          break;
-        case NotificationChannel.PUSH:
-          // In a real app, recipientId might not be the fcmToken directly.
-          // You'd typically resolve the user's FCM token from the DB here.
-          // For this example, we'll try to use recipientId as token, or use a variable.
-          const fcmToken = job.data.variables?.fcmToken || recipientId;
-          const pushTitle = job.data.variables?.pushTitle || 'New Notification';
-          await this.pushProvider.send(fcmToken, pushTitle, renderedBody);
-          break;
-        case NotificationChannel.EMAIL:
-          const emailSubject =
-            job.data.variables?.emailSubject || 'Notification from Donor Hub';
-          await this.emailProvider.send(
-            recipientId,
-            emailSubject,
-            renderedBody,
-          );
-          break;
-        case NotificationChannel.IN_APP:
-          const payload = {
-            id: notificationId,
-            body: renderedBody,
-            templateKey: job.data.templateKey,
-            createdAt: new Date().toISOString(),
-          };
-          await this.inAppProvider.send(recipientId, payload);
-          break;
-        default:
-          throw new Error(`Unsupported channel: ${channel}`);
-      }
+    // Deliver via failover chain
+    const result = await this.failoverService.deliver(
+      channel,
+      recipientId,
+      renderedBody,
+      variables,
+    );
 
-      // Mark as SENT
-      await this.notificationRepo.update(notificationId, {
+    if (result.delivered) {
+      await this.notificationRepo.update(notification.id, {
         status: NotificationStatus.SENT,
         deliveryError: null,
       });
 
-      return { status: 'sent', notificationId };
-    } catch (error: any) {
-      this.logger.error(
-        `Failed to process job ${job.id}: ${error.message}`,
-        error.stack,
-      );
-      throw error; // Will be caught by BullMQ and trigger retry
+      // If this was a DLQ replay, mark it resolved
+      if (job.data.dlqReplay && job.data.dlqId) {
+        await this.dlqService.markReplayed(job.data.dlqId);
+      }
+
+      return {
+        status: 'sent',
+        notificationId,
+        provider: result.finalProvider,
+        attempts: result.attempts.length,
+      };
     }
+
+    // All providers failed — throw so BullMQ retries
+    const lastError = result.attempts.at(-1)?.error ?? 'All providers failed';
+    this.logger.error(
+      `All providers failed for job ${job.id} [${channel}]: ${lastError}`,
+    );
+    throw new Error(lastError);
   }
 
-  // BullMQ hook equivalent. Use this pattern for failed jobs across retries.
-  async onFailed(job: Job, error: Error) {
-    // If it has reached the max number of attempts, mark it as FAILED in the DB.
-    if (job.attemptsMade >= (job.opts.attempts || 1)) {
-      this.logger.error(
-        `Job ${job.id} definitively failed after ${job.attemptsMade} attempts.`,
+  /**
+   * Called by BullMQ after all retry attempts are exhausted.
+   * Moves the notification to the DLQ.
+   */
+  async onFailed(job: Job<NotificationJobData>, error: Error): Promise<void> {
+    const maxAttempts = job.opts.attempts ?? 1;
+    if (job.attemptsMade < maxAttempts) return; // still has retries left
+
+    this.logger.error(
+      `Job ${job.id} definitively failed after ${job.attemptsMade} attempts: ${error.message}`,
+    );
+
+    const { notificationId, channel } = job.data;
+
+    const notification = await this.notificationRepo.findOne({
+      where: { id: notificationId },
+    });
+
+    if (!notification) return;
+
+    // Re-run failover to capture the final attempt log for DLQ metadata
+    const finalAttemptResult = await this.failoverService.deliver(
+      channel,
+      notification.recipientId,
+      notification.renderedBody ?? '',
+      job.data.variables,
+    );
+
+    if (job.data.dlqReplay && job.data.dlqId) {
+      // Replay itself failed — reset DLQ entry to PENDING for manual retry
+      await this.dlqService.markReplayFailed(job.data.dlqId, error.message);
+    } else {
+      // First-time failure — move to DLQ
+      await this.dlqService.enqueue(
+        notification,
+        finalAttemptResult.attempts,
+        error.message,
       );
-      if (job.data?.notificationId) {
-        await this.notificationRepo.update(job.data.notificationId, {
-          status: NotificationStatus.FAILED,
-          deliveryError: error.message || 'Unknown error',
-        });
-      }
     }
   }
 }
