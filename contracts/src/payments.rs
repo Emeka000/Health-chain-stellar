@@ -1,5 +1,8 @@
 use soroban_sdk::{contracttype, Address, Bytes, String, Symbol, Vec};
 
+pub const DEFAULT_DISPUTE_TIMEOUT_SECS: u64 = 72 * 60 * 60;
+pub const HIGH_VALUE_THRESHOLD: i128 = 10_000;
+
 /// **Dispute evidence (beyond `Symbol` limits).**
 ///
 /// Soroban `Symbol` values are capped (~32 characters) and cannot carry full IPFS CIDs,
@@ -69,6 +72,22 @@ pub struct Dispute {
     pub resolved_at: Option<u64>,
 }
 
+/// Additional dispute metadata that can evolve independently of the dispute record.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DisputeMetadata {
+    pub dispute_id: u64,
+    pub dispute_deadline: u64,
+}
+
+/// Aggregated refund stats for dispute timeout processing.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaymentStats {
+    pub count_auto_refunded: u64,
+    pub total_auto_refunded: i128,
+}
+
 /// Conditions that must be met before escrow funds can be released
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -117,6 +136,23 @@ pub struct EscrowAccount {
     pub release_conditions: ReleaseConditions,
 }
 
+/// M-of-N multisig release configuration for high-value escrow.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MultiSigConfig {
+    pub signers: Vec<Address>,
+    pub threshold: u32,
+}
+
+/// Votes accumulated for a payment release proposal.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingApproval {
+    pub payment_id: u64,
+    pub approvals: Vec<Address>,
+    pub executed: bool,
+}
+
 /// Fee breakdown for a transaction
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -151,6 +187,15 @@ pub struct TransactionMetadata {
     pub tags: Vec<Symbol>,
     /// Reference identifier (not a full URL - use hash or ID)
     pub reference_url: Symbol,
+}
+
+impl PaymentStats {
+    pub fn new() -> Self {
+        Self {
+            count_auto_refunded: 0,
+            total_auto_refunded: 0,
+        }
+    }
 }
 
 impl Payment {
@@ -246,6 +291,60 @@ impl EscrowAccount {
     }
 }
 
+impl MultiSigConfig {
+    pub fn validate(&self) -> Result<(), PaymentError> {
+        if self.signers.is_empty() || self.threshold == 0 {
+            return Err(PaymentError::InvalidMultiSigConfig);
+        }
+
+        if self.threshold > self.signers.len() {
+            return Err(PaymentError::InvalidMultiSigConfig);
+        }
+
+        for i in 0..self.signers.len() {
+            let signer = self.signers.get(i).unwrap();
+            for j in (i + 1)..self.signers.len() {
+                if signer == self.signers.get(j).unwrap() {
+                    return Err(PaymentError::InvalidMultiSigConfig);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn is_signer(&self, approver: &Address) -> bool {
+        self.signers.contains(approver.clone())
+    }
+}
+
+impl PendingApproval {
+    pub fn new(env: &soroban_sdk::Env, payment_id: u64) -> Self {
+        Self {
+            payment_id,
+            approvals: Vec::new(env),
+            executed: false,
+        }
+    }
+
+    pub fn has_voted(&self, approver: &Address) -> bool {
+        self.approvals.contains(approver.clone())
+    }
+
+    pub fn register_vote(&mut self, approver: Address) -> Result<(), PaymentError> {
+        if self.has_voted(&approver) {
+            return Err(PaymentError::DuplicateApproval);
+        }
+
+        self.approvals.push_back(approver);
+        Ok(())
+    }
+
+    pub fn has_reached_threshold(&self, threshold: u32) -> bool {
+        self.approvals.len() >= threshold
+    }
+}
+
 impl FeeStructure {
     /// Calculates total fees
     pub fn total(&self) -> i128 {
@@ -285,4 +384,6 @@ pub enum PaymentError {
     FeesExceedAmount,
     InvalidTransition,
     EscrowNotReleasable,
+    InvalidMultiSigConfig,
+    DuplicateApproval,
 }

@@ -548,3 +548,55 @@ mod contract_tests {
         client.match_request(&1);
     }
 }
+
+#[cfg(test)]
+mod circuit_breaker_tests {
+    use soroban_sdk::{testutils::Address as _, Address, Env};
+
+    use crate::{MatchingContract, MatchingContractClient};
+
+    fn setup<'a>() -> (Env, MatchingContractClient<'a>, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(MatchingContract, ());
+        let client = MatchingContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let inventory = Address::generate(&env);
+        let requests = Address::generate(&env);
+        client.initialize(&admin, &inventory, &requests);
+        (env, client, admin)
+    }
+
+    #[test]
+    fn test_pause_and_unpause() {
+        let (_env, client, admin) = setup();
+        assert!(!client.is_paused());
+        client.pause(&admin);
+        assert!(client.is_paused());
+        client.unpause(&admin);
+        assert!(!client.is_paused());
+    }
+
+    #[test]
+    fn test_pause_blocks_match_request() {
+        let (_env, client, admin) = setup();
+        client.pause(&admin);
+        let result = client.try_match_request(&1u64);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_is_initialized_readable_while_paused() {
+        let (_env, client, admin) = setup();
+        client.pause(&admin);
+        assert!(client.is_initialized());
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_non_admin_cannot_pause() {
+        let (env, client, _admin) = setup();
+        let attacker = Address::generate(&env);
+        client.pause(&attacker);
+    }
+}

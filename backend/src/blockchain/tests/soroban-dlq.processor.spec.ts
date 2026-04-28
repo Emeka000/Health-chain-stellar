@@ -6,6 +6,7 @@ import {
   CompensationAction,
 } from '../../common/errors/app-errors';
 import { SorobanDlqProcessor } from '../processors/soroban-dlq.processor';
+import { FailedSorobanTxService } from '../services/failed-soroban-tx.service';
 import { QueueMetricsService } from '../services/queue-metrics.service';
 
 const mockCompensationService = {
@@ -22,6 +23,10 @@ const mockCompensationService = {
 
 const mockQueueMetricsService = {
   incrementDlq: jest.fn(),
+};
+
+const mockFailedTxService = {
+  persistFailure: jest.fn().mockResolvedValue({ id: 'failed-1' }),
 };
 
 function makeJob(overrides: Partial<any> = {}): any {
@@ -53,6 +58,7 @@ describe('SorobanDlqProcessor', () => {
         SorobanDlqProcessor,
         { provide: CompensationService, useValue: mockCompensationService },
         { provide: QueueMetricsService, useValue: mockQueueMetricsService },
+        { provide: FailedSorobanTxService, useValue: mockFailedTxService },
       ],
     }).compile();
 

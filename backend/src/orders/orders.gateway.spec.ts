@@ -1,13 +1,18 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 
 import { Server, Socket } from 'socket.io';
 
-import { OrdersGateway } from './gateways/orders.gateway';
+import { OrdersGateway } from './orders.gateway';
 
 describe('OrdersGateway', () => {
   let gateway: OrdersGateway;
   let mockServer: Partial<Server>;
-  let mockSocket: Partial<Socket>;
+  let mockSocket: any;
+
+  const mockJwtService = { verify: jest.fn() };
+  const mockConfigService = { get: jest.fn().mockReturnValue('test-secret') };
 
   beforeEach(async () => {
     mockServer = {
@@ -20,14 +25,19 @@ describe('OrdersGateway', () => {
       id: 'test-socket-id',
       join: jest.fn(),
       emit: jest.fn(),
+      data: { userId: 'user-1', hospitalIds: ['hosp-1'], role: 'staff' },
       handshake: {
         auth: { token: 'test-token' },
         headers: {},
-      } as any,
+      },
     };
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [OrdersGateway],
+      providers: [
+        OrdersGateway,
+        { provide: JwtService, useValue: mockJwtService },
+        { provide: ConfigService, useValue: mockConfigService },
+      ],
     }).compile();
 
     gateway = module.get<OrdersGateway>(OrdersGateway);
@@ -36,16 +46,6 @@ describe('OrdersGateway', () => {
 
   it('should be defined', () => {
     expect(gateway).toBeDefined();
-  });
-
-  describe('afterInit', () => {
-    it('should initialize gateway', () => {
-      const logSpy = jest.spyOn(gateway['logger'], 'log');
-      gateway.afterInit(mockServer as Server);
-      expect(logSpy).toHaveBeenCalledWith(
-        'OrdersGateway WebSocket server initialised',
-      );
-    });
   });
 
   describe('handleConnection', () => {
@@ -68,39 +68,47 @@ describe('OrdersGateway', () => {
     });
   });
 
-  describe('emitOrderStatusUpdated', () => {
-    it('should broadcast status update event', () => {
-      gateway.emitOrderStatusUpdated({
-        orderId: 'ORD-001',
-        previousStatus: 'PENDING',
-        newStatus: 'CONFIRMED',
-        eventType: 'ORDER_CONFIRMED',
-        actorId: 'actor-1',
-        timestamp: new Date(),
+  describe('handleJoinHospital — authorization', () => {
+    it('allows join when hospitalId is in the authenticated identity scope', () => {
+      gateway.handleJoinHospital(mockSocket, { hospitalId: 'hosp-1' });
+      expect(mockSocket.join).toHaveBeenCalledWith('hospital:hosp-1');
+      expect(mockSocket.emit).toHaveBeenCalledWith('joined', {
+        hospitalId: 'hosp-1',
+        room: 'hospital:hosp-1',
       });
-
-      expect(mockServer.emit).toHaveBeenCalledWith(
-        'order.status.updated',
-        expect.objectContaining({
-          orderId: 'ORD-001',
-          previousStatus: 'PENDING',
-          newStatus: 'CONFIRMED',
-        }),
-      );
     });
 
-    it('should log broadcast action', () => {
-      const logSpy = jest.spyOn(gateway['logger'], 'log');
-      gateway.emitOrderStatusUpdated({
-        orderId: 'ORD-001',
-        previousStatus: 'CONFIRMED',
-        newStatus: 'DELIVERED',
-        eventType: 'ORDER_DELIVERED',
-        timestamp: new Date(),
+    it('rejects join when hospitalId is NOT in the authenticated identity scope', () => {
+      gateway.handleJoinHospital(mockSocket, { hospitalId: 'hosp-999' });
+      expect(mockSocket.join).not.toHaveBeenCalled();
+      expect(mockSocket.emit).toHaveBeenCalledWith('error', {
+        message: 'Not authorized to join this hospital room',
       });
+    });
 
-      expect(logSpy).toHaveBeenCalledWith(
-        '[WS] order.status.updated — orderId=ORD-001 CONFIRMED → DELIVERED',
+    it('allows admin to join any hospital room', () => {
+      mockSocket.data.role = 'admin';
+      mockSocket.data.hospitalIds = [];
+      gateway.handleJoinHospital(mockSocket, { hospitalId: 'any-hosp' });
+      expect(mockSocket.join).toHaveBeenCalledWith('hospital:any-hosp');
+    });
+
+    it('rejects join and logs audit entry for unauthorized attempt', () => {
+      const warnSpy = jest.spyOn(gateway['logger'], 'warn');
+      gateway.handleJoinHospital(mockSocket, { hospitalId: 'hosp-evil' });
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Unauthorized room join attempt'),
+      );
+    });
+  });
+
+  describe('emitOrderStatusUpdated', () => {
+    it('should broadcast status update event', () => {
+      gateway['emitOrderUpdate']('hosp-1', { id: 'ORD-001' });
+      expect(mockServer.to).toHaveBeenCalledWith('hospital:hosp-1');
+      expect((mockServer.to as jest.Mock)().emit).toHaveBeenCalledWith(
+        'order:updated',
+        expect.objectContaining({ id: 'ORD-001' }),
       );
     });
   });

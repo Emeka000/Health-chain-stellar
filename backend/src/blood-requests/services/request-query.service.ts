@@ -55,9 +55,14 @@ export class RequestQueryService {
     const queryBuilder = this.buildQuery(queryDto);
 
     const [data, total] = await queryBuilder.getManyAndCount();
+    const sortedData = this.sortRequestsByPriority(
+      data,
+      queryDto.sortBy || SortField.TRIAGE_SCORE,
+      queryDto.sortOrder || SortOrder.DESC,
+    );
 
     return {
-      data,
+      data: sortedData,
       total,
       limit: queryDto.limit || 20,
       offset: queryDto.offset || 0,
@@ -119,15 +124,52 @@ export class RequestQueryService {
     // For now, we'll skip this as it's not in the entity
 
     // Sorting
-    const sortField = queryDto.sortBy || SortField.CREATED_AT;
+    const sortField = queryDto.sortBy || SortField.TRIAGE_SCORE;
     const sortOrder = queryDto.sortOrder || SortOrder.DESC;
-    queryBuilder.orderBy(`request.${sortField}`, sortOrder);
+    if (sortField !== SortField.TRIAGE_SCORE) {
+      queryBuilder.orderBy(`request.${sortField}`, sortOrder);
+    }
 
     // Pagination
     queryBuilder.take(queryDto.limit || 20);
     queryBuilder.skip(queryDto.offset || 0);
 
     return queryBuilder;
+  }
+
+  sortRequestsByPriority(
+    requests: BloodRequestEntity[],
+    sortField: SortField,
+    sortOrder: SortOrder,
+  ): BloodRequestEntity[] {
+    const sorted = [...requests];
+
+    sorted.sort((a, b) => {
+      if (sortField === SortField.TRIAGE_SCORE) {
+        const scoreDelta = (b.triageScore ?? 0) - (a.triageScore ?? 0);
+        if (scoreDelta !== 0) {
+          return sortOrder === SortOrder.DESC ? scoreDelta : -scoreDelta;
+        }
+
+        const requiredByDelta = a.requiredByTimestamp - b.requiredByTimestamp;
+        if (requiredByDelta !== 0) return requiredByDelta;
+
+        const createdDelta = a.createdTimestamp - b.createdTimestamp;
+        if (createdDelta !== 0) return createdDelta;
+
+        return a.requestNumber.localeCompare(b.requestNumber);
+      }
+
+      const left = (a as any)[sortField];
+      const right = (b as any)[sortField];
+      const fieldDelta =
+        typeof left === 'number' && typeof right === 'number'
+          ? left - right
+          : `${left}`.localeCompare(`${right}`);
+      return sortOrder === SortOrder.DESC ? -fieldDelta : fieldDelta;
+    });
+
+    return sorted;
   }
 
   async getRequestStatistics(
@@ -155,6 +197,9 @@ export class RequestQueryService {
     const totalRequests = requests.length;
     const pendingRequests = requests.filter(
       (r) => r.status === BloodRequestStatus.PENDING,
+    ).length;
+    const approvedRequests = requests.filter(
+      (r) => r.status === BloodRequestStatus.APPROVED,
     ).length;
     const fulfilledRequests = requests.filter(
       (r) => r.status === BloodRequestStatus.FULFILLED,

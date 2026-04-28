@@ -18,8 +18,7 @@ import {
   OrderStatusUpdatedEvent,
 } from '../../events';
 import { InventoryService } from '../../inventory/inventory.service';
-import { NotificationChannel } from '../../notifications/enums/notification-channel.enum';
-import { NotificationsService } from '../../notifications/notifications.service';
+import { NotificationDispatchService } from '../../common/services/notification-dispatch.service';
 import { BlockchainEvent } from '../../soroban/entities/blockchain-event.entity';
 import { UpdateRequestStatusDto } from '../dto/update-request-status.dto';
 import { OrderEntity } from '../entities/order.entity';
@@ -55,7 +54,7 @@ export class RequestStatusService {
     @InjectRepository(BlockchainEvent)
     private readonly blockchainEventRepo?: Repository<BlockchainEvent>,
     @Optional()
-    private readonly notificationsService?: NotificationsService,
+    private readonly notificationDispatch?: NotificationDispatchService,
   ) {}
 
   async applyStatusUpdate(
@@ -331,27 +330,16 @@ export class RequestStatusService {
     nextStatus: OrderStatus,
     reason?: string,
   ): Promise<void> {
-    if (!this.notificationsService) {
-      return;
-    }
-
-    try {
-      await this.notificationsService.send({
-        recipientId: order.hospitalId,
-        channels: [NotificationChannel.IN_APP],
-        templateKey: 'order.status.updated',
-        variables: {
-          orderId: order.id,
-          previousStatus,
-          newStatus: nextStatus,
-          reason: reason ?? '',
-        },
-      });
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.warn(
-        `Status notification failed for order ${order.id}: ${message}`,
-      );
-    }
+    if (!this.notificationDispatch) return;
+    await this.notificationDispatch.dispatch({
+      recipientId: order.hospitalId,
+      templateKey: 'order.status.updated',
+      variables: {
+        orderId: order.id,
+        previousStatus,
+        newStatus: nextStatus,
+        reason: reason ?? '',
+      },
+    });
   }
 }

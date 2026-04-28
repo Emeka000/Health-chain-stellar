@@ -1,8 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getQueueToken } from '@nestjs/bull';
+import { getQueueToken } from '@nestjs/bullmq';
 import { SorobanService } from '../services/soroban.service';
 import { IdempotencyService } from '../services/idempotency.service';
 import { JobDeduplicationPlugin } from '../plugins/job-deduplication.plugin';
+import { ConfirmationService } from '../services/confirmation.service';
+import { QueueMetricsService } from '../services/queue-metrics.service';
 
 describe('DLQ Replay', () => {
   let service: SorobanService;
@@ -50,6 +52,20 @@ describe('DLQ Replay', () => {
         {
           provide: JobDeduplicationPlugin,
           useValue: mockDeduplicationPlugin,
+        },
+        {
+          provide: ConfirmationService,
+          useValue: { recordConfirmations: jest.fn(), finalityThreshold: 1 },
+        },
+        {
+          provide: QueueMetricsService,
+          useValue: {
+            getDetailedMetrics: jest.fn().mockResolvedValue({
+              counters: {},
+              timings: {},
+              live: { waiting: 0, active: 0, failed: 0, dlqDepth: 0 },
+            }),
+          },
         },
       ],
     }).compile();

@@ -27,4 +27,16 @@ export class DeliveryComplianceEntity extends BaseEntity {
 
   @Column({ name: 'evaluated_at', type: 'timestamptz', nullable: true })
   evaluatedAt: Date | null;
+
+  /** Cumulative minutes the delivery has spent outside 2–8 °C. */
+  @Column({ name: 'breach_duration_minutes', type: 'float', default: 0 })
+  breachDurationMinutes: number;
+
+  /** Timestamp of the first excursion sample in the current breach window. */
+  @Column({ name: 'breach_started_at', type: 'timestamptz', nullable: true })
+  breachStartedAt: Date | null;
+
+  /** Whether a suspension event has already been fired for this delivery. */
+  @Column({ name: 'suspension_triggered', default: false })
+  suspensionTriggered: boolean;
 }

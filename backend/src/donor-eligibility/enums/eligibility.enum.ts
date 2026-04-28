@@ -11,3 +11,11 @@ export enum EligibilityStatus {
   DEFERRED = 'deferred',
   PERMANENTLY_EXCLUDED = 'permanently_excluded',
 }
+
+export enum RulePredicateType {
+  AGE_RANGE = 'age_range',
+  DONATION_INTERVAL = 'donation_interval',
+  DEFERRAL_CHECK = 'deferral_check',
+  HEALTH_SCREENING = 'health_screening',
+  CUSTOM = 'custom',
+}

@@ -22,10 +22,17 @@
     "test:contracts:watch": "jest --testPathPatterns='__contracts__' --watch",
     "test:contracts:cov": "jest --testPathPatterns='__contracts__' --coverage --detectOpenHandles --forceExit",
     "prepare": "cd .. && husky backend/.husky",
-    "seed": "ts-node -r tsconfig-paths/register src/scripts/seed.ts"
+    "seed": "ts-node -r tsconfig-paths/register src/scripts/seed.ts",
+    "migration:run": "typeorm migration:run -d dist/data-source.js",
+    "migration:revert": "typeorm migration:revert -d dist/data-source.js",
+    "migration:generate": "typeorm migration:generate -d dist/data-source.js",
+    "migration:create": "typeorm migration:create"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.600.0",
+    "@aws-sdk/s3-request-presigner": "^3.600.0",
     "@nest-lab/throttler-storage-redis": "^1.2.0",
+    "@nestjs/terminus": "^11.0.0",
     "@nestjs/bullmq": "^11.0.4",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.2",

@@ -12,6 +12,8 @@ export enum SecurityEventType {
   AUTH_ACCOUNT_MANUALLY_UNLOCKED = 'AUTH_ACCOUNT_MANUALLY_UNLOCKED',
   AUTH_SESSION_REVOKED = 'AUTH_SESSION_REVOKED',
   AUTH_REFRESH_TOKEN_REPLAY = 'AUTH_REFRESH_TOKEN_REPLAY',
+  AUTH_SESSION_RISK_ELEVATED = 'AUTH_SESSION_RISK_ELEVATED',
+  AUTH_STEP_UP_REQUIRED = 'AUTH_STEP_UP_REQUIRED',
 }
 
 export interface SecurityEvent {
@@ -25,6 +27,10 @@ export interface SecurityEvent {
   metadata?: Record<string, unknown>;
   description?: string;
   timestamp?: string;
+  /** Session risk context — attached when risk scoring is available */
+  riskScore?: number;
+  riskLevel?: string;
+  riskSignals?: Record<string, boolean>;
 }
 
 @Injectable()
@@ -44,6 +50,9 @@ export class SecurityEventLoggerService {
         email: event.email,
         sessionId: event.sessionId,
         reason: event.reason,
+        ...(event.riskScore !== undefined && { riskScore: event.riskScore }),
+        ...(event.riskLevel !== undefined && { riskLevel: event.riskLevel }),
+        ...(event.riskSignals !== undefined && { riskSignals: event.riskSignals }),
         ...event.metadata,
       },
       ipAddress: event.ipAddress ?? null,
@@ -80,6 +89,9 @@ export class SecurityEventLoggerService {
         return ActivityType.AUTH_SESSION_REVOKED;
       case SecurityEventType.AUTH_REFRESH_TOKEN_REPLAY:
         return ActivityType.AUTH_REFRESH_TOKEN_REPLAY;
+      case SecurityEventType.AUTH_SESSION_RISK_ELEVATED:
+      case SecurityEventType.AUTH_STEP_UP_REQUIRED:
+        return ActivityType.AUTH_SESSION_RISK_ELEVATED;
       default:
         return ActivityType.AUTH_LOGIN_FAILED;
     }

@@ -8,25 +8,35 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Queue } from 'bullmq';
 import { Repository, MoreThanOrEqual } from 'typeorm';
 
+import { BloodRequestEntity } from '../blood-requests/entities/blood-request.entity';
+import { DonationEntity } from '../donations/entities/donation.entity';
 import { InventoryLowEvent } from '../events/inventory-low.event';
 import { OrderEntity } from '../orders/entities/order.entity';
 
 import { InventoryEntity } from './entities/inventory.entity';
 import {
   DemandForecast,
+  ForecastSeasonality,
   ForecastThreshold,
 } from './interfaces/forecast.interface';
+import { forecastHoltWinters } from './services/holt-winters';
 
 @Injectable()
 export class InventoryForecastingService {
   private readonly logger = new Logger(InventoryForecastingService.name);
   private readonly defaultThreshold: number;
   private readonly historyDays: number;
+  private readonly defaultSeasonLength: number;
   private thresholds: Map<string, number> = new Map();
+  private seasonality: Map<string, ForecastSeasonality> = new Map();
 
   constructor(
     @InjectRepository(OrderEntity)
     private readonly orderRepo: Repository<OrderEntity>,
+    @InjectRepository(BloodRequestEntity)
+    private readonly requestRepo: Repository<BloodRequestEntity>,
+    @InjectRepository(DonationEntity)
+    private readonly donationRepo: Repository<DonationEntity>,
     @InjectRepository(InventoryEntity)
     private readonly inventoryRepo: Repository<InventoryEntity>,
     private readonly eventEmitter: EventEmitter2,
@@ -39,10 +49,18 @@ export class InventoryForecastingService {
     this.historyDays = Number(
       this.configService.get<number>('INVENTORY_FORECAST_HISTORY_DAYS', 30),
     );
+    this.defaultSeasonLength = Number(
+      this.configService.get<number>(
+        'INVENTORY_FORECAST_DEFAULT_SEASON_LENGTH',
+        7,
+      ),
+    );
     this.loadThresholds();
+    this.loadSeasonality();
   }
 
   private loadThresholds() {
+    this.thresholds.clear();
     const thresholdsConfig = this.configService.get<string>(
       'INVENTORY_FORECAST_THRESHOLDS',
     );
@@ -67,6 +85,61 @@ export class InventoryForecastingService {
     return (
       this.thresholds.get(`${bloodType}:${region}`) || this.defaultThreshold
     );
+  }
+
+  private loadSeasonality() {
+    this.seasonality.clear();
+    const seasonalityConfig = this.configService.get<string>(
+      'INVENTORY_FORECAST_SEASONALITY',
+    );
+
+    if (!seasonalityConfig) {
+      return;
+    }
+
+    try {
+      const parsed: ForecastSeasonality[] =
+        typeof seasonalityConfig === 'string'
+          ? JSON.parse(seasonalityConfig)
+          : seasonalityConfig;
+
+      parsed.forEach((entry) => {
+        this.seasonality.set(`${entry.bloodType}:${entry.region}`, entry);
+      });
+    } catch {
+      this.logger.warn(
+        'Failed to parse INVENTORY_FORECAST_SEASONALITY, using defaults',
+      );
+    }
+  }
+
+  private getSeasonalityConfig(
+    bloodType: string,
+    region: string,
+  ): ForecastSeasonality {
+    return (
+      this.seasonality.get(`${bloodType}:${region}`) ||
+      this.seasonality.get(`${bloodType}:*`) ||
+      this.seasonality.get(`*:${region}`) || {
+        bloodType,
+        region,
+        seasonLength: this.defaultSeasonLength,
+      }
+    );
+  }
+
+  async recalibrate(primeForecast = true) {
+    this.loadThresholds();
+    this.loadSeasonality();
+
+    const forecasts = primeForecast ? await this.calculateDemandForecasts() : [];
+
+    return {
+      recalibratedAt: new Date().toISOString(),
+      thresholdCount: this.thresholds.size,
+      seasonalityCount: this.seasonality.size,
+      forecastCount: forecasts.length,
+    };
   }
 
   @Cron(process.env.INVENTORY_FORECAST_CRON || CronExpression.EVERY_6_HOURS)
@@ -102,54 +175,134 @@ export class InventoryForecastingService {
 
   async calculateDemandForecasts(): Promise<DemandForecast[]> {
     const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - this.historyDays);
+    cutoffDate.setHours(0, 0, 0, 0);
+    cutoffDate.setDate(cutoffDate.getDate() - this.historyDays + 1);
 
-    const orders = await this.orderRepo.find({
-      where: {
-        createdAt: MoreThanOrEqual(cutoffDate),
-      },
-      select: ['bloodType', 'quantity', 'deliveryAddress', 'createdAt'],
-    });
+    const [orders, requests, donations, inventories] = await Promise.all([
+      this.orderRepo.find({
+        where: {
+          createdAt: MoreThanOrEqual(cutoffDate),
+        },
+        select: ['bloodType', 'quantity', 'deliveryAddress', 'createdAt'],
+      }),
+      this.requestRepo.find({
+        where: {
+          createdAt: MoreThanOrEqual(cutoffDate),
+        },
+      }),
+      this.donationRepo.find({
+        where: {
+          createdAt: MoreThanOrEqual(cutoffDate),
+        },
+        select: ['metadata', 'createdAt'],
+      }),
+      this.inventoryRepo.find({
+        select: ['bloodType', 'region', 'quantity'],
+      }),
+    ]);
 
-    const demandMap = new Map<
-      string,
-      { totalQuantity: number; count: number; currentStock: number }
-    >();
+    const demandSeries = new Map<string, number[]>();
+    const warmupSeries = new Map<string, number[]>();
+    const currentStockMap = new Map<string, number>();
+    const dayInMs = 24 * 60 * 60 * 1000;
+    const cutoffTime = cutoffDate.getTime();
+
+    const ensureSeries = (key: string): number[] => {
+      const existing = demandSeries.get(key);
+      if (existing) {
+        return existing;
+      }
+
+      const created = Array.from({ length: this.historyDays }, () => 0);
+      demandSeries.set(key, created);
+      return created;
+    };
+
+    const addObservation = (key: string, date: Date, quantity: number) => {
+      if (!Number.isFinite(quantity)) {
+        return;
+      }
+
+      const normalizedQuantity = Math.max(0, quantity);
+      const index = Math.floor((date.getTime() - cutoffTime) / dayInMs);
+
+      if (index < 0 || index >= this.historyDays) {
+        return;
+      }
+
+      ensureSeries(key)[index] += normalizedQuantity;
+    };
 
     orders.forEach((order) => {
-      const region = this.extractRegion(order.deliveryAddress);
-      const key = `${order.bloodType}:${region}`;
+      const key = `${order.bloodType}:${this.extractRegion(order.deliveryAddress)}`;
+      addObservation(key, order.createdAt, Number(order.quantity));
+    });
 
-      const existing = demandMap.get(key) || {
-        totalQuantity: 0,
-        count: 0,
-        currentStock: 0,
-      };
-      existing.totalQuantity += order.quantity;
-      existing.count += 1;
-      demandMap.set(key, existing);
+    requests.forEach((request) => {
+      const region = this.extractRegion(request.deliveryAddress);
+
+      request.items?.forEach((item) => {
+        const key = `${item.bloodType}:${region}`;
+        addObservation(key, request.createdAt, item.quantityMl / 450);
+      });
+    });
+
+    donations.forEach((donation) => {
+      const signal = this.extractDonationWarmupSignal(donation);
+      if (!signal) {
+        return;
+      }
+
+      const key = `${signal.bloodType}:${signal.region}`;
+      ensureSeries(key);
+
+      if (signal.quantity > 0) {
+        const existing = warmupSeries.get(key) || [];
+        existing.push(signal.quantity);
+        warmupSeries.set(key, existing);
+      }
+    });
+
+    inventories.forEach((inventory) => {
+      const key = `${inventory.bloodType}:${inventory.region}`;
+      ensureSeries(key);
+      currentStockMap.set(key, (currentStockMap.get(key) || 0) + inventory.quantity);
     });
 
     const forecasts: DemandForecast[] = [];
 
-    for (const [key, data] of demandMap.entries()) {
+    for (const [key, series] of demandSeries.entries()) {
       const [bloodType, region] = key.split(':');
-      const averageDailyDemand = data.totalQuantity / this.historyDays;
-      const currentStock = await this.getCurrentStock(bloodType, region);
+      const seasonality = this.getSeasonalityConfig(bloodType, region);
+      const result = forecastHoltWinters(series, {
+        seasonLength: seasonality.seasonLength,
+        alpha: seasonality.alpha,
+        beta: seasonality.beta,
+        gamma: seasonality.gamma,
+        forecastPoints: 1,
+        warmupValues: warmupSeries.get(key),
+      });
+      const forecastedDemand = result.forecast[0] ?? 0;
+      const currentStock = currentStockMap.get(key) || 0;
 
       const projectedDaysOfSupply =
-        averageDailyDemand > 0 ? currentStock / averageDailyDemand : Infinity;
+        forecastedDemand > 0 ? currentStock / forecastedDemand : Infinity;
 
       forecasts.push({
         bloodType,
         region,
         currentStock,
-        averageDailyDemand,
+        averageDailyDemand: forecastedDemand,
         projectedDaysOfSupply,
+        forecastedDemand,
+        seasonLength: seasonality.seasonLength,
+        sampleSize: series.length + (warmupSeries.get(key)?.length || 0),
       });
     }
 
-    return forecasts;
+    return forecasts.sort(
+      (left, right) => left.projectedDaysOfSupply - right.projectedDaysOfSupply,
+    );
   }
 
   private async handleLowInventory(
@@ -178,18 +331,53 @@ export class InventoryForecastingService {
     });
   }
 
-  private extractRegion(address: string): string {
-    const parts = address.split(',').map((p) => p.trim());
+  private extractRegion(address?: string | null): string {
+    if (!address) {
+      return 'Unknown';
+    }
+
+    const parts = address.split(',').map((part) => part.trim());
     return parts[parts.length - 1] || 'Unknown';
   }
 
-  private async getCurrentStock(
-    bloodType: string,
-    region: string,
-  ): Promise<number> {
-    const inventory = await this.inventoryRepo.findOne({
-      where: { bloodType, region },
-    });
-    return inventory?.quantity || 0;
+  private extractDonationWarmupSignal(
+    donation: Pick<DonationEntity, 'metadata'>,
+  ): { bloodType: string; region: string; quantity: number } | null {
+    const metadata = donation.metadata as
+      | {
+          bloodType?: string;
+          region?: string;
+          quantity?: number;
+          units?: number;
+          quantityMl?: number;
+          inventory?: {
+            bloodType?: string;
+            region?: string;
+            quantity?: number;
+            units?: number;
+            quantityMl?: number;
+          };
+        }
+      | null
+      | undefined;
+
+    const bloodType = metadata?.bloodType || metadata?.inventory?.bloodType;
+    const region = metadata?.region || metadata?.inventory?.region;
+    const quantity =
+      metadata?.quantity ??
+      metadata?.units ??
+      metadata?.inventory?.quantity ??
+      metadata?.inventory?.units ??
+      (metadata?.quantityMl ?? metadata?.inventory?.quantityMl ?? 0) / 450;
+
+    if (!bloodType || !region) {
+      return null;
+    }
+
+    return {
+      bloodType,
+      region,
+      quantity: Number(quantity) || 0,
+    };
   }
 }

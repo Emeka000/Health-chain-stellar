@@ -1,5 +1,5 @@
 /// <reference types="jest" />
-import { getQueueToken } from '@nestjs/bull';
+import { getQueueToken } from '@nestjs/bullmq';
 import { Test, TestingModule } from '@nestjs/testing';
 
 import { QueueMetricsService } from '../services/queue-metrics.service';

@@ -8,6 +8,7 @@ import { PolicyCenterModule } from '../policy-center/policy-center.module';
 import { AnomalyController } from './anomaly.controller';
 import { AnomalyScoringService } from './anomaly-scoring.service';
 import { AnomalyService } from './anomaly.service';
+import { AnomalyDriftService } from './anomaly-drift.service';
 import { AnomalyIncidentEntity } from './entities/anomaly-incident.entity';
 
 @Module({
@@ -20,7 +21,7 @@ import { AnomalyIncidentEntity } from './entities/anomaly-incident.entity';
     PolicyCenterModule,
   ],
   controllers: [AnomalyController],
-  providers: [AnomalyService, AnomalyScoringService],
-  exports: [AnomalyService],
+  providers: [AnomalyService, AnomalyScoringService, AnomalyDriftService],
+  exports: [AnomalyService, AnomalyDriftService],
 })
 export class AnomalyModule {}

@@ -67,8 +67,23 @@ impl Urgency {
 pub enum RequestStatus {
     Pending,
     Approved,
+    InProgress,
     Fulfilled,
     Cancelled,
+    Rejected,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct RequestHistoryEntry {
+    pub previous_status: RequestStatus,
+    pub is_initial_transition: bool,
+    pub new_status: RequestStatus,
+    pub actor: Address,
+    pub reason: String,
+    pub fulfilled_delta_ml: u32,
+    pub released_reservation: bool,
+    pub timestamp: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -85,6 +100,10 @@ pub struct BloodRequest {
     pub status: RequestStatus,
     pub assigned_units: Vec<u64>,
     pub fulfilled_quantity_ml: u32,
+    /// Reservation ID on the inventory contract, set when units are reserved.
+    pub reservation_id: Option<u64>,
+    /// Request lifecycle transitions with rationale and accounting details.
+    pub history: Vec<RequestHistoryEntry>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

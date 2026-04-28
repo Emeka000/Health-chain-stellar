@@ -214,3 +214,171 @@ fn test_create_request_rejects_zero_quantity() {
     );
 }
 
+#[test]
+fn test_partial_fulfillment_transitions_and_accounting() {
+    let (env, client, _contract_id, admin, _inventory_contract) = create_initialized_contract();
+    let hospital = authorize_hospital(&env, &client);
+    env.ledger().set_timestamp(3_000);
+
+    let request_id = client.create_request(
+        &hospital,
+        &BloodType::OPositive,
+        &BloodComponent::WholeBlood,
+        &500u32,
+        &Urgency::Urgent,
+        &3_600u64,
+    );
+
+    client.update_request_status(
+        &admin,
+        &request_id,
+        &RequestStatus::Approved,
+        &String::from_str(&env, "Approved for dispatch"),
+    );
+
+    client.partial_fulfill_request(
+        &admin,
+        &request_id,
+        &200u32,
+        &String::from_str(&env, "First leg delivered"),
+    );
+    let partial = client.get_request(&request_id);
+    assert_eq!(partial.status, RequestStatus::InProgress);
+    assert_eq!(partial.fulfilled_quantity_ml, 200);
+
+    client.partial_fulfill_request(
+        &admin,
+        &request_id,
+        &300u32,
+        &String::from_str(&env, "Final leg delivered"),
+    );
+    let fulfilled = client.get_request(&request_id);
+    assert_eq!(fulfilled.status, RequestStatus::Fulfilled);
+    assert_eq!(fulfilled.fulfilled_quantity_ml, 500);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #302)")]
+fn test_partial_fulfillment_restricted_to_admin() {
+    let (env, client, _contract_id, admin, _inventory_contract) = create_initialized_contract();
+    let hospital = authorize_hospital(&env, &client);
+    env.ledger().set_timestamp(4_000);
+    let request_id = client.create_request(
+        &hospital,
+        &BloodType::APositive,
+        &BloodComponent::RedCells,
+        &300u32,
+        &Urgency::Routine,
+        &4_500u64,
+    );
+    client.update_request_status(
+        &admin,
+        &request_id,
+        &RequestStatus::Approved,
+        &String::from_str(&env, "Approved"),
+    );
+
+    client.partial_fulfill_request(
+        &hospital,
+        &request_id,
+        &100u32,
+        &String::from_str(&env, "Unauthorized attempt"),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #309)")]
+fn test_cancel_requires_reason() {
+    let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
+    let hospital = authorize_hospital(&env, &client);
+    env.ledger().set_timestamp(5_000);
+    let request_id = client.create_request(
+        &hospital,
+        &BloodType::BPositive,
+        &BloodComponent::Plasma,
+        &250u32,
+        &Urgency::Routine,
+        &5_500u64,
+    );
+    client.cancel_request(&hospital, &request_id, &String::from_str(&env, ""));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #309)")]
+fn test_reject_requires_reason() {
+    let (env, client, _contract_id, admin, _inventory_contract) = create_initialized_contract();
+    let hospital = authorize_hospital(&env, &client);
+    env.ledger().set_timestamp(6_000);
+    let request_id = client.create_request(
+        &hospital,
+        &BloodType::ABPositive,
+        &BloodComponent::Platelets,
+        &100u32,
+        &Urgency::Urgent,
+        &6_500u64,
+    );
+    client.update_request_status(
+        &admin,
+        &request_id,
+        &RequestStatus::Rejected,
+        &String::from_str(&env, ""),
+    );
+}
+
+#[test]
+fn test_request_history_captures_transition_rationale() {
+    let (env, client, _contract_id, admin, _inventory_contract) = create_initialized_contract();
+    let hospital = authorize_hospital(&env, &client);
+    env.ledger().set_timestamp(7_000);
+    let request_id = client.create_request(
+        &hospital,
+        &BloodType::ONegative,
+        &BloodComponent::WholeBlood,
+        &400u32,
+        &Urgency::Critical,
+        &7_300u64,
+    );
+    client.update_request_status(
+        &admin,
+        &request_id,
+        &RequestStatus::Approved,
+        &String::from_str(&env, "Stock confirmed"),
+    );
+    client.partial_fulfill_request(
+        &admin,
+        &request_id,
+        &150u32,
+        &String::from_str(&env, "Initial transport completed"),
+    );
+    client.cancel_request(
+        &hospital,
+        &request_id,
+        &String::from_str(&env, "Hospital no longer needs remaining units"),
+    );
+
+    let history = client.get_request_history(&request_id);
+    assert_eq!(history.len(), 4);
+    let created = history.get(0).unwrap();
+    assert_eq!(created.new_status, RequestStatus::Pending);
+    assert_eq!(created.reason, String::from_str(&env, "Request created"));
+
+    let approved = history.get(1).unwrap();
+    assert_eq!(approved.new_status, RequestStatus::Approved);
+    assert_eq!(approved.reason, String::from_str(&env, "Stock confirmed"));
+
+    let partial = history.get(2).unwrap();
+    assert_eq!(partial.new_status, RequestStatus::InProgress);
+    assert_eq!(partial.fulfilled_delta_ml, 150);
+    assert_eq!(
+        partial.reason,
+        String::from_str(&env, "Initial transport completed")
+    );
+
+    let cancelled = history.get(3).unwrap();
+    assert_eq!(cancelled.new_status, RequestStatus::Cancelled);
+    assert_eq!(
+        cancelled.reason,
+        String::from_str(&env, "Hospital no longer needs remaining units")
+    );
+}
+

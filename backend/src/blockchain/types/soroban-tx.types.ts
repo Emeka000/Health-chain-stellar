@@ -7,6 +7,7 @@ export interface SorobanTxJob {
 }
 
 export interface SorobanTxResult {
+  success?: boolean;
   jobId: string;
   transactionHash?: string;
   status: 'pending' | 'completed' | 'failed' | 'dlq';

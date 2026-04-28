@@ -1,12 +1,13 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { CompensationModule } from '../common/compensation/compensation.module';
 
 import { BlockchainController } from './controllers/blockchain.controller';
 import { FailedSorobanTxEntity } from './entities/failed-soroban-tx.entity';
+import { OnChainTxStateEntity } from './entities/on-chain-tx-state.entity';
 import { AdminGuard } from './guards/admin.guard';
 import { JobDeduplicationPlugin } from './plugins/job-deduplication.plugin';
 import { SorobanDlqProcessor } from './processors/soroban-dlq.processor';
@@ -20,8 +21,18 @@ import { SorobanService } from './services/soroban.service';
 
 @Module({
   imports: [
+    ConfigModule,
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        secret: configService.get<string>('JWT_SECRET', 'default-secret'),
+        signOptions: { expiresIn: configService.get<string>('JWT_EXPIRES_IN', '1h') },
+      }),
+    }),
     CompensationModule,
-    TypeOrmModule.forFeature([FailedSorobanTxEntity]),
+    EventEmitterModule.forRoot(),
+    TypeOrmModule.forFeature([FailedSorobanTxEntity, OnChainTxStateEntity]),
     BullModule.registerQueueAsync(
       {
         name: 'soroban-tx-queue',
@@ -52,7 +63,7 @@ import { SorobanService } from './services/soroban.service';
         }),
         inject: [ConfigService],
       },
-    ]),
+    ),
   ],
   providers: [
     SorobanService,
@@ -63,9 +74,10 @@ import { SorobanService } from './services/soroban.service';
     SorobanDlqProcessor,
     FailedSorobanTxService,
     BlockchainHealthService,
+    QueueMetricsService,
     AdminGuard,
   ],
   controllers: [BlockchainController],
-  exports: [SorobanService],
+  exports: [SorobanService, QueueMetricsService],
 })
 export class BlockchainModule {}

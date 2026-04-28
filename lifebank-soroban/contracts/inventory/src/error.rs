@@ -39,4 +39,7 @@ pub enum ContractError {
     ReservationNotFound = 150,
     ReservationExpired = 151,
     NotReservationOwner = 152,
+
+    // Circuit breaker (160)
+    ContractPaused = 160,
 }

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Repository } from 'typeorm';
@@ -12,7 +12,8 @@ import { NotificationChannel } from '../notifications/enums/notification-channel
 import { BloodType } from '../blood-units/enums/blood-type.enum';
 
 import { SurgeRuleEntity } from './entities/surge-rule.entity';
-import { SurgeSimulationRequestDto } from './dto/surge-simulation.dto';
+import { SurgeScenarioEntity, ScenarioStatus } from './entities/surge-scenario.entity';
+import { SurgeSimulationRequestDto, CreateScenarioDto } from './dto/surge-simulation.dto';
 
 export interface SurgeSimulationResult {
   surgeDemandUnits: number;
@@ -24,6 +25,12 @@ export interface SurgeSimulationResult {
   riderGapUnits: number;
   canAbsorbWithStock: boolean;
   canAbsorbWithRiders: boolean;
+  /** Fulfillment latency estimate (minutes) */
+  estimatedFulfillmentLatencyMinutes: number;
+  /** Shortage risk score 0-1 */
+  shortageRiskScore: number;
+  /** Breach probability 0-1 */
+  breachProbability: number;
   summary: string;
 }
 
@@ -31,6 +38,26 @@ export interface SurgeEvaluationResult {
   activated: BloodType[];
   deactivated: BloodType[];
   activeRules: SurgeRuleEntity[];
+}
+
+export interface ScenarioComparisonResult {
+  scenarios: Array<{
+    id: string;
+    name: string;
+    outcome: SurgeSimulationResult;
+    policyConfig: Record<string, unknown>;
+  }>;
+  bottleneck: 'stock' | 'riders' | 'none';
+  recommendation: string;
+}
+
+/** Seeded pseudo-random number generator (LCG) for deterministic replay */
+function seededRandom(seed: number): () => number {
+  let s = seed;
+  return () => {
+    s = (s * 1664525 + 1013904223) & 0xffffffff;
+    return (s >>> 0) / 0xffffffff;
+  };
 }
 
 @Injectable()
@@ -46,11 +73,14 @@ export class SurgeSimulationService {
     private readonly surgeRuleRepo: Repository<SurgeRuleEntity>,
     @InjectRepository(HospitalEntity)
     private readonly hospitalRepo: Repository<HospitalEntity>,
+    @InjectRepository(SurgeScenarioEntity)
+    private readonly scenarioRepo: Repository<SurgeScenarioEntity>,
     private readonly notificationsService: NotificationsService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
-  async simulate(dto: SurgeSimulationRequestDto): Promise<SurgeSimulationResult> {
+  async simulate(dto: SurgeSimulationRequestDto, seed?: number): Promise<SurgeSimulationResult> {
+    const rng = seededRandom(seed ?? Date.now());
     const unitsPerRider = dto.unitsPerRider ?? 4;
 
     let baselineStockUnits = dto.overrideStockUnits;
@@ -80,6 +110,14 @@ export class SurgeSimulationService {
     const canAbsorbWithStock = baselineStockUnits >= dto.surgeDemandUnits;
     const canAbsorbWithRiders = riderCapacityUnits >= dto.surgeDemandUnits;
 
+    // Outcome metrics
+    const shortageRiskScore = canAbsorbWithStock ? 0 : Math.min(1, stockGapUnits / dto.surgeDemandUnits);
+    const breachProbability = canAbsorbWithRiders ? 0 : Math.min(1, riderGapUnits / dto.surgeDemandUnits);
+    // Latency: base 30 min + stochastic jitter from seed
+    const estimatedFulfillmentLatencyMinutes = Math.round(
+      30 + (shortageRiskScore * 60) + (rng() * 10),
+    );
+
     const summary = [
       canAbsorbWithStock
         ? 'Reported stock can cover the surge.'
@@ -87,6 +125,8 @@ export class SurgeSimulationService {
       canAbsorbWithRiders
         ? 'Modeled rider capacity can cover concurrent delivery needs.'
         : `Rider capacity short by approximately ${riderGapUnits} units (at ${unitsPerRider} units / rider).`,
+      `Estimated fulfillment latency: ~${estimatedFulfillmentLatencyMinutes} min.`,
+      `Shortage risk: ${(shortageRiskScore * 100).toFixed(0)}%. Breach probability: ${(breachProbability * 100).toFixed(0)}%.`,
     ].join(' ');
 
     return {
@@ -99,20 +139,119 @@ export class SurgeSimulationService {
       riderGapUnits,
       canAbsorbWithStock,
       canAbsorbWithRiders,
+      estimatedFulfillmentLatencyMinutes,
+      shortageRiskScore,
+      breachProbability,
       summary,
     };
   }
 
-  /**
-   * Evaluate all surge rules against current inventory.
-   * Activates rules where stock < threshold, deactivates where stock has recovered.
-   * Emits surge.activated / surge.deactivated events and notifies hospitals.
-   */
+  // ── Scenario management ──────────────────────────────────────────────────
+
+  async createScenario(dto: CreateScenarioDto, createdBy: string): Promise<SurgeScenarioEntity> {
+    const seed = dto.seed ?? Math.floor(Math.random() * 0xffffffff);
+    const scenario = this.scenarioRepo.create({
+      name: dto.name,
+      description: dto.description ?? null,
+      seed,
+      surgeDemandUnits: dto.surgeDemandUnits,
+      overrideStockUnits: dto.overrideStockUnits ?? null,
+      overrideRiderCapacityUnits: dto.overrideRiderCapacityUnits ?? null,
+      unitsPerRider: dto.unitsPerRider ?? 4,
+      policyConfig: dto.policyConfig ?? {},
+      createdBy,
+    });
+    return this.scenarioRepo.save(scenario);
+  }
+
+  /** Replay a stored scenario deterministically using its seed */
+  async replayScenario(scenarioId: string): Promise<SurgeSimulationResult> {
+    const scenario = await this.scenarioRepo.findOne({ where: { id: scenarioId } });
+    if (!scenario) throw new NotFoundException(`Scenario ${scenarioId} not found`);
+
+    await this.scenarioRepo.update(scenarioId, { status: ScenarioStatus.RUNNING });
+
+    try {
+      const result = await this.simulate(
+        {
+          surgeDemandUnits: scenario.surgeDemandUnits,
+          overrideStockUnits: scenario.overrideStockUnits ?? undefined,
+          overrideRiderCapacityUnits: scenario.overrideRiderCapacityUnits ?? undefined,
+          unitsPerRider: scenario.unitsPerRider,
+        },
+        scenario.seed,
+      );
+
+      await this.scenarioRepo.update(scenarioId, {
+        status: ScenarioStatus.COMPLETED,
+        outcome: result as unknown as Record<string, unknown>,
+      });
+
+      return result;
+    } catch (err) {
+      await this.scenarioRepo.update(scenarioId, { status: ScenarioStatus.FAILED });
+      throw err;
+    }
+  }
+
+  async listScenarios(): Promise<SurgeScenarioEntity[]> {
+    return this.scenarioRepo.find({ order: { createdAt: 'DESC' } });
+  }
+
+  async getScenario(id: string): Promise<SurgeScenarioEntity> {
+    const s = await this.scenarioRepo.findOne({ where: { id } });
+    if (!s) throw new NotFoundException(`Scenario ${id} not found`);
+    return s;
+  }
+
+  /** Compare multiple scenarios and identify bottlenecks */
+  async compareScenarios(scenarioIds: string[]): Promise<ScenarioComparisonResult> {
+    const scenarios = await Promise.all(scenarioIds.map((id) => this.getScenario(id)));
+
+    const results = await Promise.all(
+      scenarios.map(async (s) => ({
+        id: s.id,
+        name: s.name,
+        outcome: await this.simulate(
+          {
+            surgeDemandUnits: s.surgeDemandUnits,
+            overrideStockUnits: s.overrideStockUnits ?? undefined,
+            overrideRiderCapacityUnits: s.overrideRiderCapacityUnits ?? undefined,
+            unitsPerRider: s.unitsPerRider,
+          },
+          s.seed,
+        ),
+        policyConfig: s.policyConfig,
+      })),
+    );
+
+    // Identify dominant bottleneck across scenarios
+    const avgStockGap = results.reduce((a, r) => a + r.outcome.stockGapUnits, 0) / results.length;
+    const avgRiderGap = results.reduce((a, r) => a + r.outcome.riderGapUnits, 0) / results.length;
+
+    let bottleneck: 'stock' | 'riders' | 'none';
+    let recommendation: string;
+
+    if (avgStockGap === 0 && avgRiderGap === 0) {
+      bottleneck = 'none';
+      recommendation = 'All scenarios can be absorbed with current capacity.';
+    } else if (avgStockGap >= avgRiderGap) {
+      bottleneck = 'stock';
+      recommendation = `Stock is the primary bottleneck (avg gap: ${avgStockGap.toFixed(0)} units). Consider pre-positioning inventory.`;
+    } else {
+      bottleneck = 'riders';
+      recommendation = `Rider capacity is the primary bottleneck (avg gap: ${avgRiderGap.toFixed(0)} units). Consider activating standby riders.`;
+    }
+
+    return { scenarios: results, bottleneck, recommendation };
+  }
+
+  // ── Existing methods ─────────────────────────────────────────────────────
+
   async evaluateSurge(): Promise<SurgeEvaluationResult> {
     const rules = await this.surgeRuleRepo.find();
     if (rules.length === 0) return { activated: [], deactivated: [], activeRules: [] };
 
-    // Aggregate available stock per blood type across all banks
     const stockRows = await this.inventoryRepo
       .createQueryBuilder('s')
       .select('s.blood_type', 'bloodType')

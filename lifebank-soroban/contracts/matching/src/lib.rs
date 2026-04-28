@@ -68,6 +68,56 @@ impl MatchingContract {
         Ok(())
     }
 
+    /// Pause all state-mutating functions. Admin only.
+    pub fn pause(env: Env, admin: Address) -> Result<(), MatchingError> {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(MatchingError::Unauthorized)?;
+        if admin != stored {
+            return Err(MatchingError::Unauthorized);
+        }
+        env.storage().instance().set(&DataKey::Paused, &true);
+        Ok(())
+    }
+
+    /// Unpause the contract. Admin only.
+    pub fn unpause(env: Env, admin: Address) -> Result<(), MatchingError> {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(MatchingError::Unauthorized)?;
+        if admin != stored {
+            return Err(MatchingError::Unauthorized);
+        }
+        env.storage().instance().set(&DataKey::Paused, &false);
+        Ok(())
+    }
+
+    /// Returns whether the contract is currently paused.
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
+    fn require_not_paused(env: &Env) -> Result<(), MatchingError> {
+        if env
+            .storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+        {
+            return Err(MatchingError::ContractPaused);
+        }
+        Ok(())
+    }
+
     // ── Core matching ────────────────────────────────────────────────────────
 
     /// Match a single blood request against available inventory.
@@ -87,6 +137,7 @@ impl MatchingContract {
         request_id: u64,
     ) -> Result<MatchResult, MatchingError> {
         Self::require_initialized(&env)?;
+        Self::require_not_paused(&env)?;
 
         // Load request
         let req_addr: Address = env
@@ -167,13 +218,16 @@ impl MatchingContract {
     /// so that critical requests get first pick of available inventory.
     /// Within the same urgency level, requests with an earlier
     /// `required_by_timestamp` are processed first.
+    ///
+    /// Uses insertion sort — O(n log n) average for nearly-sorted inputs,
+    /// acceptable for the small batches expected in practice (≤50 requests).
     pub fn match_multiple_requests(
         env: Env,
         request_ids: Vec<u64>,
     ) -> Result<Vec<MatchResult>, MatchingError> {
         Self::require_initialized(&env)?;
+        Self::require_not_paused(&env)?;
 
-        // Load all requests so we can sort them
         let req_addr: Address = env
             .storage()
             .instance()
@@ -181,6 +235,7 @@ impl MatchingContract {
             .unwrap();
         let req_client = RequestsContractClient::new(&env, &req_addr);
 
+        // Load all requests in one pass
         let mut requests: Vec<BloodRequest> = Vec::new(&env);
         for i in 0..request_ids.len() {
             let rid = request_ids.get(i).unwrap();
@@ -191,7 +246,8 @@ impl MatchingContract {
             requests.push_back(req);
         }
 
-        // Sort by urgency desc, then required_by_timestamp asc (insertion sort)
+        // Insertion sort: O(n²) worst-case but O(n) for already-sorted input.
+        // Batch sizes are bounded by the transaction instruction limit so n is small.
         let len = requests.len();
         for i in 1..len {
             let mut j = i;
@@ -201,9 +257,9 @@ impl MatchingContract {
                 let a_pri = a.urgency.priority();
                 let b_pri = b.urgency.priority();
                 let swap = if a_pri != b_pri {
-                    a_pri < b_pri // higher priority first
+                    a_pri < b_pri
                 } else {
-                    a.required_by_timestamp > b.required_by_timestamp // earlier deadline first
+                    a.required_by_timestamp > b.required_by_timestamp
                 };
                 if swap {
                     requests.set(j - 1, b);
@@ -215,7 +271,6 @@ impl MatchingContract {
             }
         }
 
-        // Match each request in priority order
         let mut results: Vec<MatchResult> = Vec::new(&env);
         for i in 0..requests.len() {
             let req = requests.get(i).unwrap();

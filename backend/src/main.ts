@@ -8,6 +8,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { AppErrorFilter } from './common/filters/irrecoverable-error.filter';
 import { ValidationExceptionFilter } from './common/filters/validation-exception.filter';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
+import { DatabaseSyncGuard } from './config/database-sync.guard';
 import { validateEnv } from './config/validate-env';
 import { ThrottlerExceptionFilter } from './throttler/throttler-exception.filter';
 
@@ -19,6 +20,11 @@ async function bootstrap() {
   } catch {
     process.exit(1);
   }
+
+  // Fail fast if synchronize is enabled outside local environments.
+  const nodeEnv = process.env.NODE_ENV ?? 'development';
+  const synchronize = nodeEnv === 'development' || nodeEnv === 'test';
+  DatabaseSyncGuard.validateSynchronizeConfig(nodeEnv, synchronize);
 
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);

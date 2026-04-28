@@ -16,10 +16,14 @@ import { CreatePolicyVersionDto } from './dto/create-policy-version.dto';
 import { ListPolicyVersionsDto } from './dto/list-policy-versions.dto';
 import { UpdatePolicyVersionDto } from './dto/update-policy-version.dto';
 import { PolicyCenterService } from './policy-center.service';
+import { PolicyReplayService } from './policy-replay.service';
 
 @Controller('policy-center')
 export class PolicyCenterController {
-  constructor(private readonly policyCenterService: PolicyCenterService) {}
+  constructor(
+    private readonly policyCenterService: PolicyCenterService,
+    private readonly replayService: PolicyReplayService,
+  ) {}
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
   @Get('versions')
@@ -70,5 +74,16 @@ export class PolicyCenterController {
     @Query('toVersionId') toVersionId: string,
   ) {
     return this.policyCenterService.compareVersions(fromVersionId, toVersionId);
+  }
+
+  /**
+   * POST /policy-center/versions/:id/replay
+   * Re-evaluate a historical decision using the archived policy snapshot.
+   * Returns archived rules, current rules, and a structured drift report (Issue #618).
+   */
+  @RequirePermissions(Permission.ADMIN_ACCESS)
+  @Post('versions/:id/replay')
+  replayVersion(@Param('id') id: string) {
+    return this.replayService.replay(id);
   }
 }

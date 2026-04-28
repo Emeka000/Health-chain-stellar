@@ -272,8 +272,11 @@ pub enum DataKey {
     /// Admin address
     Admin,
 
-    /// Status change history for a blood unit
-    StatusHistory(u64), // u64 is blood_unit_id -> Vec<StatusChangeHistory>
+    /// Status change history for a blood unit — stores current page number
+    StatusHistory(u64),
+
+    /// One page of status change history: (blood_unit_id, page_number)
+    StatusHistoryPage(u64, u32),
 
     /// Counter for status change history records
     StatusHistoryCounter,
@@ -284,8 +287,11 @@ pub enum DataKey {
     /// Reservation record by reservation ID
     Reservation(u64),
 
-    /// Counter for generating reservation IDs
+    /// Reservation counter
     ReservationCounter,
+
+    /// Circuit breaker: contract is paused
+    Paused,
 }
 
 /// Reservation record for blood units locked for a specific requester
@@ -342,6 +348,23 @@ pub struct StatusChangeEvent {
 
     /// Optional reason for status change (e.g., "Delivered to Hospital A")
     pub reason: Option<String>,
+}
+
+/// On-chain audit event for every blood unit status transition.
+/// Emitted as `blood_unit_status_changed` — immutable once published.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AuditEvent {
+    /// Blood unit that transitioned
+    pub unit_id: u64,
+    /// Status before the transition
+    pub previous_status: BloodStatus,
+    /// Status after the transition
+    pub new_status: BloodStatus,
+    /// Address that authorised the transition
+    pub actor: Address,
+    /// Ledger timestamp of the transition
+    pub timestamp: u64,
 }
 
 /// Historical record of a status change

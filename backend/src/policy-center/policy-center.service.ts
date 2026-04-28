@@ -11,6 +11,7 @@ import { ListPolicyVersionsDto } from './dto/list-policy-versions.dto';
 import { UpdatePolicyVersionDto } from './dto/update-policy-version.dto';
 import { PolicyVersionEntity } from './entities/policy-version.entity';
 import { PolicyVersionStatus } from './enums/policy-version-status.enum';
+import { PolicyReplayService } from './policy-replay.service';
 import { ActivePolicySnapshot, OperationalPolicyRules } from './policy-config.types';
 
 @Injectable()
@@ -20,6 +21,7 @@ export class PolicyCenterService {
   constructor(
     @InjectRepository(PolicyVersionEntity)
     private readonly repo: Repository<PolicyVersionEntity>,
+    private readonly replayService: PolicyReplayService,
   ) {}
 
   getDefaultRules(): OperationalPolicyRules {
@@ -117,6 +119,9 @@ export class PolicyCenterService {
       throw new BadRequestException('Only draft versions can be edited');
     }
 
+    // Immutability guard (Issue #618)
+    this.replayService.assertMutable(existing);
+
     if (dto.rules) {
       existing.rules = this.mergeRules(existing.rules, dto.rules);
       this.validateRules(existing.rules);
@@ -173,7 +178,8 @@ export class PolicyCenterService {
     target.activatedAt = now;
     target.activatedBy = actor;
 
-    return this.repo.save(target);
+    // Lock snapshot: persist rules hash and mark immutable (Issue #618)
+    return this.replayService.lockSnapshot(target);
   }
 
   async rollbackToVersion(id: string, actor: string): Promise<PolicyVersionEntity> {

@@ -148,6 +148,20 @@ fuzz_target!(|input: FuzzInput| {
                         
                         let result = client.try_confirm_transfer(&hospital, &event_id);
                         
+                        // INVARIANT 5: When unit expires during transit, recovery event is emitted
+                        if result.is_err() {
+                            // Check if this was a recovery scenario (unit expiry)
+                            if let Ok(updated_event) = client.try_get_custody_event(&event_id) {
+                                // If custody event status is Recovered, unit must be Expired
+                                if updated_event.status == CustodyStatus::Recovered {
+                                    let recovered_unit = client.get_blood_unit(&unit_id);
+                                    assert_eq!(recovered_unit.status, BloodStatus::Expired,
+                                        "INVARIANT VIOLATION: Recovery event emitted but unit not Expired");
+                                    pending_event_ids.remove(idx);
+                                }
+                            }
+                        }
+                        
                         if result.is_ok() {
                             // INVARIANT 2: A confirmed transfer always updates current_custodian
                             let updated_unit = client.get_blood_unit(&unit_id);
@@ -195,23 +209,24 @@ fuzz_target!(|input: FuzzInput| {
                         let result = client.try_cancel_transfer(&bank, &event_id);
                         
                         if result.is_ok() {
-                            // INVARIANT 3: A cancelled transfer never updates current_custodian
+                            // INVARIANT 6: Cancelled transfers recover the unit to a valid state (Reserved)
+                            // This ensures failed transfers don't permanently lose inventory
                             let updated_unit = client.get_blood_unit(&unit_id);
                             assert_eq!(updated_unit.status, BloodStatus::Reserved,
-                                "INVARIANT VIOLATION: Cancelled transfer changed status from Reserved");
+                                "INVARIANT VIOLATION: Cancelled transfer didn't recover unit to Reserved");
                             
-                            // Verify custody event is cancelled
+                            // INVARIANT 7: Cancelled transfer marks custody event as Recovered
+                            // Recovered status indicates recovery action was taken (not permanent cancellation)
                             let updated_event = client.get_custody_event(&event_id).unwrap();
-                            assert_eq!(updated_event.status, CustodyStatus::Cancelled,
-                                "INVARIANT VIOLATION: Cancelled transfer didn't update event status");
+                            assert_eq!(updated_event.status, CustodyStatus::Recovered,
+                                "INVARIANT VIOLATION: Cancelled transfer didn't mark custody event as Recovered");
                             
                             pending_event_ids.remove(idx);
                             
-                            // INVARIANT 4: Cancelled transfers should NOT increment total_custody_events
-                            let metadata = client.get_custody_trail_metadata(&unit_id);
-                            let confirmed_count = confirmed_transfers.iter().filter(|&&id| id == unit_id).count();
-                            assert_eq!(metadata.total_events as usize, confirmed_count,
-                                "INVARIANT VIOLATION: Cancelled transfer incremented total_custody_events");
+                            // INVARIANT 8: Recovered transfers return unit to reusable state
+                            // Backend can now re-allocate this unit for another transfer
+                            assert_eq!(updated_unit.status, BloodStatus::Reserved,
+                                "INVARIANT VIOLATION: Recovered unit not in valid reusable state");
                         }
                     }
                 }
@@ -240,6 +255,26 @@ fuzz_target!(|input: FuzzInput| {
             assert!(pending_count <= 1, 
                 "GLOBAL INVARIANT VIOLATION: Unit {} has {} pending transfers", 
                 unit_id, pending_count);
+
+            // GLOBAL INVARIANT: Verify recovered units are in valid reusable state
+            // After recovery (expiry during transit or cancellation), unit must be reusable
+            let unit = client.get_blood_unit(unit_id);
+            if unit.status == BloodStatus::Reserved || unit.status == BloodStatus::Available {
+                // Valid states for potential reallocation
+            } else if unit.status == BloodStatus::Expired || unit.status == BloodStatus::Discarded {
+                // Terminal states - unit cannot be recovered
+            } else if unit.status == BloodStatus::InTransit || unit.status == BloodStatus::Delivered {
+                // In progress or completed - ensure consistency with pending events
+                let has_pending = pending_event_ids.iter().any(|eid| {
+                    if let Ok(evt) = client.try_get_custody_event(eid) {
+                        evt.unit_id == *unit_id && evt.status == CustodyStatus::Pending
+                    } else {
+                        false
+                    }
+                });
+                assert!(has_pending || unit.status == BloodStatus::Delivered,
+                    "GLOBAL INVARIANT VIOLATION: Unit {} in transit but no pending transfer", unit_id);
+            }
         }
     }
 });

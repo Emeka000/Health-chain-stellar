@@ -24,8 +24,13 @@ import {
   assertTransferCustodyIds,
   assertLogTemperatureIds,
 } from '../common/guards/on-chain-id.guard';
+import {
+  LIFEBANK_INVENTORY_METHODS,
+  mapBloodTypeToLifebankIndex,
+} from '../blockchain/contracts/lifebank-contracts';
 
 import { BlockchainEvent } from './entities/blockchain-event.entity';
+import { CONTRACT_EVENT_SCHEMA_VERSION } from './event-schema-version';
 import {
   ContractError,
   TemperatureThreshold,
@@ -210,7 +215,7 @@ export class SorobanService implements OnModuleInit {
       })
         .addOperation(
           this.contract.call(
-            'register_blood',
+            LIFEBANK_INVENTORY_METHODS.registerBlood,
             this.createAddressScVal(params.bankId),
             bloodTypeEnum,
             xdr.ScVal.scvU32(params.quantityMl),
@@ -657,7 +662,10 @@ export class SorobanService implements OnModuleInit {
       const event = this.eventRepository.create({
         eventType: params.eventType,
         transactionHash: params.transactionHash,
-        eventData: params.data,
+        eventData: {
+          ...params.data,
+          schemaVersion: CONTRACT_EVENT_SCHEMA_VERSION,
+        },
         blockchainTimestamp: new Date(),
       });
 
@@ -674,23 +682,7 @@ export class SorobanService implements OnModuleInit {
    * Map blood type string to Soroban enum
    */
   private mapBloodType(bloodType: string): xdr.ScVal {
-    const typeMap: Record<string, number> = {
-      'A+': 0,
-      'A-': 1,
-      'B+': 2,
-      'B-': 3,
-      'AB+': 4,
-      'AB-': 5,
-      'O+': 6,
-      'O-': 7,
-    };
-
-    const enumValue = typeMap[bloodType];
-    if (enumValue === undefined) {
-      throw new Error(`Invalid blood type: ${bloodType}`);
-    }
-
-    return xdr.ScVal.scvU32(enumValue);
+    return xdr.ScVal.scvU32(mapBloodTypeToLifebankIndex(bloodType));
   }
 
   private mapQuarantineReason(
@@ -836,6 +828,14 @@ export class SorobanService implements OnModuleInit {
   }
 
   /**
+   * Invalidate the cached verification status for an org.
+   * Must be called after verifyOrganization / revokeOrganizationVerification.
+   */
+  async invalidateOrgVerificationCache(orgId: string): Promise<void> {
+    await this.redis.del(`org:verification:${orgId}`);
+  }
+
+  /**
    * Verify an organization on-chain
    */
   async verifyOrganization(orgId: string): Promise<{ transactionHash: string }> {
@@ -871,6 +871,7 @@ export class SorobanService implements OnModuleInit {
           data: { organizationId: orgId },
         });
 
+        await this.invalidateOrgVerificationCache(orgId);
         return { transactionHash: response.hash };
       }
 
@@ -918,6 +919,7 @@ export class SorobanService implements OnModuleInit {
           data: { organizationId: orgId, reason },
         });
 
+        await this.invalidateOrgVerificationCache(orgId);
         return { transactionHash: response.hash };
       }
 
@@ -926,7 +928,17 @@ export class SorobanService implements OnModuleInit {
   }
 
   /**
-   * Get organization verification metadata from on-chain
+   * Get organization verification status from Soroban contract.
+   *
+   * Reads the `get_verification_metadata` view function (read-only simulation).
+   * Results are cached in Redis for 5 minutes. Cache is invalidated deterministically
+   * by invalidateOrgVerificationCache() after any write (verify / revoke).
+   *
+   * Error mapping:
+   *   - Contract not configured → returns null
+   *   - RPC unavailable / timeout → throws with descriptive message
+   *   - Simulation failure (contract not found, bad args) → returns null
+   *   - ScVal decode failure → throws with descriptive message
    */
   async getOrganizationVerificationStatus(orgId: string): Promise<{
     verified: boolean;
@@ -934,34 +946,71 @@ export class SorobanService implements OnModuleInit {
     verifiedBy?: string;
     revokedAt?: number;
     revocationReason?: string;
+    orgId: string;
   } | null> {
-    return this.executeWithRetry(async () => {
-      const account = await this.server.getAccount(
-        this.sourceKeypair.publicKey(),
-      );
-
-      const transaction = new TransactionBuilder(account, {
-        fee: BASE_FEE,
-        networkPassphrase: this.networkPassphrase,
-      })
-        .addOperation(
-          this.contract.call(
-            'get_verification_metadata',
-            this.createAddressScVal(orgId),
-          ),
-        )
-        .setTimeout(30)
-        .build();
-
-      const simulated = await this.server.simulateTransaction(transaction);
-
-      if (SorobanRpc.Api.isSimulationSuccess(simulated)) {
-        const result = simulated.result?.retval;
-        return this.parseVerificationMetadata(result);
-      }
-
+    if (!this.contract) {
+      this.logger.warn('No Soroban contract configured – skipping org verification query');
       return null;
-    });
+    }
+
+    const cacheKey = `org:verification:${orgId}`;
+    const cached = await this.redis.get(cacheKey);
+    if (cached) {
+      return JSON.parse(cached) as Awaited<ReturnType<typeof this.getOrganizationVerificationStatus>>;
+    }
+
+    let account: Awaited<ReturnType<typeof this.server.getAccount>>;
+    try {
+      account = await this.server.getAccount(this.sourceKeypair.publicKey());
+    } catch (err) {
+      throw new Error(
+        `Soroban RPC unavailable while fetching org verification status for ${orgId}: ${(err as Error).message}`,
+      );
+    }
+
+    const transaction = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(
+        this.contract.call(
+          'get_verification_metadata',
+          this.createAddressScVal(orgId),
+        ),
+      )
+      .setTimeout(30)
+      .build();
+
+    let simulated: Awaited<ReturnType<typeof this.server.simulateTransaction>>;
+    try {
+      simulated = await this.server.simulateTransaction(transaction);
+    } catch (err) {
+      throw new Error(
+        `Soroban RPC timeout or network error for org ${orgId}: ${(err as Error).message}`,
+      );
+    }
+
+    if (!SorobanRpc.Api.isSimulationSuccess(simulated)) {
+      this.logger.warn(
+        `Soroban simulation failed for org ${orgId}: ${JSON.stringify((simulated as SorobanRpc.Api.SimulateTransactionErrorResponse).error)}`,
+      );
+      return null;
+    }
+
+    let metadata: ReturnType<typeof this.parseVerificationMetadata>;
+    try {
+      metadata = this.parseVerificationMetadata(simulated.result?.retval);
+    } catch (err) {
+      throw new Error(
+        `Failed to decode Soroban ScVal for org ${orgId}: ${(err as Error).message}`,
+      );
+    }
+
+    if (!metadata) return null;
+
+    const result = { ...metadata, orgId };
+    await this.redis.setex(cacheKey, 300, JSON.stringify(result));
+    return result;
   }
 
   /**
@@ -1065,4 +1114,3 @@ export class SorobanService implements OnModuleInit {
     }
   }
 }
-

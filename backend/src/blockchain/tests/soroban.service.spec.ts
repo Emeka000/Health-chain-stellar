@@ -1,8 +1,11 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /// <reference types="jest" />
-import { getQueueToken } from '@nestjs/bull';
+import { getQueueToken } from '@nestjs/bullmq';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
 
+import { OnChainTxStateEntity } from '../entities/on-chain-tx-state.entity';
 import { ConfirmationService } from '../services/confirmation.service';
 import { JobDeduplicationPlugin } from '../plugins/job-deduplication.plugin';
 import { IdempotencyService } from '../services/idempotency.service';
@@ -32,13 +35,17 @@ describe('SorobanService', () => {
     getConfirmations: jest.Mock;
     finalityThreshold: number;
   };
+  let mockQueueMetricsService: {
+    getDetailedMetrics: jest.Mock;
+  };
 
   beforeEach(async () => {
     mockTxQueue = {
       add: jest
         .fn()
-        .mockImplementation((_data: SorobanTxJob, opts: { jobId?: string }) =>
-          Promise.resolve({ id: opts?.jobId ?? 'job-123' }),
+        .mockImplementation(
+          (_name: string, _data: SorobanTxJob, opts: { jobId?: string } = {}) =>
+            Promise.resolve({ id: opts.jobId ?? 'job-123' }),
         ),
       count: jest.fn().mockResolvedValue(5),
       getFailedCount: jest.fn().mockResolvedValue(2),
@@ -70,6 +77,21 @@ describe('SorobanService', () => {
       getConfirmations: jest.fn().mockResolvedValue(1),
       finalityThreshold: 1,
     };
+    mockQueueMetricsService = {
+      getDetailedMetrics: jest.fn().mockResolvedValue({
+        counters: {
+          queued: 10,
+          processing: 1,
+          success: 7,
+          failure: 2,
+          retries: 3,
+          dlq: 1,
+        },
+        timings: { avgMs: 120, minMs: 80, maxMs: 300, samples: 7 },
+        live: { waiting: 4, active: 1, failed: 2, delayed: 0, dlqDepth: 1 },
+        since: '2026-01-01T00:00:00.000Z',
+      }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -94,6 +116,18 @@ describe('SorobanService', () => {
           provide: ConfirmationService,
           useValue: mockConfirmationService,
         },
+        {
+          provide: QueueMetricsService,
+          useValue: mockQueueMetricsService,
+        },
+        {
+          provide: EventEmitter2,
+          useValue: { emit: jest.fn() },
+        },
+        {
+          provide: getRepositoryToken(OnChainTxStateEntity),
+          useValue: { findOne: jest.fn().mockResolvedValue(null), create: jest.fn((d: unknown) => d), save: jest.fn() },
+        },
       ],
     }).compile();
 
@@ -112,7 +146,11 @@ describe('SorobanService', () => {
       const jobId = await service.submitTransaction(job);
 
       expect(jobId).toBe('idempotency-key-1');
-      expect(mockTxQueue.add).toHaveBeenCalledWith(job, expect.any(Object));
+      expect(mockTxQueue.add).toHaveBeenCalledWith(
+        job.contractMethod,
+        job,
+        expect.any(Object),
+      );
     });
 
     it('should reject duplicate submissions', async () => {
@@ -131,6 +169,26 @@ describe('SorobanService', () => {
       );
     });
 
+    it('normalizes deprecated contract method aliases before enqueueing', async () => {
+      const job: SorobanTxJob = {
+        contractMethod: 'create_blood_request',
+        args: ['req-1'],
+        idempotencyKey: 'normalize-key',
+      };
+
+      await service.submitTransaction(job);
+
+      expect(mockTxQueue.add).toHaveBeenCalledWith(
+        expect.objectContaining({
+          contractMethod: 'create_request',
+          metadata: expect.objectContaining({
+            normalizedFromContractMethod: 'create_blood_request',
+          }),
+        }),
+        expect.any(Object),
+      );
+    });
+
     it('should use default maxRetries if not provided', async () => {
       const job: SorobanTxJob = {
         contractMethod: 'test',
@@ -141,6 +199,7 @@ describe('SorobanService', () => {
       await service.submitTransaction(job);
 
       expect(mockTxQueue.add).toHaveBeenCalledWith(
+        job.contractMethod,
         job,
         expect.objectContaining({
           attempts: 5, // default
@@ -159,6 +218,7 @@ describe('SorobanService', () => {
       await service.submitTransaction(job);
 
       expect(mockTxQueue.add).toHaveBeenCalledWith(
+        job.contractMethod,
         job,
         expect.objectContaining({
           attempts: 10,
@@ -176,6 +236,7 @@ describe('SorobanService', () => {
       await service.submitTransaction(job);
 
       expect(mockTxQueue.add).toHaveBeenCalledWith(
+        job.contractMethod,
         job,
         expect.objectContaining({
           backoff: {
@@ -408,6 +469,7 @@ describe('SorobanService', () => {
       await service.submitTransaction(job);
 
       expect(mockTxQueue.add).toHaveBeenCalledWith(
+        job.contractMethod,
         job,
         expect.objectContaining({
           backoff: {

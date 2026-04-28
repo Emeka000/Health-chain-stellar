@@ -62,21 +62,24 @@ pub fn increment_request_counter(env: &Env) -> u64 {
     next
 }
 
+/// Store hospital authorization in persistent storage.
+/// Instance storage has a fixed size budget; using persistent storage
+/// prevents instance bloat as the number of authorized hospitals grows.
 pub fn authorize_hospital(env: &Env, hospital: &Address) {
     env.storage()
-        .instance()
+        .persistent()
         .set(&DataKey::AuthorizedHospital(hospital.clone()), &true);
 }
 
 pub fn revoke_hospital(env: &Env, hospital: &Address) {
     env.storage()
-        .instance()
+        .persistent()
         .remove(&DataKey::AuthorizedHospital(hospital.clone()));
 }
 
 pub fn is_hospital_authorized(env: &Env, hospital: &Address) -> bool {
     env.storage()
-        .instance()
+        .persistent()
         .get::<DataKey, bool>(&DataKey::AuthorizedHospital(hospital.clone()))
         .unwrap_or(false)
 }

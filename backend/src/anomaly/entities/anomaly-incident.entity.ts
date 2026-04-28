@@ -49,6 +49,10 @@ export class AnomalyIncidentEntity {
   @Column({ name: 'policy_version_ref', type: 'varchar', nullable: true })
   policyVersionRef: string | null;
 
+  /** Model/version metadata for provenance tracking */
+  @Column({ name: 'model_version', type: 'varchar', nullable: true })
+  modelVersion: string | null;
+
   /** Raw evidence snapshot */
   @Column({ type: 'jsonb', nullable: true })
   metadata: Record<string, unknown> | null;

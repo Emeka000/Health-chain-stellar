@@ -12,6 +12,7 @@ import { RolePermissionEntity } from './entities/role-permission.entity';
 import { RoleEntity } from './entities/role.entity';
 import { Permission } from './enums/permission.enum';
 import { UserRole } from './enums/user-role.enum';
+import { ScopeResolutionService } from './scope-resolution.service';
 
 /** Minimal user context required by permission helpers. */
 export interface UserContext {
@@ -51,6 +52,7 @@ export class PermissionsService {
     @Inject(REDIS_CLIENT)
     private readonly redisClient: Redis,
     private readonly userActivityService: UserActivityService,
+    private readonly scopeResolutionService: ScopeResolutionService,
   ) {}
 
   /**
@@ -150,6 +152,7 @@ export class PermissionsService {
     roleEntity.permissions = permissionEntities;
     const saved = await this.roleRepository.save(roleEntity);
     await this.invalidateRoleCache(role);
+    await this.scopeResolutionService.invalidateScopeCache(role);
 
     await this.userActivityService.logActivity({
       userId: actorId ?? 'system',

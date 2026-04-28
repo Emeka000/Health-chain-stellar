@@ -19,6 +19,8 @@ import {
   Upload,
   Droplets,
   FlaskConical,
+  BadgeDollarSign,
+  Blocks,
 } from "lucide-react";
 
 function classNames(...classes: (string | undefined | null | false)[]) {
@@ -32,11 +34,14 @@ const sidebarLinks = [
   { name: "Donors Lists", href: "/dashboard/donors", icon: HandHeart },
   { name: "Hospitals", href: "/dashboard/hospitals", icon: Building2 },
   { name: "Track Riders", href: "/dashboard/track-riders", icon: Bike },
+  { name: "Route Deviations", href: "/dashboard/route-deviations", icon: Navigation },
   { name: "Anomaly Queue", href: "/admin/anomalies", icon: ShieldAlert },
   { name: "Quarantine Review", href: "/admin/quarantine", icon: FlaskConical },
   { name: "Policy Center", href: "/admin/policy-center", icon: Settings },
   { name: "Batch Import", href: "/admin/batch-import", icon: Upload },
   { name: "Expiration Forecast", href: "/admin/expiration-forecast", icon: Droplets },
+  { name: "Settlement Review", href: "/dashboard/settlement", icon: BadgeDollarSign },
+  { name: "Contract Activity", href: "/dashboard/contract-activity", icon: Blocks },
 ];
 
 export default function DashboardLayout({

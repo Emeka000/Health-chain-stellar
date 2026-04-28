@@ -1,7 +1,7 @@
-import { InjectQueue } from '@nestjs/bull';
+import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 
-import type { Job, Queue } from 'bull';
+import type { Job, Queue } from 'bullmq';
 
 export interface QueueCounters {
   /** Total jobs added to the main queue since process start. */
@@ -127,7 +127,11 @@ export class QueueMetricsService implements OnModuleInit {
       max: -Infinity,
     };
     this.jobStartTimes.clear();
-    this.since = new Date().toISOString();
+    const nextSince = new Date().toISOString();
+    this.since =
+      nextSince === this.since
+        ? new Date(Date.parse(nextSince) + 1).toISOString()
+        : nextSince;
   }
 
   // ─── Bull event listeners ──────────────────────────────────────────────────

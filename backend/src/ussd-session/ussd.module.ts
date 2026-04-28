@@ -1,36 +1,57 @@
 import { Module } from '@nestjs/common';
 
-import { UssdSessionStore, REDIS_CLIENT } from './ussd-session.store';
+import { OrdersModule } from '../orders/orders.module';
+import { OrdersService } from '../orders/orders.service';
+import { RedisModule } from '../redis/redis.module';
+
+import { UssdSessionStore } from './ussd-session.store';
 import { UssdStateMachine } from './ussd-state-machine.service';
 import { UssdController } from './ussd.controller';
-import { UssdService } from './ussd.service';
+import { IOrderService, UssdService } from './ussd.service';
 
 /**
- * UssdModule wires together the USSD flow.
- *
- * Consumers must provide:
- *  1. REDIS_CLIENT token (ioredis Redis instance) – typically via a shared RedisModule
- *  2. ORDER_SERVICE token (IOrderService) – typically by importing OrdersModule
- *
- * Example registration in AppModule:
- *
- * @Module({
- *   imports: [
- *     RedisModule,   // must export REDIS_CLIENT
- *     OrdersModule,  // must export ORDER_SERVICE
- *     UssdModule,
- *   ],
- * })
+ * Adapts OrdersService to the IOrderService interface expected by UssdService.
+ * OrdersService.create() maps to IOrderService.createOrder().
  */
+class OrderServiceAdapter implements IOrderService {
+  constructor(private readonly ordersService: OrdersService) {}
+
+  async createOrder(params: {
+    userId: string;
+    bloodType: string;
+    quantity: number;
+    bloodBankId: string;
+    channel: string;
+  }): Promise<{ id: string }> {
+    const order = await this.ordersService.create(
+      {
+        bloodType: params.bloodType,
+        quantity: params.quantity,
+        bloodBankId: params.bloodBankId,
+        channel: params.channel,
+      } as any,
+      params.userId,
+    );
+    return { id: order.id };
+  }
+}
+
 @Module({
+  imports: [
+    RedisModule,   // provides REDIS_CLIENT token for UssdSessionStore
+    OrdersModule,  // provides OrdersService
+  ],
   controllers: [UssdController],
   providers: [
-    UssdService,
     UssdStateMachine,
     UssdSessionStore,
-    // REDIS_CLIENT and ORDER_SERVICE are expected to be provided by the importing module.
-    // Register them in your root/feature module before importing UssdModule, or use
-    // forRootAsync() pattern if you prefer self-contained configuration.
+    {
+      provide: IOrderService as unknown as string,
+      useFactory: (ordersService: OrdersService) =>
+        new OrderServiceAdapter(ordersService),
+      inject: [OrdersService],
+    },
+    UssdService,
   ],
   exports: [UssdService],
 })

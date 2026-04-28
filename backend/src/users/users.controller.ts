@@ -21,6 +21,8 @@ import { diskStorage } from 'multer';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
+import { Auditable } from '../common/audit/auditable.decorator';
+import { AuditLogInterceptor } from '../common/audit/audit-log.interceptor';
 
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UsersService } from './users.service';
@@ -61,6 +63,8 @@ export class UsersController {
   }
 
   @RequirePermissions(Permission.MANAGE_USERS)
+  @Auditable({ action: 'user.updated', resourceType: 'User' })
+  @UseInterceptors(AuditLogInterceptor)
   @Patch(':id')
   update(
     @Param('id') id: string,

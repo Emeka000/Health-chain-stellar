@@ -6,11 +6,22 @@ import {
   OnGatewayConnection,
   OnGatewayDisconnect,
   OnGatewayInit,
+  WsException,
 } from '@nestjs/websockets';
 
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import { Server, Socket } from 'socket.io';
 
 import { Order } from './types/order.types';
+
+interface AuthenticatedSocket extends Socket {
+  data: {
+    userId?: string;
+    hospitalIds?: string[];
+    role?: string;
+  };
+}
 
 @WebSocketGateway({
   cors: {
@@ -27,15 +38,19 @@ export class OrdersGateway
 
   private readonly logger = new Logger(OrdersGateway.name);
 
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly configService: ConfigService,
+  ) {}
+
   afterInit(server: Server) {
     this.logger.log('WebSocket Gateway initialized');
 
-    // Add authentication middleware
-    server.use((socket: Socket, next) => {
+    server.use((socket: AuthenticatedSocket, next) => {
       try {
         const token =
           socket.handshake.auth?.token ||
-          socket.handshake.headers?.authorization;
+          socket.handshake.headers?.authorization?.replace('Bearer ', '');
 
         if (!token) {
           this.logger.warn(
@@ -44,18 +59,21 @@ export class OrdersGateway
           return next(new Error('Authentication token required'));
         }
 
-        // TODO: Validate JWT token here
-        // For now, we'll accept any token
-        // In production, you would:
-        // 1. Verify the JWT signature
-        // 2. Check token expiration
-        // 3. Extract user/hospital information
-        // 4. Attach user data to socket.data
+        const secret = this.configService.get<string>('JWT_SECRET');
+        const payload = this.jwtService.verify<{
+          sub: string;
+          hospitalIds?: string[];
+          role?: string;
+        }>(token, { secret });
 
-        this.logger.log(`Client authenticated: ${socket.id}`);
+        socket.data.userId = payload.sub;
+        socket.data.hospitalIds = payload.hospitalIds ?? [];
+        socket.data.role = payload.role;
+
+        this.logger.log(`Client authenticated: ${socket.id} (user=${payload.sub})`);
         next();
       } catch (error) {
-        this.logger.error(`Authentication error: ${error.message}`);
+        this.logger.error(`Authentication error: ${(error as Error).message}`);
         next(new Error('Authentication failed'));
       }
     });
@@ -70,28 +88,40 @@ export class OrdersGateway
   }
 
   @SubscribeMessage('join:hospital')
-  handleJoinHospital(client: Socket, payload: { hospitalId: string }): void {
+  handleJoinHospital(
+    client: AuthenticatedSocket,
+    payload: { hospitalId: string },
+  ): void {
     const { hospitalId } = payload;
+
+    const authorizedHospitals = client.data.hospitalIds ?? [];
+    const isAdmin = client.data.role === 'admin' || client.data.role === 'super_admin';
+
+    if (!isAdmin && !authorizedHospitals.includes(hospitalId)) {
+      this.logger.warn(
+        `Unauthorized room join attempt: socket=${client.id} user=${client.data.userId} hospitalId=${hospitalId}`,
+      );
+      client.emit('error', { message: 'Not authorized to join this hospital room' });
+      return;
+    }
+
     const roomName = `hospital:${hospitalId}`;
-
     client.join(roomName);
-    this.logger.log(`Client ${client.id} joined room: ${roomName}`);
-
-    // Send confirmation to the client
+    this.logger.log(
+      `Client ${client.id} (user=${client.data.userId}) joined room: ${roomName}`,
+    );
     client.emit('joined', { hospitalId, room: roomName });
   }
 
   /**
-   * Emit order update to all clients in the hospital's room
-   * @param hospitalId - The hospital ID to broadcast to
-   * @param order - The updated order data
+   * Emit order update to all clients in the hospital's room.
+   * Only clients whose room membership was granted through authorization checks receive the broadcast.
    */
   emitOrderUpdate(hospitalId: string, order: Partial<Order>): void {
     const roomName = `hospital:${hospitalId}`;
     this.logger.log(
       `Broadcasting order update to room: ${roomName}, order: ${order.id}`,
     );
-
     this.server.to(roomName).emit('order:updated', order);
   }
 }

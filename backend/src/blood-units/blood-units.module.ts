@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { MulterModule } from '@nestjs/platform-express';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -24,10 +25,12 @@ import { DispositionController } from './controllers/disposition.controller';
 import { QuarantineController } from './controllers/quarantine.controller';
 import { DispositionService } from './services/disposition.service';
 import { TransferRecord } from './entities/transfer-record.entity';
+import { BloodUnitBatchService } from './batch/blood-unit-batch.service';
 
 
 @Module({
   imports: [
+    MulterModule.register({ storage: undefined }), // memory storage
     TypeOrmModule.forFeature([
       BloodUnitTrail,
       BloodUnitEntity,
@@ -54,6 +57,7 @@ import { TransferRecord } from './entities/transfer-record.entity';
     QrVerificationService,
     DispositionService,
     QuarantineService,
+    BloodUnitBatchService,
   ],
   exports: [
     BloodUnitsService,

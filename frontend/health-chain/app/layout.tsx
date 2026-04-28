@@ -4,6 +4,7 @@ import { Poppins, Roboto, Manrope, DM_Sans } from "next/font/google";
 import "./globals.css";
 import { ToastProvider } from "../components/providers/ToastProvider";
 import { ReactQueryProvider } from "../components/providers/ReactQueryProvider";
+import { I18nProvider } from "../components/providers/I18nProvider";
 
 const poppins = Poppins({
   subsets: ["latin"],
@@ -45,9 +46,11 @@ export default function RootLayout({
         className={`${poppins.variable} ${roboto.variable} ${manrope.variable} ${dmSans.variable} antialiased`}
       >
         <Suspense fallback={null}>
-          <ReactQueryProvider>
-            <ToastProvider>{children}</ToastProvider>
-          </ReactQueryProvider>
+          <I18nProvider>
+            <ReactQueryProvider>
+              <ToastProvider>{children}</ToastProvider>
+            </ReactQueryProvider>
+          </I18nProvider>
         </Suspense>
       </body>
     </html>

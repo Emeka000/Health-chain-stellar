@@ -78,6 +78,9 @@ export class UserEntity extends BaseEntity {
   @Column({ name: 'email_verified', type: 'boolean', default: false })
   emailVerified: boolean;
 
+  @Column({ name: 'anonymised', type: 'boolean', default: false })
+  anonymised: boolean;
+
   @ManyToOne(() => OrganizationEntity, {
     nullable: true,
     onDelete: 'SET NULL',

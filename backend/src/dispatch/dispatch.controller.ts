@@ -15,6 +15,7 @@ import { RequirePermissions } from '../auth/decorators/require-permissions.decor
 import { Permission } from '../auth/enums/permission.enum';
 
 import { DispatchService } from './dispatch.service';
+import { CreateDispatchDto, UpdateDispatchDto, CancelDispatchDto } from './dto/dispatch.dto';
 
 @Controller('dispatch')
 export class DispatchController {
@@ -46,11 +47,11 @@ export class DispatchController {
 
   @RequirePermissions(Permission.CREATE_DISPATCH)
   @Post()
-  create(@Body() createDispatchDto: any) {
-    return this.dispatchService.create(createDispatchDto);
+  create(@Body() dto: CreateDispatchDto) {
+    return this.dispatchService.create(dto);
   }
 
-  @RequirePermissions(Permission.MANAGE_DISPATCH)
+  @RequirePermissions(Permission.DISPATCH_OVERRIDE)
   @Post('assign')
   assignOrder(
     @Body('orderId') orderId: string,
@@ -71,8 +72,8 @@ export class DispatchController {
 
   @RequirePermissions(Permission.UPDATE_DISPATCH)
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateDispatchDto: any) {
-    return this.dispatchService.update(id, updateDispatchDto);
+  update(@Param('id') id: string, @Body() dto: UpdateDispatchDto) {
+    return this.dispatchService.update(id, dto);
   }
 
   @RequirePermissions(Permission.UPDATE_DISPATCH)
@@ -83,8 +84,8 @@ export class DispatchController {
 
   @RequirePermissions(Permission.UPDATE_DISPATCH)
   @Patch(':id/cancel')
-  cancelDispatch(@Param('id') id: string, @Body('reason') reason: string) {
-    return this.dispatchService.cancelDispatch(id, reason);
+  cancelDispatch(@Param('id') id: string, @Body() dto: CancelDispatchDto) {
+    return this.dispatchService.cancelDispatch(id, dto.reason);
   }
 
   @RequirePermissions(Permission.DELETE_DISPATCH)

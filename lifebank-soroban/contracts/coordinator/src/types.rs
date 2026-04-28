@@ -31,6 +31,16 @@ pub struct WorkflowRecord {
     pub delivery_confirmed: bool,
 }
 
+/// Summary of a sustained temperature excursion (mirrors temperature contract type).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExcursionSummary {
+    pub unit_id: u64,
+    pub violation_count: u32,
+    pub peak_celsius_x100: i32,
+    pub detected_at: u64,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
@@ -39,4 +49,5 @@ pub enum DataKey {
     InventoryContract,
     PaymentContract,
     Workflow(u64),
+    Paused,
 }

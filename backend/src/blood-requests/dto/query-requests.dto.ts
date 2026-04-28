@@ -20,6 +20,7 @@ export enum UrgencyLevel {
 }
 
 export enum SortField {
+  TRIAGE_SCORE = 'triageScore',
   CREATED_AT = 'createdAt',
   REQUIRED_BY = 'requiredBy',
   STATUS = 'status',
@@ -75,7 +76,7 @@ export class QueryRequestsDto {
 
   @IsOptional()
   @IsEnum(SortField)
-  sortBy?: SortField = SortField.CREATED_AT;
+  sortBy?: SortField = SortField.TRIAGE_SCORE;
 
   @IsOptional()
   @IsEnum(SortOrder)

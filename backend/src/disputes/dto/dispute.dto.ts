@@ -1,5 +1,5 @@
 import { IsEnum, IsOptional, IsString } from 'class-validator';
-import { DisputeReasonTaxonomy, DisputeSeverity } from '../enums/dispute.enum';
+import { DisputeOutcome, DisputeReasonTaxonomy, DisputeSeverity } from '../enums/dispute.enum';
 
 export class OpenDisputeDto {
   @IsString()
@@ -25,6 +25,14 @@ export class OpenDisputeDto {
 export class ResolveDisputeDto {
   @IsString()
   resolutionNotes: string;
+
+  /** Structured outcome required for arbitration traceability (#585). */
+  @IsEnum(DisputeOutcome)
+  outcome: DisputeOutcome;
+
+  /** Identity of the arbitrator recording the resolution. */
+  @IsString()
+  resolvedBy: string;
 }
 
 export class AddNoteDto {

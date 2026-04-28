@@ -5,6 +5,13 @@ import { UserEntity } from '../../users/entities/user.entity';
 import { RiderStatus } from '../enums/rider-status.enum';
 import { VehicleType } from '../enums/vehicle-type.enum';
 
+export interface WorkingHoursConfig {
+  startHour: number;
+  endHour: number;
+  timezone?: string;
+  daysOfWeek?: number[];
+}
+
 @Entity('riders')
 export class RiderEntity extends BaseEntity {
   @OneToOne(() => UserEntity)
@@ -40,6 +47,27 @@ export class RiderEntity extends BaseEntity {
 
   @Column({ type: 'decimal', precision: 10, scale: 7, nullable: true })
   longitude: number;
+
+  @Column({
+    name: 'last_location_updated_at',
+    type: 'timestamp',
+    nullable: true,
+  })
+  lastLocationUpdatedAt: Date | null;
+
+  @Column({
+    name: 'working_hours',
+    type: 'jsonb',
+    nullable: true,
+  })
+  workingHours: WorkingHoursConfig | null;
+
+  @Column({
+    name: 'preferred_areas',
+    type: 'jsonb',
+    nullable: true,
+  })
+  preferredAreas: string[] | null;
 
   @Column({ name: 'identity_document_url', nullable: true })
   identityDocumentUrl: string;

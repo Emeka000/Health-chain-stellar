@@ -1,4 +1,8 @@
-import { NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 
@@ -6,6 +10,7 @@ import { RiderEntity } from '../../riders/entities/rider.entity';
 import { ReputationHistoryEntity } from '../entities/reputation-history.entity';
 import { ReputationEntity } from '../entities/reputation.entity';
 import { BadgeType } from '../enums/badge-type.enum';
+import { ConductType } from '../enums/conduct-type.enum';
 import { ReputationEventType } from '../enums/reputation-event-type.enum';
 import { ReputationService } from '../reputation.service';
 
@@ -15,6 +20,10 @@ const mockRep = (overrides = {}): ReputationEntity =>
     riderId: 'rider-1',
     reputationScore: 50,
     badges: [],
+    goodConductRecords: [],
+    conductStreak: 0,
+    recoveryCapScore: null,
+    pendingViolations: 0,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -205,6 +214,95 @@ describe('ReputationService', () => {
           badges: expect.arrayContaining([BadgeType.FIRST_DELIVERY]),
         }),
       );
+    });
+  });
+
+  describe('recordGoodConduct', () => {
+    it('applies partial recovery below the recovery cap', async () => {
+      repRepo.findOne.mockResolvedValue(
+        mockRep({
+          reputationScore: 45,
+          recoveryCapScore: 60,
+          conductStreak: 0,
+          pendingViolations: 0,
+        }),
+      );
+      riderRepo.findOne.mockResolvedValue(mockRider());
+
+      await service.recordGoodConduct(
+        'rider-1',
+        ConductType.ON_TIME_DELIVERY,
+        true,
+      );
+
+      expect(repRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reputationScore: 49,
+          conductStreak: 1,
+          recoveryCapScore: 60,
+        }),
+      );
+    });
+
+    it('caps full recovery at the pre-penalty score', async () => {
+      repRepo.findOne.mockResolvedValue(
+        mockRep({
+          reputationScore: 52,
+          recoveryCapScore: 60,
+          conductStreak: 2,
+          pendingViolations: 0,
+        }),
+      );
+      riderRepo.findOne.mockResolvedValue(mockRider());
+
+      await service.recordGoodConduct(
+        'rider-1',
+        ConductType.VERIFIED_ASSISTANCE,
+        true,
+      );
+
+      expect(repRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reputationScore: 60,
+          conductStreak: 3,
+          recoveryCapScore: null,
+        }),
+      );
+      expect(historyRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: ReputationEventType.GOOD_CONDUCT_RECOVERY,
+          pointsDelta: 8,
+          scoreAfter: 60,
+        }),
+      );
+    });
+
+    it('blocks recovery when violations are pending', async () => {
+      repRepo.findOne.mockResolvedValue(
+        mockRep({
+          reputationScore: 45,
+          recoveryCapScore: 60,
+          pendingViolations: 1,
+        }),
+      );
+
+      await expect(
+        service.recordGoodConduct(
+          'rider-1',
+          ConductType.PROTOCOL_COMPLIANCE,
+          true,
+        ),
+      ).rejects.toThrow(UnprocessableEntityException);
+    });
+
+    it('requires admin validation', async () => {
+      await expect(
+        service.recordGoodConduct(
+          'rider-1',
+          ConductType.PROTOCOL_COMPLIANCE,
+          false,
+        ),
+      ).rejects.toThrow(ForbiddenException);
     });
   });
 });

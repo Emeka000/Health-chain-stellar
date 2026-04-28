@@ -11,18 +11,23 @@ import {
   HttpCode,
   HttpStatus,
   Request,
+  UseInterceptors,
   ValidationPipe,
 } from '@nestjs/common';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
+import { Auditable } from '../common/audit/auditable.decorator';
+import { AuditLogInterceptor } from '../common/audit/audit-log.interceptor';
 import { PaginatedResponse } from '../common/pagination';
 
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderQueryParamsDto } from './dto/order-query-params.dto';
 import { UpdateRequestStatusDto } from './dto/update-request-status.dto';
 import { OrdersService } from './orders.service';
+import { OrderStateAuditService } from './services/order-state-audit.service';
 import { Order } from './types/order.types';
+import { SlaService } from '../sla/sla.service';
 
 interface AuthenticatedRequest {
   user?: {
@@ -33,7 +38,21 @@ interface AuthenticatedRequest {
 
 @Controller('orders')
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService) {}
+  constructor(
+    private readonly ordersService: OrdersService,
+    private readonly slaService: SlaService,
+    private readonly auditService: OrderStateAuditService,
+  ) {}
+
+  /**
+   * GET /orders/state-audit
+   * Returns all orders with inconsistent or invalid materialized state (Issue #617).
+   */
+  @RequirePermissions(Permission.ADMIN_ACCESS)
+  @Get('state-audit')
+  auditOrderStates() {
+    return this.auditService.auditAll();
+  }
 
   @RequirePermissions(Permission.VIEW_ORDER)
   @Get()
@@ -85,6 +104,12 @@ export class OrdersController {
    * Returns the full, chronologically-ordered event log for an order.
    * Each row contains: order_id, event_type, payload, actor_id, timestamp.
    */
+  @RequirePermissions(Permission.VIEW_ORDER)
+  @Get(':id/sla')
+  getOrderSla(@Param('id') id: string) {
+    return this.slaService.getOrderMetrics(id);
+  }
+
   @RequirePermissions(Permission.VIEW_ORDER)
   @Get(':id/history')
   getOrderHistory(@Param('id') id: string) {
@@ -171,6 +196,8 @@ export class OrdersController {
   }
 
   @RequirePermissions(Permission.UPDATE_ORDER)
+  @Auditable({ action: 'order.resolve-dispute', resourceType: 'Order' })
+  @UseInterceptors(AuditLogInterceptor)
   @Patch(':id/resolve-dispute')
   @HttpCode(HttpStatus.OK)
   resolveDispute(

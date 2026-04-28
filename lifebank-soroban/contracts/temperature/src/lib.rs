@@ -5,13 +5,24 @@ mod storage;
 mod types;
 
 use crate::error::ContractError;
-use crate::types::{DataKey, TemperatureReading, TemperatureSummary, TemperatureThreshold};
-use soroban_sdk::{contract, contractimpl, Address, Env, Vec};
+use crate::types::{DataKey, ExcursionSummary, TemperatureReading, TemperatureSummary, TemperatureThreshold};
+use soroban_sdk::{contract, contractclient, contractimpl, contracttype, Address, Env, Vec};
 
 const PAGE_SIZE: u32 = 20;
 
 #[contract]
 pub struct TemperatureContract;
+
+/// Minimal coordinator interface for cross-contract excursion reporting.
+#[contractclient(name = "CoordinatorContractClient")]
+pub trait CoordinatorContractInterface {
+    fn flag_temperature_breach(
+        env: soroban_sdk::Env,
+        caller: Address,
+        payment_id: u64,
+        excursion_summary: ExcursionSummary,
+    ) -> Result<(), soroban_sdk::Error>;
+}
 
 #[contractimpl]
 impl TemperatureContract {
@@ -26,6 +37,48 @@ impl TemperatureContract {
         Ok(())
     }
 
+    /// Pause all state-mutating functions. Admin only.
+    pub fn pause(env: Env, admin: Address) -> Result<(), ContractError> {
+        admin.require_auth();
+        let stored_admin = storage::get_admin(&env);
+        if admin != stored_admin {
+            return Err(ContractError::Unauthorized);
+        }
+        env.storage().instance().set(&DataKey::Paused, &true);
+        Ok(())
+    }
+
+    /// Unpause the contract. Admin only.
+    pub fn unpause(env: Env, admin: Address) -> Result<(), ContractError> {
+        admin.require_auth();
+        let stored_admin = storage::get_admin(&env);
+        if admin != stored_admin {
+            return Err(ContractError::Unauthorized);
+        }
+        env.storage().instance().set(&DataKey::Paused, &false);
+        Ok(())
+    }
+
+    /// Returns whether the contract is currently paused.
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
+    fn require_not_paused(env: &Env) -> Result<(), ContractError> {
+        if env
+            .storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+        {
+            return Err(ContractError::ContractPaused);
+        }
+        Ok(())
+    }
+
     pub fn set_threshold(
         env: Env,
         admin: Address,
@@ -34,6 +87,7 @@ impl TemperatureContract {
         max_celsius_x100: i32,
     ) -> Result<(), ContractError> {
         admin.require_auth();
+        Self::require_not_paused(&env)?;
 
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {
@@ -58,6 +112,7 @@ impl TemperatureContract {
         temperature_celsius_x100: i32,
         timestamp: u64,
     ) -> Result<(), ContractError> {
+        Self::require_not_paused(&env)?;
         let threshold =
             storage::get_threshold(&env, unit_id).ok_or(ContractError::ThresholdNotFound)?;
 
@@ -285,6 +340,7 @@ impl TemperatureContract {
         unit_id: u64,
     ) -> Result<(), ContractError> {
         admin.require_auth();
+        Self::require_not_paused(&env)?;
 
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {
@@ -296,6 +352,100 @@ impl TemperatureContract {
 
         env.storage().persistent().set(&streak_key, &0u32);
         env.storage().persistent().set(&compromised_key, &false);
+
+        Ok(())
+    }
+
+    // ── Coordinator integration ────────────────────────────────────────────────
+
+    /// Configure the coordinator contract address. Admin only.
+    pub fn set_coordinator(
+        env: Env,
+        admin: Address,
+        coordinator: Address,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        let stored_admin = storage::get_admin(&env);
+        if admin != stored_admin {
+            return Err(ContractError::Unauthorized);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::CoordinatorContract, &coordinator);
+        Ok(())
+    }
+
+    /// Whitelist an IoT oracle address that may call report_excursion_to_coordinator.
+    pub fn add_oracle(
+        env: Env,
+        admin: Address,
+        oracle: Address,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        let stored_admin = storage::get_admin(&env);
+        if admin != stored_admin {
+            return Err(ContractError::Unauthorized);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::OracleWhitelist(oracle), &true);
+        Ok(())
+    }
+
+    /// Report a sustained temperature excursion to the coordinator contract,
+    /// which will transition the linked payment from Locked → Disputed.
+    ///
+    /// Only the admin or a whitelisted IoT oracle may call this function.
+    ///
+    /// # Arguments
+    /// * `caller`            - Admin or whitelisted oracle address
+    /// * `unit_id`           - Blood unit that experienced the excursion
+    /// * `payment_id`        - Payment ID to flag in the coordinator
+    /// * `excursion_summary` - Structured summary of the excursion
+    ///
+    /// # Errors
+    /// - `Unauthorized`          - Caller is not admin or whitelisted oracle
+    /// - `CoordinatorNotSet`     - Coordinator address not configured
+    /// - `CoordinatorCallFailed` - Cross-contract call to coordinator failed
+    pub fn report_excursion_to_coordinator(
+        env: Env,
+        caller: Address,
+        unit_id: u64,
+        payment_id: u64,
+        excursion_summary: ExcursionSummary,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        Self::require_not_paused(&env)?;
+
+        // Gate: caller must be admin or whitelisted oracle
+        let stored_admin = storage::get_admin(&env);
+        let is_admin = caller == stored_admin;
+        let is_oracle: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OracleWhitelist(caller.clone()))
+            .unwrap_or(false);
+
+        if !is_admin && !is_oracle {
+            return Err(ContractError::Unauthorized);
+        }
+
+        let coordinator_addr: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::CoordinatorContract)
+            .ok_or(ContractError::CoordinatorNotSet)?;
+
+        let coord_client = CoordinatorContractClient::new(&env, &coordinator_addr);
+        coord_client
+            .try_flag_temperature_breach(&caller, &payment_id, &excursion_summary)
+            .map_err(|_| ContractError::CoordinatorCallFailed)?
+            .map_err(|_| ContractError::CoordinatorCallFailed)?;
+
+        env.events().publish(
+            (soroban_sdk::symbol_short!("tmp_excur"),),
+            (unit_id, payment_id, excursion_summary.violation_count),
+        );
 
         Ok(())
     }
@@ -527,14 +677,12 @@ mod tests {
         let (_env, admin, client) = create_test_contract();
 
         let unit_id = 102u64;
-        client.set_threshold(&admin, &unit_id, &200, &600);
+        client.set_threshold(&admin, &unit_id, &0, &60_000_000);
 
-        // Log 50,000 readings at 450 (4.50°C)
-        // With i32 accumulator: sum would be 22,500,000 which exceeds i32::MAX (2,147,483,647)
-        // This would cause overflow and corrupt the average
-        // With i64 accumulator: sum is 22,500,000 which is well within i64 range
-        let test_temp = 450i32;
-        let num_readings = 50_000u64;
+        // Keep this small enough for CI while still proving the accumulator
+        // must be wider than i32: 30,000,000 * 100 = 3,000,000,000.
+        let test_temp = 30_000_000i32;
+        let num_readings = 100u64;
 
         for i in 0..num_readings {
             client.log_reading(&unit_id, &test_temp, &(1000 + i));
@@ -543,7 +691,7 @@ mod tests {
         let summary = client.get_temperature_summary(&unit_id);
         
         // Verify correct count
-        assert_eq!(summary.count, num_readings as u32, "Count should be 50,000");
+        assert_eq!(summary.count, num_readings as u32, "Count should be 100");
         
         // Verify average is correct (should be exactly 450)
         assert_eq!(
@@ -604,7 +752,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "UnitNotFound")]
+    #[should_panic(expected = "Error(Contract, #601)")]
     fn test_temperature_summary_no_readings() {
         let (_env, admin, client) = create_test_contract();
 
@@ -810,5 +958,57 @@ mod tests {
         
         // Should definitely be compromised
         assert!(client.is_compromised(&unit_id), "Unit should be compromised after 100 violations");
+    }
+
+    // ── Circuit breaker tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_temperature_pause_blocks_log_reading() {
+        let (_env, admin, client) = create_test_contract();
+        let unit_id = 1u64;
+        client.set_threshold(&admin, &unit_id, &200, &600);
+
+        client.pause(&admin);
+        assert!(client.is_paused());
+
+        let result = client.try_log_reading(&unit_id, &400, &1000u64);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_temperature_pause_allows_get_readings() {
+        let (_env, admin, client) = create_test_contract();
+        let unit_id = 2u64;
+        client.set_threshold(&admin, &unit_id, &200, &600);
+        client.log_reading(&unit_id, &400, &1000u64);
+
+        client.pause(&admin);
+
+        // Read still works
+        let readings = client.get_readings(&unit_id);
+        assert!(!readings.is_empty());
+    }
+
+    #[test]
+    fn test_temperature_unpause_restores_writes() {
+        let (_env, admin, client) = create_test_contract();
+        let unit_id = 3u64;
+        client.set_threshold(&admin, &unit_id, &200, &600);
+
+        client.pause(&admin);
+        client.unpause(&admin);
+        assert!(!client.is_paused());
+
+        client.log_reading(&unit_id, &400, &2000u64);
+        let readings = client.get_readings(&unit_id);
+        assert!(!readings.is_empty());
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_temperature_non_admin_cannot_pause() {
+        let (env, _admin, client) = create_test_contract();
+        let attacker = Address::generate(&env);
+        client.pause(&attacker);
     }
 }

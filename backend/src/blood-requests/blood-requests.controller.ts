@@ -1,14 +1,16 @@
-import { Body, Controller, Get, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
 import { BloodComponent } from '../blood-units/enums/blood-component.enum';
+import { RoleAwareThrottlerGuard } from '../throttler/role-aware-throttler.guard';
 
 import { BloodRequestsService } from './blood-requests.service';
 import { CreateBloodRequestDto } from './dto/create-blood-request.dto';
 import { GetAvailabilityRequestDto, GetAvailabilityResponseDto } from './dto/get-availability.dto';
 import { BloodBankAvailabilityService } from './services/blood-bank-availability.service';
 
+@UseGuards(RoleAwareThrottlerGuard)
 @Controller('blood-requests')
 export class BloodRequestsController {
   constructor(

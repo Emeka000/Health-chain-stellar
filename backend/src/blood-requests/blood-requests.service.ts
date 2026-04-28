@@ -1,12 +1,13 @@
 import { randomBytes } from 'crypto';
-
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
 import { InjectRepository } from '@nestjs/typeorm';
-
+import { Queue } from 'bullmq';
 import { Repository } from 'typeorm';
 
 import { UserRole } from '../auth/enums/user-role.enum';
 import { PermissionsService } from '../auth/permissions.service';
+import { LIFEBANK_REQUESTS_METHODS } from '../blockchain/contracts/lifebank-contracts';
 import { SorobanService } from '../blockchain/services/soroban.service';
 import { CompensationService } from '../common/compensation/compensation.service';
 import {
@@ -14,29 +15,42 @@ import {
   CompensationAction,
 } from '../common/errors/app-errors';
 import { InventoryService } from '../inventory/inventory.service';
-import { EmailProvider } from '../notifications/providers/email.provider';
 
 import { CreateBloodRequestDto } from './dto/create-blood-request.dto';
-import { BloodRequestItemEntity } from './entities/blood-request-item.entity';
-import { BloodRequestEntity } from './entities/blood-request.entity';
+import {
+  BloodRequestItemEntity,
+  ItemPriority,
+} from './entities/blood-request-item.entity';
+import { BloodRequestEntity, RequestUrgency } from './entities/blood-request.entity';
 import { BloodRequestStatus } from './enums/blood-request-status.enum';
+import { TriageScoringService } from './services/triage-scoring.service';
+import {
+  BLOOD_REQUEST_QUEUE,
+  QUEUE_PRIORITY,
+  RequestUrgency,
+} from './enums/request-urgency.enum';
+import { BloodRequestJobData } from './processors/blood-request.processor';
+import { BloodRequestChainService } from './services/blood-request-chain.service';
+import { BloodRequestEmailService } from './services/blood-request-email.service';
 
-type RequestUser = { id: string; role: string; email: string };
+type RequestUser = { id: string; role: UserRole; email: string };
 
 @Injectable()
 export class BloodRequestsService {
-  private readonly logger = new Logger(BloodRequestsService.name);
-
   constructor(
     @InjectRepository(BloodRequestEntity)
     private readonly bloodRequestRepo: Repository<BloodRequestEntity>,
     @InjectRepository(BloodRequestItemEntity)
     private readonly bloodRequestItemRepo: Repository<BloodRequestItemEntity>,
+    @InjectRepository(RequestStatusHistoryEntity)
+    private readonly requestStatusHistoryRepo: Repository<RequestStatusHistoryEntity>,
     private readonly inventoryService: InventoryService,
-    private readonly sorobanService: SorobanService,
-    private readonly emailProvider: EmailProvider,
-    private readonly compensationService: CompensationService,
+    private readonly chainService: BloodRequestChainService,
+    private readonly emailService: BloodRequestEmailService,
     private readonly permissionsService: PermissionsService,
+    private readonly triageScoringService: TriageScoringService,
+    @InjectQueue(BLOOD_REQUEST_QUEUE)
+    private readonly queue: Queue<BloodRequestJobData>,
   ) {}
 
   private assertHospitalAuthorization(
@@ -95,41 +109,42 @@ export class BloodRequestsService {
     }
   }
 
+  private calculateSlaResponseDueAt(urgencyLevel: UrgencyLevel): Date {
+    const now = new Date();
+    const urgencyToHours: Record<UrgencyLevel, number> = {
+      [UrgencyLevel.CRITICAL]: 1,
+      [UrgencyLevel.URGENT]: 4,
+      [UrgencyLevel.ROUTINE]: 24,
+      [UrgencyLevel.SCHEDULED]: 72,
+    };
+    const deadline = new Date(now);
+    deadline.setHours(deadline.getHours() + urgencyToHours[urgencyLevel]);
+    return deadline;
+  }
+
   async create(
     dto: CreateBloodRequestDto,
     user: RequestUser,
   ): Promise<{ message: string; data: BloodRequestEntity }> {
     this.assertHospitalAuthorization(user, dto.hospitalId);
     const requiredBy = this.assertRequiredByFuture(dto.requiredBy);
+    const urgencyLevel = dto.urgencyLevel ?? UrgencyLevel.ROUTINE;
+    const slaResponseDueAt = this.calculateSlaResponseDueAt(urgencyLevel);
 
     const requestNumber = await this.allocateRequestNumber();
 
-    const reserved: Array<{
-      bloodBankId: string;
-      bloodType: string;
-      quantity: number;
-    }> = [];
+    const reserved: Array<{ bloodBankId: string; bloodType: string; quantity: number }> = [];
 
     try {
       for (const item of dto.items) {
         const bloodType = item.bloodType.trim();
         const quantity = item.quantityMl ?? item.quantity;
-        const bloodBankId = item.bloodBankId || dto.hospitalId; // Fallback to hospital if no specific bank
-
+        const bloodBankId = item.bloodBankId || dto.hospitalId;
         if (!quantity) {
           throw new BadRequestException('Item quantity must be specified as quantityMl or quantity');
         }
-
-        await this.inventoryService.reserveStockOrThrow(
-          bloodBankId,
-          bloodType,
-          quantity,
-        );
-        reserved.push({
-          bloodBankId,
-          bloodType,
-          quantity,
-        });
+        await this.inventoryService.reserveStockOrThrow(bloodBankId, bloodType, quantity);
+        reserved.push({ bloodBankId, bloodType, quantity });
       }
 
       const chainPayload = dto.items.map((i) => ({
@@ -141,7 +156,7 @@ export class BloodRequestsService {
       let transactionHash: string;
       try {
         const chainResult = await this.sorobanService.submitTransactionAndWait({
-          contractMethod: 'create_blood_request',
+          contractMethod: LIFEBANK_REQUESTS_METHODS.createRequest,
           args: [requestNumber, dto.hospitalId, JSON.stringify(chainPayload)],
           idempotencyKey: `blood-request:${requestNumber}`,
           metadata: { requestNumber, hospitalId: dto.hospitalId },
@@ -150,7 +165,7 @@ export class BloodRequestsService {
       } catch (err) {
         // Blockchain failure is irrecoverable — inventory must be rolled back
         const irrecoverableErr = new BloodRequestIrrecoverableError(
-          `Soroban create_blood_request failed for ${requestNumber}`,
+          `Soroban ${LIFEBANK_REQUESTS_METHODS.createRequest} failed for ${requestNumber}`,
           {
             requestNumber,
             hospitalId: dto.hospitalId,
@@ -189,7 +204,7 @@ export class BloodRequestsService {
 
         const adminAlertHandler = {
           action: CompensationAction.NOTIFY_ADMIN,
-          execute: async () => {
+          execute: () => {
             this.logger.error(`[ADMIN ALERT] Blood request on-chain failure`, {
               requestNumber,
               hospitalId: dto.hospitalId,
@@ -200,7 +215,7 @@ export class BloodRequestsService {
 
         const flagHandler = {
           action: CompensationAction.FLAG_FOR_REVIEW,
-          execute: async () => true,
+          execute: () => true,
         };
 
         const result = await this.compensationService.compensate(
@@ -214,16 +229,27 @@ export class BloodRequestsService {
         throw irrecoverableErr;
       }
 
-      const parent = this.bloodRequestRepo.create({
-        requestNumber,
-        hospitalId: dto.hospitalId,
+      const triage = this.triageScoringService.compute({
+        urgency: dto.urgency || RequestUrgency.ROUTINE,
+        itemPriority: highestPriority,
+        requestedUnits: totalRequestedUnits,
+        availableUnits: totalAvailableUnits,
         requiredByTimestamp: Math.floor(requiredBy.getTime() / 1000),
         createdTimestamp: Math.floor(Date.now() / 1000),
         urgency: dto.urgency || 'ROUTINE',
         deliveryAddress: dto.deliveryAddress?.trim() ?? null,
+        deliveryContactName: dto.deliveryContactName?.trim() ?? null,
+        deliveryContactPhone: dto.deliveryContactPhone?.trim() ?? null,
+        deliveryInstructions: dto.deliveryInstructions?.trim() ?? null,
         notes: dto.notes?.trim() ?? null,
-        status: BloodRequestStatus.PENDING,
+        status: RequestStatus.PENDING,
+        statusUpdatedAt: new Date(),
+        slaResponseDueAt,
+        slaFulfillmentDueAt: requiredBy,
+        blockchainRequestId: requestNumber,
+        blockchainNetwork: 'stellar',
         blockchainTxHash: transactionHash,
+        blockchainConfirmedAt: new Date(),
         createdByUserId: user.id,
         items: dto.items.map((i) =>
           this.bloodRequestItemRepo.create({
@@ -234,48 +260,112 @@ export class BloodRequestsService {
             compatibilityNotes: i.compatibilityNotes,
           }),
         ),
+        statusHistory: [
+          this.requestStatusHistoryRepo.create({
+            previousStatus: null,
+            newStatus: RequestStatus.PENDING,
+            reason: 'Request created',
+            changedByUserId: user.id,
+          }),
+        ],
       });
 
-      const saved = await this.bloodRequestRepo.save(parent);
+      const parent = this.bloodRequestRepo.create({
+        requestNumber,
+        dto.hospitalId,
+        reserved,
+        user.email,
+      );
 
-      await this.sendCreationEmail(user.email, saved);
+      const saved = await this.persistRequest(dto, requestNumber, requiredBy, transactionHash, user.id);
+      await this.enqueue(saved);
+      await this.emailService.sendCreationConfirmation(user.email, saved);
 
-      return {
-        message: 'Blood request created successfully',
-        data: saved,
-      };
+      return { message: 'Blood request created successfully', data: saved };
     } catch (err) {
-      // Only release reservations if the irrecoverable handler hasn't already done so.
-      // BloodRequestIrrecoverableError carries REVERT_INVENTORY in its compensations,
-      // meaning the CompensationService already released stock above.
       if (!(err instanceof BloodRequestIrrecoverableError)) {
-        await this.releaseReservations(reserved);
+        for (const r of reserved.reverse()) {
+          await this.inventoryService.releaseStockByBankAndType(r.bloodBankId, r.bloodType, r.quantity);
+        }
       }
       throw err;
     }
   }
 
-  private async sendCreationEmail(
-    to: string,
-    request: BloodRequestEntity,
-  ): Promise<void> {
-    const lines = request.items
-      .map(
-        (i) =>
-          `<li>${i.bloodType} ${i.component} × ${i.quantityMl}ml (Priority: ${i.priority})</li>`,
-      )
-      .join('');
-    const requiredByDate = new Date(request.requiredByTimestamp * 1000);
-    const html = `
-      <p>Blood request <strong>${request.requestNumber}</strong> was created.</p>
-      <p>Required by: ${requiredByDate.toISOString()}</p>
-      <ul>${lines}</ul>
-      <p>On-chain tx: <code>${request.blockchainTxHash ?? 'n/a'}</code></p>
-    `;
-    await this.emailProvider.send(
-      to,
-      `Blood request ${request.requestNumber} confirmed`,
-      html,
+  private assertHospitalAuth(user: RequestUser, hospitalId: string): void {
+    if (user.role === UserRole.HOSPITAL) {
+      this.permissionsService.assertIsAdminOrSelf(
+        user,
+        hospitalId,
+        'Hospital accounts may only create blood requests where hospitalId matches their user id.',
+      );
+    }
+  }
+
+  private parseRequiredBy(iso: string): Date {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) {
+      throw new BadRequestException('requiredBy must be a valid ISO 8601 date-time');
+    }
+    if (d.getTime() <= Date.now()) {
+      throw new BadRequestException('requiredBy must be in the future');
+    }
+    return d;
+  }
+
+  private async allocateRequestNumber(): Promise<string> {
+    for (let i = 0; i < 12; i++) {
+      const suffix = randomBytes(3).toString('hex').toUpperCase();
+      const requestNumber = `BR-${Date.now()}-${suffix}`;
+      const exists = await this.bloodRequestRepo.exist({ where: { requestNumber } });
+      if (!exists) return requestNumber;
+    }
+    throw new Error('Unable to allocate a unique request number');
+  }
+
+  private async persistRequest(
+    dto: CreateBloodRequestDto,
+    requestNumber: string,
+    requiredBy: Date,
+    transactionHash: string,
+    userId: string,
+  ): Promise<BloodRequestEntity> {
+    const parent = this.bloodRequestRepo.create({
+      requestNumber,
+      hospitalId: dto.hospitalId,
+      requiredByTimestamp: Math.floor(requiredBy.getTime() / 1000),
+      createdTimestamp: Math.floor(Date.now() / 1000),
+      urgency: dto.urgency || 'ROUTINE',
+      deliveryAddress: dto.deliveryAddress?.trim() ?? null,
+      notes: dto.notes?.trim() ?? null,
+      status: BloodRequestStatus.PENDING,
+      blockchainTxHash: transactionHash,
+      createdByUserId: userId,
+      items: dto.items.map((i) =>
+        this.itemRepo.create({
+          bloodType: i.bloodType.trim(),
+          component: i.component,
+          quantityMl: i.quantityMl || i.quantity,
+          priority: i.priority || 'NORMAL',
+          compatibilityNotes: i.compatibilityNotes,
+        }),
+      ),
+    });
+    return this.bloodRequestRepo.save(parent);
+  }
+
+  private async enqueue(saved: BloodRequestEntity): Promise<void> {
+    const urgency = (saved.urgency as unknown as RequestUrgency) ?? RequestUrgency.ROUTINE;
+    await this.queue.add(
+      'process-request',
+      { requestId: saved.id, urgency, enqueuedAt: Date.now() },
+      {
+        priority: QUEUE_PRIORITY[urgency],
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: true,
+        removeOnFail: false,
+      },
     );
   }
 }

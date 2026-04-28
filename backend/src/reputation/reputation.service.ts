@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 
@@ -13,8 +18,12 @@ import {
   ReputationHistoryQueryDto,
 } from './dto/reputation-query.dto';
 import { ReputationHistoryEntity } from './entities/reputation-history.entity';
-import { ReputationEntity } from './entities/reputation.entity';
+import {
+  GoodConductRecord,
+  ReputationEntity,
+} from './entities/reputation.entity';
 import { BadgeType } from './enums/badge-type.enum';
+import { ConductType } from './enums/conduct-type.enum';
 import { ReputationEventType } from './enums/reputation-event-type.enum';
 
 const POINTS = {
@@ -25,6 +34,15 @@ const POINTS = {
   [ReputationEventType.DISPUTE_RESOLVED]: 5,
   [ReputationEventType.BADGE_EARNED]: 0,
 };
+
+const GOOD_CONDUCT_POINTS = {
+  [ConductType.ON_TIME_DELIVERY]: 4,
+  [ConductType.PROTOCOL_COMPLIANCE]: 5,
+  [ConductType.VERIFIED_ASSISTANCE]: 6,
+};
+
+const RECOVERY_STREAK_THRESHOLD = 3;
+const RECOVERY_MULTIPLIER = 2;
 
 @Injectable()
 export class ReputationService {
@@ -136,6 +154,10 @@ export class ReputationService {
         riderId,
         reputationScore: 0,
         badges: [],
+        goodConductRecords: [],
+        conductStreak: 0,
+        recoveryCapScore: null,
+        pendingViolations: 0,
       });
       rep = await this.reputationRepo.save(rep);
     }
@@ -150,6 +172,16 @@ export class ReputationService {
   ) {
     const rep = await this.getOrCreate(riderId);
     const delta = POINTS[eventType] ?? 0;
+    const scoreBefore = rep.reputationScore;
+
+    if (delta < 0) {
+      rep.recoveryCapScore = scoreBefore;
+      rep.conductStreak = 0;
+      rep.pendingViolations += 1;
+    } else if (eventType === ReputationEventType.DISPUTE_RESOLVED) {
+      rep.pendingViolations = Math.max(0, rep.pendingViolations - 1);
+    }
+
     rep.reputationScore = Math.max(0, rep.reputationScore + delta);
     await this.reputationRepo.save(rep);
 
@@ -165,6 +197,67 @@ export class ReputationService {
     );
 
     await this.checkAndAwardBadges(rep);
+  }
+
+  async recordGoodConduct(
+    riderId: string,
+    conductType: ConductType,
+    validatedByAdmin: boolean,
+    referenceId?: string,
+  ) {
+    if (!validatedByAdmin) {
+      throw new ForbiddenException(
+        'Good conduct records require admin validation',
+      );
+    }
+
+    const rep = await this.getOrCreate(riderId);
+    if (rep.pendingViolations > 0) {
+      throw new UnprocessableEntityException(
+        'Good conduct recovery is blocked while violations are pending',
+      );
+    }
+
+    const basePoints = GOOD_CONDUCT_POINTS[conductType] ?? 0;
+    const nextStreak = (rep.conductStreak ?? 0) + 1;
+    const multiplier =
+      nextStreak >= RECOVERY_STREAK_THRESHOLD ? RECOVERY_MULTIPLIER : 1;
+    const proposedDelta = basePoints * multiplier;
+    const cap = rep.recoveryCapScore ?? rep.reputationScore;
+    const availableRecovery = Math.max(0, cap - rep.reputationScore);
+    const actualDelta = Math.min(proposedDelta, availableRecovery);
+
+    const record: GoodConductRecord = {
+      conductType,
+      pointsAwarded: actualDelta,
+      validatedAt: new Date().toISOString(),
+    };
+
+    rep.conductStreak = nextStreak;
+    rep.goodConductRecords = [...(rep.goodConductRecords ?? []), record];
+    rep.reputationScore += actualDelta;
+    if (rep.recoveryCapScore !== null && rep.reputationScore >= rep.recoveryCapScore) {
+      rep.recoveryCapScore = null;
+    }
+    await this.reputationRepo.save(rep);
+
+    await this.historyRepo.save(
+      this.historyRepo.create({
+        reputationId: rep.id,
+        eventType: ReputationEventType.GOOD_CONDUCT_RECOVERY,
+        pointsDelta: actualDelta,
+        scoreAfter: rep.reputationScore,
+        referenceId,
+        note: conductType,
+      }),
+    );
+
+    await this.checkAndAwardBadges(rep);
+
+    return {
+      message: 'Good conduct recovery recorded successfully',
+      data: rep,
+    };
   }
 
   private async checkAndAwardBadges(rep: ReputationEntity) {

@@ -112,21 +112,23 @@ impl AnalyticsContract {
         env.storage()
             .instance()
             .set(&DataKey::TotalDonations, &0u64);
-        env.storage()
-            .instance()
-            .set(&DataKey::TotalRequests, &0u64);
+        env.storage().instance().set(&DataKey::TotalRequests, &0u64);
         env.storage()
             .instance()
             .set(&DataKey::TotalDeliveries, &0u64);
         env.storage()
             .instance()
             .set(&DataKey::TotalPaymentsReleased, &0u64);
-        env.storage()
-            .instance()
-            .set(&DataKey::TotalVolume, &0i128);
+        env.storage().instance().set(&DataKey::TotalVolume, &0i128);
 
-        env.events()
-            .publish((symbol_short!("anlytcs"), symbol_short!("init")), admin);
+        env.events().publish(
+            (
+                symbol_short!("anlytcs"),
+                symbol_short!("init"),
+                symbol_short!("v1"),
+            ),
+            admin,
+        );
 
         Ok(())
     }
@@ -134,10 +136,7 @@ impl AnalyticsContract {
     // ── Configuration ─────────────────────────────────────────────────────────
 
     /// Update the reporting period. Admin only.
-    pub fn set_reporting_period(
-        env: Env,
-        period_type: PeriodType,
-    ) -> Result<(), AnalyticsError> {
+    pub fn set_reporting_period(env: Env, period_type: PeriodType) -> Result<(), AnalyticsError> {
         let mut cfg = require_admin(&env)?;
 
         let duration_secs = match period_type {
@@ -238,10 +237,7 @@ impl AnalyticsContract {
     }
 
     /// Get the metrics snapshot for a specific period index.
-    pub fn get_snapshot(
-        env: Env,
-        period_index: u64,
-    ) -> Result<MetricsSnapshot, AnalyticsError> {
+    pub fn get_snapshot(env: Env, period_index: u64) -> Result<MetricsSnapshot, AnalyticsError> {
         require_initialized(&env)?;
         env.storage()
             .persistent()

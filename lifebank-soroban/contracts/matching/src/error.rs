@@ -16,4 +16,7 @@ pub enum MatchingError {
     // Inventory errors (620-629)
     InventoryCallFailed = 620,
     NoUnitsAvailable    = 621,
+
+    // Circuit breaker (630)
+    ContractPaused = 630,
 }

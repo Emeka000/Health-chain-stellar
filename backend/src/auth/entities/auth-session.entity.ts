@@ -45,4 +45,22 @@ export class AuthSessionEntity {
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   revocationReason: string;
+
+  // ── Risk scoring fields ──────────────────────────────────────────────
+
+  /** Risk score 0–100 at session creation */
+  @Column({ name: 'risk_score', type: 'int', nullable: true })
+  riskScore: number | null;
+
+  /** Risk level: low | medium | high | critical */
+  @Column({ name: 'risk_level', type: 'varchar', length: 16, nullable: true })
+  riskLevel: string | null;
+
+  /** Signals that contributed to the risk score */
+  @Column({ name: 'risk_signals', type: 'jsonb', nullable: true })
+  riskSignals: Record<string, boolean> | null;
+
+  /** Timestamp when step-up authentication was completed for this session */
+  @Column({ name: 'step_up_at', type: 'timestamp', nullable: true })
+  stepUpAt: Date | null;
 }

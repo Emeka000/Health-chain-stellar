@@ -346,7 +346,7 @@ export class OrganizationsService {
       <p>Your registration request for <strong>${org.legalName}</strong> (license <code>${org.licenseNumber}</code>) was received and is <strong>pending verification</strong>.</p>
       <p>You will receive another email when an administrator approves or rejects your application.</p>
     `;
-    await this.emailProvider.send(org.email, subject, html);
+    if (org.email) await this.emailProvider.send(org.email, subject, html);
   }
 
   private async sendApprovedEmail(org: OrganizationEntity) {
@@ -366,7 +366,7 @@ export class OrganizationsService {
       ${txLine}
       ${regLine}
     `;
-    await this.emailProvider.send(org.email, subject, html);
+    if (org.email) await this.emailProvider.send(org.email, subject, html);
   }
 
   private async sendRejectedEmail(org: OrganizationEntity) {
@@ -380,6 +380,6 @@ export class OrganizationsService {
       <p><strong>Reason:</strong></p>
       <blockquote>${org.rejectionReason ?? ''}</blockquote>
     `;
-    await this.emailProvider.send(org.email, subject, html);
+    if (org.email) await this.emailProvider.send(org.email, subject, html);
   }
 }

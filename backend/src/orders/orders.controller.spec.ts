@@ -16,7 +16,7 @@ import { OrderStateMachine } from './state-machine/order-state-machine';
 
 describe('OrdersController', () => {
   let controller: OrdersController;
-  let service: OrdersService;
+  let service: { findAllWithFilters: jest.Mock };
   let mockGateway: Partial<OrdersGateway>;
 
   beforeEach(async () => {
@@ -28,7 +28,12 @@ describe('OrdersController', () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [OrdersController],
       providers: [
-        OrdersService,
+        {
+          provide: OrdersService,
+          useValue: {
+            findAllWithFilters: jest.fn(),
+          },
+        },
         {
           provide: getRepositoryToken(OrderEntity),
           useValue: {
@@ -76,7 +81,7 @@ describe('OrdersController', () => {
     }).compile();
 
     controller = module.get<OrdersController>(OrdersController);
-    service = module.get<OrdersService>(OrdersService);
+    service = module.get(OrdersService);
   });
 
   it('should be defined', () => {

@@ -37,7 +37,9 @@ export class BloodRequestItemEntity {
   @Column({ name: 'request_id', type: 'uuid' })
   requestId: string;
 
-  @ManyToOne(() => BloodRequestEntity, (r) => r.items, { onDelete: 'CASCADE' })
+  @ManyToOne(() => BloodRequestEntity, (request) => request.items, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'request_id' })
   request: BloodRequestEntity;
 

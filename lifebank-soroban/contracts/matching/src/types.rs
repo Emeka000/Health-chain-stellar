@@ -165,4 +165,5 @@ pub enum DataKey {
     InventoryContract,
     RequestsContract,
     Initialized,
+    Paused,
 }

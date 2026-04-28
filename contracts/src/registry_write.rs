@@ -104,8 +104,14 @@ pub fn register_unit(
         donor_id,
     };
 
-    env.events()
-        .publish((symbol_short!("blood"), symbol_short!("register")), event);
+    env.events().publish(
+        (
+            symbol_short!("blood"),
+            symbol_short!("register"),
+            symbol_short!("v1"),
+        ),
+        event,
+    );
 
     Ok(unit_id)
 }

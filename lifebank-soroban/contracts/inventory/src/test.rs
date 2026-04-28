@@ -1420,11 +1420,14 @@ fn test_transition_pure_all_valid_pairs_succeeds() {
     let valid = [
         (Available, Reserved),
         (Available, Expired),
+        (Available, Compromised),
         (Reserved, InTransit),
         (Reserved, Available),
         (Reserved, Expired),
+        (Reserved, Compromised),
         (InTransit, Delivered),
         (InTransit, Expired),
+        (InTransit, Compromised),
         (Expired, Disposed),
         (Compromised, Disposed),
     ];
@@ -1451,11 +1454,14 @@ fn test_transition_pure_all_invalid_pairs_fails() {
     let valid_set = [
         (Available, Reserved),
         (Available, Expired),
+        (Available, Compromised),
         (Reserved, InTransit),
         (Reserved, Available),
         (Reserved, Expired),
+        (Reserved, Compromised),
         (InTransit, Delivered),
         (InTransit, Expired),
+        (InTransit, Compromised),
         (Expired, Disposed),
         (Compromised, Disposed),
     ];
@@ -1477,3 +1483,178 @@ fn test_transition_pure_all_invalid_pairs_fails() {
     }
 }
 
+
+// ── Circuit breaker tests ─────────────────────────────────────────────────────
+
+#[test]
+fn test_pause_blocks_write_functions() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000);
+
+    // Pause the contract
+    client.pause(&admin);
+    assert!(client.is_paused());
+
+    // register_blood should fail with ContractPaused (#160)
+    let result = client.try_register_blood(&admin, &BloodType::OPositive, &450u32, &None);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_pause_allows_read_functions() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000);
+
+    // Register a unit before pausing
+    let unit_id = client.register_blood(&admin, &BloodType::OPositive, &450u32, &None);
+
+    // Pause
+    client.pause(&admin);
+
+    // Read functions still work
+    let unit = client.get_blood_unit(&unit_id);
+    assert_eq!(unit.id, unit_id);
+    assert!(!client.get_status_history(&unit_id).is_empty() || client.get_status_change_count(&unit_id) == 0);
+}
+
+#[test]
+fn test_unpause_restores_functionality() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000);
+
+    client.pause(&admin);
+    assert!(client.is_paused());
+
+    client.unpause(&admin);
+    assert!(!client.is_paused());
+
+    // Write should succeed after unpause
+    let unit_id = client.register_blood(&admin, &BloodType::APositive, &300u32, &None);
+    assert!(unit_id > 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #102)")]
+fn test_non_admin_cannot_pause() {
+    let (env, _admin, client, _) = create_test_contract();
+    let attacker = Address::generate(&env);
+    client.pause(&attacker);
+}
+
+// ── Paginated history tests ───────────────────────────────────────────────────
+
+/// Verify that get_status_history_page returns only the entries for the
+/// requested page and that get_history_page_count reflects the correct
+/// last page number after many transitions.
+#[test]
+fn test_paginated_history_single_page() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+
+    // 3 transitions — all fit on page 0 (page size = 50)
+    client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+    client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
+    client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
+
+    // Page 0 should have all 3 entries
+    let page0 = client.get_status_history_page(&id, &0u32);
+    assert_eq!(page0.len(), 3);
+
+    // Page count should still be 0 (only one page used)
+    assert_eq!(client.get_history_page_count(&id), 0);
+}
+
+/// Verify that full history via get_status_history matches the sum of all pages.
+#[test]
+fn test_paginated_history_full_matches_pages() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+
+    // 5 transitions
+    client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+    client.update_status(&id, &BloodStatus::Available, &admin, &None);
+    client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+    client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
+    client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
+
+    let full = client.get_status_history(&id);
+    assert_eq!(full.len(), 5);
+
+    // All entries should be on page 0
+    let page0 = client.get_status_history_page(&id, &0u32);
+    assert_eq!(page0.len(), 5);
+}
+
+// ── batch_register_blood tests ────────────────────────────────────────────────
+
+#[test]
+fn test_batch_register_blood_success() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    let entries = vec![
+        &env,
+        (BloodType::APositive, 450u32, None::<Address>),
+        (BloodType::BNegative, 300u32, None::<Address>),
+        (BloodType::ONegative, 500u32, None::<Address>),
+    ];
+
+    let ids = client.batch_register_blood(&admin, &entries);
+
+    assert_eq!(ids.len(), 3);
+    assert_eq!(ids.get(0).unwrap(), 1u64);
+    assert_eq!(ids.get(1).unwrap(), 2u64);
+    assert_eq!(ids.get(2).unwrap(), 3u64);
+
+    // Verify each unit was stored correctly
+    let u1 = client.get_blood_unit(&1u64);
+    assert_eq!(u1.blood_type, BloodType::APositive);
+    assert_eq!(u1.quantity_ml, 450);
+
+    let u2 = client.get_blood_unit(&2u64);
+    assert_eq!(u2.blood_type, BloodType::BNegative);
+
+    let u3 = client.get_blood_unit(&3u64);
+    assert_eq!(u3.blood_type, BloodType::ONegative);
+}
+
+#[test]
+fn test_batch_register_blood_empty_list() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    let empty: soroban_sdk::Vec<(BloodType, u32, Option<Address>)> =
+        soroban_sdk::Vec::new(&env);
+    let ids = client.batch_register_blood(&admin, &empty);
+    assert_eq!(ids.len(), 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #116)")]
+fn test_batch_register_blood_invalid_quantity_aborts_all() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    // Second entry has invalid quantity — entire batch should fail
+    let entries = vec![
+        &env,
+        (BloodType::APositive, 450u32, None::<Address>),
+        (BloodType::BNegative, 50u32, None::<Address>), // too low
+    ];
+    client.batch_register_blood(&admin, &entries);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #132)")]
+fn test_batch_register_blood_unauthorized_bank() {
+    let (env, _admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    let unauthorized = Address::generate(&env);
+    let entries = vec![&env, (BloodType::APositive, 450u32, None::<Address>)];
+    client.batch_register_blood(&unauthorized, &entries);
+}

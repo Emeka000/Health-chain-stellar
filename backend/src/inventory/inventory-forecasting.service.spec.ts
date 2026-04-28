@@ -6,6 +6,8 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 
 import { Repository, MoreThanOrEqual } from 'typeorm';
 
+import { BloodRequestEntity } from '../blood-requests/entities/blood-request.entity';
+import { DonationEntity } from '../donations/entities/donation.entity';
 import { InventoryLowEvent } from '../events/inventory-low.event';
 import { OrderEntity } from '../orders/entities/order.entity';
 
@@ -15,6 +17,8 @@ import { InventoryForecastingService } from './inventory-forecasting.service';
 describe('InventoryForecastingService', () => {
   let service: InventoryForecastingService;
   let orderRepo: Repository<OrderEntity>;
+  let requestRepo: Repository<BloodRequestEntity>;
+  let donationRepo: Repository<DonationEntity>;
   let inventoryRepo: Repository<InventoryEntity>;
   let eventEmitter: EventEmitter2;
   let outreachQueue: any;
@@ -24,6 +28,7 @@ describe('InventoryForecastingService', () => {
       const config = {
         INVENTORY_FORECAST_THRESHOLD_DAYS: 3,
         INVENTORY_FORECAST_HISTORY_DAYS: 30,
+        INVENTORY_FORECAST_DEFAULT_SEASON_LENGTH: 7,
       };
       return config[key] || defaultValue;
     }),
@@ -50,7 +55,20 @@ describe('InventoryForecastingService', () => {
         {
           provide: getRepositoryToken(InventoryEntity),
           useValue: {
+            find: jest.fn(),
             findOne: jest.fn(),
+          },
+        },
+        {
+          provide: getRepositoryToken(BloodRequestEntity),
+          useValue: {
+            find: jest.fn(),
+          },
+        },
+        {
+          provide: getRepositoryToken(DonationEntity),
+          useValue: {
+            find: jest.fn(),
           },
         },
         {
@@ -74,6 +92,12 @@ describe('InventoryForecastingService', () => {
     orderRepo = module.get<Repository<OrderEntity>>(
       getRepositoryToken(OrderEntity),
     );
+    requestRepo = module.get<Repository<BloodRequestEntity>>(
+      getRepositoryToken(BloodRequestEntity),
+    );
+    donationRepo = module.get<Repository<DonationEntity>>(
+      getRepositoryToken(DonationEntity),
+    );
     inventoryRepo = module.get<Repository<InventoryEntity>>(
       getRepositoryToken(InventoryEntity),
     );
@@ -88,7 +112,7 @@ describe('InventoryForecastingService', () => {
   });
 
   describe('calculateDemandForecasts', () => {
-    it('should calculate average daily demand from order history', async () => {
+    it('should calculate forecasted demand from order history', async () => {
       const mockOrders = [
         {
           bloodType: 'A+',
@@ -111,9 +135,11 @@ describe('InventoryForecastingService', () => {
       ];
 
       jest.spyOn(orderRepo, 'find').mockResolvedValue(mockOrders as any);
+      jest.spyOn(requestRepo, 'find').mockResolvedValue([]);
+      jest.spyOn(donationRepo, 'find').mockResolvedValue([]);
       jest
-        .spyOn(inventoryRepo, 'findOne')
-        .mockResolvedValue({ quantity: 50 } as any);
+        .spyOn(inventoryRepo, 'find')
+        .mockResolvedValue([{ bloodType: 'A+', region: 'Region1', quantity: 50 }] as any);
 
       const forecasts = await service.calculateDemandForecasts();
 
@@ -122,10 +148,14 @@ describe('InventoryForecastingService', () => {
       expect(forecasts[0]).toHaveProperty('region');
       expect(forecasts[0]).toHaveProperty('averageDailyDemand');
       expect(forecasts[0]).toHaveProperty('projectedDaysOfSupply');
+      expect(forecasts[0]).toHaveProperty('forecastedDemand');
     });
 
     it('should handle no order history', async () => {
       jest.spyOn(orderRepo, 'find').mockResolvedValue([]);
+      jest.spyOn(requestRepo, 'find').mockResolvedValue([]);
+      jest.spyOn(donationRepo, 'find').mockResolvedValue([]);
+      jest.spyOn(inventoryRepo, 'find').mockResolvedValue([]);
 
       const forecasts = await service.calculateDemandForecasts();
 
@@ -143,9 +173,11 @@ describe('InventoryForecastingService', () => {
       ];
 
       jest.spyOn(orderRepo, 'find').mockResolvedValue(mockOrders as any);
+      jest.spyOn(requestRepo, 'find').mockResolvedValue([]);
+      jest.spyOn(donationRepo, 'find').mockResolvedValue([]);
       jest
-        .spyOn(inventoryRepo, 'findOne')
-        .mockResolvedValue({ quantity: 20 } as any);
+        .spyOn(inventoryRepo, 'find')
+        .mockResolvedValue([{ bloodType: 'AB+', region: 'Region3', quantity: 20 }] as any);
 
       const forecasts = await service.calculateDemandForecasts();
 
@@ -165,9 +197,11 @@ describe('InventoryForecastingService', () => {
       ];
 
       jest.spyOn(orderRepo, 'find').mockResolvedValue(mockOrders as any);
+      jest.spyOn(requestRepo, 'find').mockResolvedValue([]);
+      jest.spyOn(donationRepo, 'find').mockResolvedValue([]);
       jest
-        .spyOn(inventoryRepo, 'findOne')
-        .mockResolvedValue({ quantity: 100 } as any);
+        .spyOn(inventoryRepo, 'find')
+        .mockResolvedValue([{ bloodType: 'B-', region: 'Region4', quantity: 100 }] as any);
 
       const forecasts = await service.calculateDemandForecasts();
 
@@ -185,12 +219,44 @@ describe('InventoryForecastingService', () => {
       ];
 
       jest.spyOn(orderRepo, 'find').mockResolvedValue(mockOrders as any);
-      jest.spyOn(inventoryRepo, 'findOne').mockResolvedValue(null);
+      jest.spyOn(requestRepo, 'find').mockResolvedValue([]);
+      jest.spyOn(donationRepo, 'find').mockResolvedValue([]);
+      jest.spyOn(inventoryRepo, 'find').mockResolvedValue([]);
 
       const forecasts = await service.calculateDemandForecasts();
 
       expect(forecasts[0].currentStock).toBe(0);
       expect(forecasts[0].projectedDaysOfSupply).toBe(0);
+    });
+
+    it('uses blood requests and donation metadata to warm sparse series', async () => {
+      jest.spyOn(orderRepo, 'find').mockResolvedValue([]);
+      jest.spyOn(requestRepo, 'find').mockResolvedValue([
+        {
+          deliveryAddress: 'Clinic, Region6',
+          createdAt: new Date(),
+          items: [{ bloodType: 'O+', quantityMl: 450 }],
+        },
+      ] as any);
+      jest.spyOn(donationRepo, 'find').mockResolvedValue([
+        {
+          metadata: {
+            bloodType: 'O+',
+            region: 'Region6',
+            quantityMl: 450,
+          },
+        },
+      ] as any);
+      jest
+        .spyOn(inventoryRepo, 'find')
+        .mockResolvedValue([{ bloodType: 'O+', region: 'Region6', quantity: 10 }] as any);
+
+      const forecasts = await service.calculateDemandForecasts();
+
+      expect(forecasts).toHaveLength(1);
+      expect(forecasts[0].bloodType).toBe('O+');
+      expect(forecasts[0].seasonLength).toBe(7);
+      expect(forecasts[0].forecastedDemand).toBeGreaterThan(0);
     });
   });
 
@@ -273,6 +339,11 @@ describe('InventoryForecastingService', () => {
               { bloodType: 'A+', region: 'Region1', daysThreshold: 5 },
             ]);
           }
+          if (key === 'INVENTORY_FORECAST_SEASONALITY') {
+            return JSON.stringify([
+              { bloodType: 'A+', region: 'Region1', seasonLength: 14 },
+            ]);
+          }
           return mockConfigService.get(key, defaultValue);
         }),
       };
@@ -286,7 +357,15 @@ describe('InventoryForecastingService', () => {
           },
           {
             provide: getRepositoryToken(InventoryEntity),
-            useValue: { findOne: jest.fn() },
+            useValue: { find: jest.fn(), findOne: jest.fn() },
+          },
+          {
+            provide: getRepositoryToken(BloodRequestEntity),
+            useValue: { find: jest.fn() },
+          },
+          {
+            provide: getRepositoryToken(DonationEntity),
+            useValue: { find: jest.fn() },
           },
           { provide: EventEmitter2, useValue: mockEventEmitter },
           { provide: ConfigService, useValue: customConfigService },
@@ -315,6 +394,16 @@ describe('InventoryForecastingService', () => {
       await customService.runForecast();
 
       expect(eventEmitter.emit).toHaveBeenCalled();
+    });
+
+    it('recalibrates thresholds and seasonality settings', async () => {
+      jest.spyOn(service, 'calculateDemandForecasts').mockResolvedValue([]);
+
+      const result = await service.recalibrate();
+
+      expect(result.thresholdCount).toBeGreaterThanOrEqual(0);
+      expect(result.seasonalityCount).toBeGreaterThanOrEqual(0);
+      expect(result.forecastCount).toBe(0);
     });
   });
 });

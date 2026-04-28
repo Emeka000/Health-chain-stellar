@@ -1,13 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Response } from 'express';
 import * as fastcsv from 'fast-csv';
+import * as crypto from 'crypto';
 import { DisputeEntity } from './entities/dispute.entity';
 import { DisputeNoteEntity } from './entities/dispute-note.entity';
-import { DisputeSeverity, DisputeStatus } from './enums/dispute.enum';
-import { OpenDisputeDto } from './dto/dispute.dto';
-import { ResolveDisputeDto } from './dto/dispute.dto';
+import { DisputeSeverity, DisputeStatus, MAX_EVIDENCE_CHUNK_LENGTH, MAX_EVIDENCE_CHUNKS } from './enums/dispute.enum';
+import { OpenDisputeDto, ResolveDisputeDto } from './dto/dispute.dto';
 
 const MAX_LIMIT = 100;
 const CURSOR_SECRET = process.env.CURSOR_SECRET ?? 'disputes-cursor-secret';
@@ -100,6 +100,8 @@ export class DisputesService {
   async resolve(id: string, dto: ResolveDisputeDto): Promise<DisputeEntity> {
     const d = await this.get(id);
     d.resolutionNotes = dto.resolutionNotes;
+    d.outcome = dto.outcome;
+    d.resolvedBy = dto.resolvedBy;
     d.status = DisputeStatus.RESOLVED;
     d.resolvedAt = new Date();
     return this.disputeRepo.save(d);
@@ -117,8 +119,34 @@ export class DisputesService {
   async addEvidence(id: string, evidence: { type: string; url: string }): Promise<DisputeEntity> {
     const d = await this.get(id);
     const existing = d.evidence ?? [];
-    d.evidence = [...existing, { ...evidence, addedAt: new Date().toISOString() }];
+
+    if (existing.length >= MAX_EVIDENCE_CHUNKS) {
+      throw new BadRequestException(
+        `Evidence chunk limit of ${MAX_EVIDENCE_CHUNKS} reached for dispute '${id}'`,
+      );
+    }
+    if (evidence.url.length > MAX_EVIDENCE_CHUNK_LENGTH) {
+      throw new BadRequestException(
+        `Evidence URL exceeds maximum length of ${MAX_EVIDENCE_CHUNK_LENGTH} characters`,
+      );
+    }
+
+    const updated = [...existing, { ...evidence, addedAt: new Date().toISOString() }];
+    d.evidence = updated;
+    d.evidenceDigest = this.canonicalEvidenceDigest(updated);
     return this.disputeRepo.save(d);
+  }
+
+  /**
+   * Canonical digest: sort chunks by url, join with newline, SHA-256.
+   * Backend proof bundles must reproduce this exact digest to match on-chain.
+   */
+  private canonicalEvidenceDigest(
+    chunks: Array<{ type: string; url: string; addedAt: string }>,
+  ): string {
+    const sorted = [...chunks].sort((a, b) => a.url.localeCompare(b.url));
+    const payload = sorted.map((c) => `${c.type}:${c.url}`).join('\n');
+    return crypto.createHash('sha256').update(payload).digest('hex');
   }
 
   async streamCsvExport(

@@ -1,0 +1,19 @@
+{
+  "form_required_field": "This field is required",
+  "form_invalid_email": "Please enter a valid email address",
+  "form_invalid_phone": "Please enter a valid phone number",
+  "form_password_too_short": "Password must be at least 8 characters long",
+  "form_passwords_do_not_match": "Passwords do not match",
+  "form_field_error": "There is an error with this field",
+  "form_submit_error": "There was an error submitting the form",
+  "form_submit_success": "Form submitted successfully",
+  "form_validation_summary": "Please fix the errors below before submitting",
+  "form_label_email": "Email Address",
+  "form_label_password": "Password",
+  "form_label_confirm_password": "Confirm Password",
+  "form_label_first_name": "First Name",
+  "form_label_last_name": "Last Name",
+  "form_label_phone": "Phone Number",
+  "form_label_organization": "Organization",
+  "form_hint_required_fields": "Fields marked with * are required"
+}

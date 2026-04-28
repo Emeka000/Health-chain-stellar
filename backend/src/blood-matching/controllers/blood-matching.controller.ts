@@ -15,10 +15,15 @@ import {
   MatchingRequest,
   MatchingResponse,
 } from '../services/blood-matching.service';
+import { BloodCompatibilityEngine } from '../compatibility/blood-compatibility.engine';
+import type { PreviewRequest } from '../compatibility/compatibility.types';
 
 @Controller('blood-matching')
 export class BloodMatchingController {
-  constructor(private readonly matchingService: BloodMatchingService) {}
+  constructor(
+    private readonly matchingService: BloodMatchingService,
+    private readonly compatibilityEngine: BloodCompatibilityEngine,
+  ) {}
 
   @RequirePermissions(Permission.VIEW_BLOOD_REQUESTS)
   @Post('match')
@@ -71,6 +76,29 @@ export class BloodMatchingController {
       urgency,
       daysUntilExpiration,
       distance ? Number(distance) : undefined,
+    );
+  }
+
+  /** Admin preview: check compatibility with explanation for a given donor/recipient/component */
+  @RequirePermissions(Permission.VIEW_BLOOD_REQUESTS)
+  @Post('preview')
+  @HttpCode(HttpStatus.OK)
+  preview(@Body() req: PreviewRequest) {
+    return this.compatibilityEngine.preview(req);
+  }
+
+  /** Return all compatible donors for a recipient + component */
+  @RequirePermissions(Permission.VIEW_BLOOD_REQUESTS)
+  @Get('compatible-donors')
+  compatibleDonors(
+    @Query('recipientType') recipientType: string,
+    @Query('component') component: string,
+    @Query('allowEmergency') allowEmergency?: string,
+  ) {
+    return this.compatibilityEngine.compatibleDonors(
+      recipientType as any,
+      component as any,
+      allowEmergency === 'true',
     );
   }
 }

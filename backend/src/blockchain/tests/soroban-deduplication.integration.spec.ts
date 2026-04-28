@@ -1,10 +1,12 @@
 /// <reference types="jest" />
 
-import { getQueueToken } from '@nestjs/bull';
+import { getQueueToken } from '@nestjs/bullmq';
 import { Test, TestingModule } from '@nestjs/testing';
 
 import { JobDeduplicationPlugin } from '../plugins/job-deduplication.plugin';
 import { IdempotencyService } from '../services/idempotency.service';
+import { ConfirmationService } from '../services/confirmation.service';
+import { QueueMetricsService } from '../services/queue-metrics.service';
 import { SorobanService } from '../services/soroban.service';
 import { SorobanTxJob } from '../types/soroban-tx.types';
 
@@ -26,8 +28,9 @@ describe('SorobanService - Job Deduplication Integration', () => {
     mockTxQueue = {
       add: jest
         .fn()
-        .mockImplementation((_data: SorobanTxJob, opts: { jobId?: string }) =>
-          Promise.resolve({ id: opts?.jobId ?? 'job-123' }),
+        .mockImplementation(
+          (_name: string, _data: SorobanTxJob, opts: { jobId?: string } = {}) =>
+            Promise.resolve({ id: opts.jobId ?? 'job-123' }),
         ),
       count: jest.fn().mockResolvedValue(0),
       getFailedCount: jest.fn().mockResolvedValue(0),
@@ -65,6 +68,20 @@ describe('SorobanService - Job Deduplication Integration', () => {
         {
           provide: JobDeduplicationPlugin,
           useValue: mockDeduplicationPlugin,
+        },
+        {
+          provide: ConfirmationService,
+          useValue: { recordConfirmations: jest.fn(), finalityThreshold: 1 },
+        },
+        {
+          provide: QueueMetricsService,
+          useValue: {
+            getDetailedMetrics: jest.fn().mockResolvedValue({
+              counters: {},
+              timings: {},
+              live: { waiting: 0, active: 0, failed: 0, dlqDepth: 0 },
+            }),
+          },
         },
       ],
     }).compile();

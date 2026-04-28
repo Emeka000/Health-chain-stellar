@@ -1,14 +1,14 @@
 import {
-  Controller,
-  Get,
-  Post,
   Body,
-  Patch,
-  Param,
+  Controller,
   Delete,
-  Query,
+  Get,
   HttpCode,
   HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Query,
   ValidationPipe,
 } from '@nestjs/common';
 
@@ -17,9 +17,13 @@ import { User } from '../auth/decorators/user.decorator';
 import { Permission } from '../auth/enums/permission.enum';
 import { PaginatedResponse, PaginationQueryDto } from '../common/pagination';
 
+import { AvailabilityQueryDto } from './dto/availability-query.dto';
 import { CreateRiderDto } from './dto/create-rider.dto';
 import { RegisterRiderDto } from './dto/register-rider.dto';
 import { UpdateRiderDto } from './dto/update-rider.dto';
+import { UpdateRiderLocationDto } from './dto/update-rider-location.dto';
+import { UpdateRiderStatusDto } from './dto/update-rider-status.dto';
+import { WorkingHoursDto } from './dto/working-hours.dto';
 import { RiderEntity } from './entities/rider.entity';
 import { RiderStatus } from './enums/rider-status.enum';
 import { RidersService } from './riders.service';
@@ -48,6 +52,17 @@ export class RidersController {
   @Get('available')
   getAvailable() {
     return this.ridersService.getAvailableRiders();
+  }
+
+  @RequirePermissions(Permission.VIEW_RIDERS)
+  @Get('availability')
+  queryAvailability(
+    @Query(
+      new ValidationPipe({ transform: true, whitelist: true }),
+    )
+    query: AvailabilityQueryDto,
+  ) {
+    return this.ridersService.queryAvailability(query);
   }
 
   @RequirePermissions(Permission.VIEW_RIDERS)
@@ -116,18 +131,38 @@ export class RidersController {
 
   @RequirePermissions(Permission.UPDATE_RIDER)
   @Patch(':id/status')
-  updateStatus(@Param('id') id: string, @Body('status') status: RiderStatus) {
-    return this.ridersService.updateStatus(id, status);
+  updateStatus(
+    @Param('id') id: string,
+    @Body(new ValidationPipe({ whitelist: true })) dto: UpdateRiderStatusDto,
+  ) {
+    return this.ridersService.updateStatus(id, dto);
   }
 
   @RequirePermissions(Permission.UPDATE_RIDER)
   @Patch(':id/location')
   updateLocation(
     @Param('id') id: string,
-    @Body('latitude') latitude: number,
-    @Body('longitude') longitude: number,
+    @Body(new ValidationPipe({ whitelist: true })) dto: UpdateRiderLocationDto,
   ) {
-    return this.ridersService.updateLocation(id, latitude, longitude);
+    return this.ridersService.updateLocation(id, dto);
+  }
+
+  @RequirePermissions(Permission.UPDATE_RIDER)
+  @Patch(':id/working-hours')
+  setWorkingHours(
+    @Param('id') id: string,
+    @Body(new ValidationPipe({ whitelist: true })) dto: WorkingHoursDto,
+  ) {
+    return this.ridersService.setWorkingHours(id, dto);
+  }
+
+  @RequirePermissions(Permission.UPDATE_RIDER)
+  @Patch(':id/preferred-areas')
+  setPreferredAreas(
+    @Param('id') id: string,
+    @Body('areas') areas: string[],
+  ) {
+    return this.ridersService.setPreferredAreas(id, areas);
   }
 
   @RequirePermissions(Permission.DELETE_RIDER)

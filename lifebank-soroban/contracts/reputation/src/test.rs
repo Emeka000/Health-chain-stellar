@@ -774,3 +774,62 @@ fn test_resolve_penalty_marks_as_resolved() {
     let input = c.get_input(&ENTITY).unwrap();
     assert!(input.penalties.get(0).unwrap().is_resolved);
 }
+
+// ── Circuit breaker tests ─────────────────────────────────────────────────────
+
+#[test]
+fn test_reputation_pause_blocks_submit_rating() {
+    let (env, cid) = setup();
+    let c = client(&env, &cid);
+    let admin = Address::generate(&env);
+    c.initialize(&admin);
+
+    c.pause(&admin);
+    assert!(c.is_paused());
+
+    let result = c.try_submit_rating(&ENTITY, &3i64, &1000u64);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_reputation_pause_allows_get_score() {
+    let (env, cid) = setup();
+    let c = client(&env, &cid);
+    let admin = Address::generate(&env);
+    c.initialize(&admin);
+
+    // Submit a rating before pausing
+    c.submit_rating(&ENTITY, &4i64, &1000u64);
+    c.pause(&admin);
+
+    // Read still works
+    let score = c.get_score(&ENTITY).unwrap();
+    assert!(score.score >= 0);
+}
+
+#[test]
+fn test_reputation_unpause_restores_writes() {
+    let (env, cid) = setup();
+    let c = client(&env, &cid);
+    let admin = Address::generate(&env);
+    c.initialize(&admin);
+
+    c.pause(&admin);
+    c.unpause(&admin);
+    assert!(!c.is_paused());
+
+    // Should succeed after unpause
+    c.submit_rating(&ENTITY, &5i64, &2000u64);
+}
+
+#[test]
+#[should_panic]
+fn test_reputation_non_admin_cannot_pause() {
+    let (env, cid) = setup();
+    let c = client(&env, &cid);
+    let admin = Address::generate(&env);
+    c.initialize(&admin);
+
+    let attacker = Address::generate(&env);
+    c.pause(&attacker);
+}

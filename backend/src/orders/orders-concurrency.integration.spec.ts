@@ -47,6 +47,13 @@ describe('Orders Inventory Concurrency Integration', () => {
         RequestStatusService,
         InventoryService,
         {
+          provide: ReservedUnitInvariantService,
+          useValue: {
+            assertReservable: jest.fn().mockResolvedValue(undefined),
+            assertUnitStatus: jest.fn(),
+          },
+        },
+        {
           provide: OrdersGateway,
           useValue: {
             emitOrderStatusUpdated: jest.fn(),
@@ -91,9 +98,12 @@ describe('Orders Inventory Concurrency Integration', () => {
     expect(statuses).toEqual([201, 409]);
 
     const conflictResponse = [resA, resB].find((res) => res.status === 409);
+    const conflictBody = conflictResponse?.body as
+      | { message?: string }
+      | undefined;
     expect(conflictResponse).toBeDefined();
-    expect(typeof conflictResponse?.body?.message).toBe('string');
-    expect(conflictResponse?.body?.message.length).toBeGreaterThan(10);
+    expect(typeof conflictBody?.message).toBe('string');
+    expect(conflictBody?.message?.length ?? 0).toBeGreaterThan(10);
 
     const stock = await inventoryService.findByBankAndBloodType('BB-001', 'O+');
     expect(stock).toBeTruthy();

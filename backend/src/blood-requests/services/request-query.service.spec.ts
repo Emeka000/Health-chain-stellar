@@ -1,39 +1,40 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 
-import { Repository } from 'typeorm';
-
 import {
   QueryRequestsDto,
   SortField,
   SortOrder,
 } from '../dto/query-requests.dto';
 import { BloodRequestItemEntity } from '../entities/blood-request-item.entity';
-import { BloodRequestEntity } from '../entities/blood-request.entity';
+import { BloodRequestEntity, RequestUrgency } from '../entities/blood-request.entity';
 import { BloodRequestStatus } from '../enums/blood-request-status.enum';
 
 import { RequestQueryService } from './request-query.service';
 
 describe('RequestQueryService', () => {
   let service: RequestQueryService;
-  let bloodRequestRepository: Repository<BloodRequestEntity>;
-
   const mockBloodRequest: BloodRequestEntity = {
     id: 'req-1',
     requestNumber: 'BR-001',
     hospitalId: 'hospital-1',
-    requiredBy: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    urgency: RequestUrgency.ROUTINE,
+    createdTimestamp: 1_000,
+    requiredByTimestamp: 2_000,
     deliveryAddress: 'Test Address',
     notes: 'Test notes',
     status: BloodRequestStatus.PENDING,
     blockchainTxHash: null,
     createdByUserId: 'user-1',
+    triageScore: 250,
+    triagePolicyVersion: '2026-03-30.v1',
+    triageFactors: null,
+    escalationTier: 'NONE' as any,
     items: [
       {
         id: 'item-1',
-        bloodBankId: 'bank-1',
         bloodType: 'A+',
-        quantity: 2,
+        quantityMl: 2,
       },
     ] as BloodRequestItemEntity[],
     createdAt: new Date(),
@@ -71,9 +72,6 @@ describe('RequestQueryService', () => {
     }).compile();
 
     service = module.get<RequestQueryService>(RequestQueryService);
-    bloodRequestRepository = module.get<Repository<BloodRequestEntity>>(
-      getRepositoryToken(BloodRequestEntity),
-    );
   });
 
   afterEach(() => {
@@ -163,7 +161,13 @@ describe('RequestQueryService', () => {
 
   describe('getRequestStatistics', () => {
     it('should return request statistics', async () => {
-      mockBloodRequestRepository.find.mockResolvedValue([mockBloodRequest]);
+      const mockQueryBuilder = {
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([mockBloodRequest]),
+      };
+      mockBloodRequestRepository.createQueryBuilder.mockReturnValue(
+        mockQueryBuilder,
+      );
 
       const result = await service.getRequestStatistics();
 
@@ -173,7 +177,13 @@ describe('RequestQueryService', () => {
     });
 
     it('should filter by hospital ID', async () => {
-      mockBloodRequestRepository.find.mockResolvedValue([mockBloodRequest]);
+      const mockQueryBuilder = {
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([mockBloodRequest]),
+      };
+      mockBloodRequestRepository.createQueryBuilder.mockReturnValue(
+        mockQueryBuilder,
+      );
 
       const result = await service.getRequestStatistics('hospital-1');
 
@@ -181,7 +191,13 @@ describe('RequestQueryService', () => {
     });
 
     it('should filter by date range', async () => {
-      mockBloodRequestRepository.find.mockResolvedValue([mockBloodRequest]);
+      const mockQueryBuilder = {
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([mockBloodRequest]),
+      };
+      mockBloodRequestRepository.createQueryBuilder.mockReturnValue(
+        mockQueryBuilder,
+      );
 
       const result = await service.getRequestStatistics(
         undefined,
@@ -200,7 +216,13 @@ describe('RequestQueryService', () => {
         status: BloodRequestStatus.FULFILLED,
         updatedAt: new Date(Date.now() - 12 * 60 * 60 * 1000), // 12 hours ago
       };
-      mockBloodRequestRepository.find.mockResolvedValue([fulfilledRequest]);
+      const mockQueryBuilder = {
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([fulfilledRequest]),
+      };
+      mockBloodRequestRepository.createQueryBuilder.mockReturnValue(
+        mockQueryBuilder,
+      );
 
       const result = await service.getSLAComplianceReport();
 
@@ -213,10 +235,16 @@ describe('RequestQueryService', () => {
       const lateRequest = {
         ...mockBloodRequest,
         status: BloodRequestStatus.FULFILLED,
-        requiredBy: new Date(Date.now() - 24 * 60 * 60 * 1000), // 24 hours ago
+        requiredByTimestamp: Date.now() - 24 * 60 * 60 * 1000, // 24 hours ago
         updatedAt: new Date(), // now (late)
       };
-      mockBloodRequestRepository.find.mockResolvedValue([lateRequest]);
+      const mockQueryBuilder = {
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([lateRequest]),
+      };
+      mockBloodRequestRepository.createQueryBuilder.mockReturnValue(
+        mockQueryBuilder,
+      );
 
       const result = await service.getSLAComplianceReport();
 
@@ -262,6 +290,47 @@ describe('RequestQueryService', () => {
       const result = await service.exportToPDF(queryDto);
 
       expect(result).toBeInstanceOf(Buffer);
+    });
+  });
+
+  describe('sortRequestsByPriority', () => {
+    it('breaks ties by requiredBy, then createdTimestamp', () => {
+      const first = {
+        ...mockBloodRequest,
+        id: 'req-1',
+        requestNumber: 'BR-001',
+        triageScore: 500,
+        requiredByTimestamp: 5_000,
+        createdTimestamp: 1_000,
+      } as BloodRequestEntity;
+      const second = {
+        ...mockBloodRequest,
+        id: 'req-2',
+        requestNumber: 'BR-002',
+        triageScore: 500,
+        requiredByTimestamp: 4_000,
+        createdTimestamp: 2_000,
+      } as BloodRequestEntity;
+      const third = {
+        ...mockBloodRequest,
+        id: 'req-3',
+        requestNumber: 'BR-003',
+        triageScore: 500,
+        requiredByTimestamp: 4_000,
+        createdTimestamp: 500,
+      } as BloodRequestEntity;
+
+      const sorted = service.sortRequestsByPriority(
+        [first, second, third],
+        SortField.TRIAGE_SCORE,
+        SortOrder.DESC,
+      );
+
+      expect(sorted.map((request) => request.id)).toEqual([
+        'req-3',
+        'req-2',
+        'req-1',
+      ]);
     });
   });
 });

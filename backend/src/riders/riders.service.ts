@@ -1,8 +1,10 @@
 import {
+  BadRequestException,
   Injectable,
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 
 import { Repository } from 'typeorm';
@@ -13,17 +15,33 @@ import {
   PaginationUtil,
 } from '../common/pagination';
 
+import { AvailabilityQueryDto } from './dto/availability-query.dto';
 import { CreateRiderDto } from './dto/create-rider.dto';
 import { RegisterRiderDto } from './dto/register-rider.dto';
 import { UpdateRiderDto } from './dto/update-rider.dto';
+import { UpdateRiderLocationDto } from './dto/update-rider-location.dto';
+import { UpdateRiderStatusDto } from './dto/update-rider-status.dto';
+import { WorkingHoursDto } from './dto/working-hours.dto';
 import { RiderEntity } from './entities/rider.entity';
 import { RiderStatus } from './enums/rider-status.enum';
+
+const ALLOWED_STATUS_TRANSITIONS: Record<RiderStatus, RiderStatus[]> = {
+  [RiderStatus.OFFLINE]: [RiderStatus.AVAILABLE],
+  [RiderStatus.AVAILABLE]: [
+    RiderStatus.OFFLINE,
+    RiderStatus.BUSY,
+    RiderStatus.ON_DELIVERY,
+  ],
+  [RiderStatus.BUSY]: [RiderStatus.AVAILABLE, RiderStatus.OFFLINE],
+  [RiderStatus.ON_DELIVERY]: [RiderStatus.AVAILABLE, RiderStatus.OFFLINE],
+};
 
 @Injectable()
 export class RidersService {
   constructor(
     @InjectRepository(RiderEntity)
     private readonly riderRepository: Repository<RiderEntity>,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async findAll(
@@ -144,25 +162,65 @@ export class RidersService {
     };
   }
 
-  async updateStatus(id: string, status: RiderStatus) {
+  async updateStatus(id: string, dto: UpdateRiderStatusDto) {
     const riderResult = await this.findOne(id);
     const rider = riderResult.data;
-    rider.status = status;
+
+    const allowedNext = ALLOWED_STATUS_TRANSITIONS[rider.status];
+    if (!allowedNext.includes(dto.status)) {
+      throw new BadRequestException(
+        `Cannot transition from ${rider.status} to ${dto.status}. Allowed: ${allowedNext.join(', ')}`,
+      );
+    }
+
+    const previousStatus = rider.status;
+    rider.status = dto.status;
     const saved = await this.riderRepository.save(rider);
+
+    this.emitStatusChangeEvent(saved, previousStatus);
+
     return {
       message: 'Rider status updated successfully',
       data: saved,
     };
   }
 
-  async updateLocation(id: string, latitude: number, longitude: number) {
+  async updateLocation(id: string, dto: UpdateRiderLocationDto) {
     const riderResult = await this.findOne(id);
     const rider = riderResult.data;
-    rider.latitude = latitude;
-    rider.longitude = longitude;
+    rider.latitude = dto.latitude;
+    rider.longitude = dto.longitude;
+    rider.lastLocationUpdatedAt = new Date();
     const saved = await this.riderRepository.save(rider);
     return {
       message: 'Rider location updated successfully',
+      data: saved,
+    };
+  }
+
+  async setWorkingHours(id: string, dto: WorkingHoursDto) {
+    const riderResult = await this.findOne(id);
+    const rider = riderResult.data;
+    rider.workingHours = {
+      startHour: dto.startHour,
+      endHour: dto.endHour,
+      timezone: dto.timezone,
+      daysOfWeek: dto.daysOfWeek,
+    };
+    const saved = await this.riderRepository.save(rider);
+    return {
+      message: 'Working hours updated successfully',
+      data: saved,
+    };
+  }
+
+  async setPreferredAreas(id: string, areas: string[]) {
+    const riderResult = await this.findOne(id);
+    const rider = riderResult.data;
+    rider.preferredAreas = areas;
+    const saved = await this.riderRepository.save(rider);
+    return {
+      message: 'Preferred areas updated successfully',
       data: saved,
     };
   }
@@ -177,9 +235,47 @@ export class RidersService {
     };
   }
 
+  async queryAvailability(dto: AvailabilityQueryDto) {
+    const riders = await this.riderRepository.find({
+      where: { status: RiderStatus.AVAILABLE, isVerified: true },
+    });
+
+    let results = riders;
+
+    if (dto.area) {
+      results = results.filter(
+        (r) =>
+          Array.isArray(r.preferredAreas) &&
+          r.preferredAreas.some((a) =>
+            a.toLowerCase().includes(dto.area!.toLowerCase()),
+          ),
+      );
+    }
+
+    if (
+      dto.latitude !== undefined &&
+      dto.longitude !== undefined &&
+      dto.radiusKm !== undefined
+    ) {
+      results = results.filter((rider) => {
+        if (rider.latitude === null || rider.longitude === null) return false;
+        const latKm = Math.abs(rider.latitude - dto.latitude!) * 111;
+        const lngKm =
+          Math.abs(rider.longitude - dto.longitude!) *
+          111 *
+          Math.cos((dto.latitude! * Math.PI) / 180);
+        return Math.sqrt(latKm ** 2 + lngKm ** 2) <= dto.radiusKm!;
+      });
+    }
+
+    return {
+      message: 'Availability query successful',
+      data: results,
+      total: results.length,
+    };
+  }
+
   async getNearbyRiders(latitude: number, longitude: number, radiusKm: number) {
-    // Basic approximation using square bounding box before actual distance calculation if needed
-    // For more accurate results, use spatial extensions or a manual formula in query
     const riders = await this.riderRepository.find({
       where: { status: RiderStatus.AVAILABLE, isVerified: true },
     });
@@ -229,7 +325,6 @@ export class RidersService {
         ? 0
         : Math.round((rider.completedDeliveries / total) * 10000) / 100;
 
-    // on-time rate approximated from completed vs total attempted (cancelled + failed treated as late/missed)
     const onTimeRate = successRate;
 
     return {
@@ -271,7 +366,12 @@ export class RidersService {
           total === 0
             ? 0
             : Math.round((r.completedDeliveries / total) * 10000) / 100;
-        return { riderId: r.id, completedDeliveries: r.completedDeliveries, successRate, rating: r.rating };
+        return {
+          riderId: r.id,
+          completedDeliveries: r.completedDeliveries,
+          successRate,
+          rating: r.rating,
+        };
       })
       .sort(
         (a, b) =>
@@ -283,5 +383,26 @@ export class RidersService {
       .map((r, i) => ({ rank: i + 1, ...r }));
 
     return { message: 'Leaderboard retrieved successfully', data: ranked };
+  }
+
+  private emitStatusChangeEvent(rider: RiderEntity, previousStatus: RiderStatus) {
+    if (
+      previousStatus === RiderStatus.OFFLINE &&
+      rider.status === RiderStatus.AVAILABLE
+    ) {
+      this.eventEmitter.emit('rider.online', { riderId: rider.id, userId: rider.userId });
+    } else if (
+      previousStatus !== RiderStatus.OFFLINE &&
+      rider.status === RiderStatus.OFFLINE
+    ) {
+      this.eventEmitter.emit('rider.offline', { riderId: rider.id, userId: rider.userId });
+    }
+
+    this.eventEmitter.emit('rider.status.changed', {
+      riderId: rider.id,
+      userId: rider.userId,
+      previousStatus,
+      newStatus: rider.status,
+    });
   }
 }

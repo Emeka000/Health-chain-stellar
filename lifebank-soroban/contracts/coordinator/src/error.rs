@@ -26,4 +26,8 @@ pub enum CoordinatorError {
     // Cross-contract call failures
     InventoryUpdateFailed = 830,
     PaymentUpdateFailed = 831,
+    PaymentFlagFailed = 832,
+
+    // Circuit breaker
+    ContractPaused = 840,
 }

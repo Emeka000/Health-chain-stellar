@@ -1,99 +1,213 @@
+import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
-import { ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 
+import { AnomalyModule } from './anomaly/anomaly.module';
+import { ApprovalModule } from './approvals/approval.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { AnomalyModule } from './anomaly/anomaly.module';
-import { BatchImportModule } from './batch-import/batch-import.module';
-import { WorkflowModule } from './workflow/workflow.module';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from './auth/guards/permissions.guard';
+import { BatchImportModule } from './batch-import/batch-import.module';
 import { BlockchainModule } from './blockchain/blockchain.module';
 import { BloodRequestsModule } from './blood-requests/blood-requests.module';
 import { BloodUnitsModule } from './blood-units/blood-units.module';
-import { EventsModule } from './events/events.module';
+import { ColdChainModule } from './cold-chain/cold-chain.module';
+import { AuditLogModule } from './common/audit/audit-log.module';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { CorrelationIdService } from './common/middleware/correlation-id.service';
 import { AppConfigModule } from './config/config.module';
-import { DatabaseSyncGuard } from './config/database-sync.guard';
+import { ContractEventIndexerModule } from './contract-event-indexer/contract-event-indexer.module';
+import { CustodyModule } from './custody/custody.module';
+import { DeliveryProofModule } from './delivery-proof/delivery-proof.module';
 import { DispatchModule } from './dispatch/dispatch.module';
-import { EscalationModule } from './escalation/escalation.module';
+import { DisputesModule } from './disputes/disputes.module';
+import { DonationModule } from './donations/donation.module';
+import { DonorEligibilityModule } from './donor-eligibility/donor-eligibility.module';
 import { DonorImpactModule } from './donor-impact/donor-impact.module';
-import { LocationHistoryModule } from './location-history/location-history.module';
+import { EscalationModule } from './escalation/escalation.module';
+import { EventsModule } from './events/events.module';
+import { HealthModule } from './health/health.module';
 import { HospitalsModule } from './hospitals/hospitals.module';
+import { IncidentReviewsModule } from './incident-reviews/incident-reviews.module';
 import { InventoryModule } from './inventory/inventory.module';
+import { LocationHistoryModule } from './location-history/location-history.module';
 import { MapsModule } from './maps/maps.module';
 import { NotificationsModule } from './notifications/notifications.module';
-import { UserActivityModule } from './user-activity/user-activity.module';
-import { UsersModule } from './users/users.module';
+import { OnboardingModule } from './onboarding/onboarding.module';
+import { OrdersModule } from './orders/orders.module';
+import { OrganizationsModule } from './organizations/organizations.module';
+import { PolicyCenterModule } from './policy-center/policy-center.module';
+import { ProofBundleModule } from './proof-bundle/proof-bundle.module';
+import { ReadinessModule } from './readiness/readiness.module';
+import { ReconciliationModule } from './reconciliation/reconciliation.module';
+import { RedisModule } from './redis/redis.module';
+import { RegionsModule } from './regions/regions.module';
+import { ReportingModule } from './reporting/reporting.module';
+import { ReputationModule } from './reputation/reputation.module';
+import { RidersModule } from './riders/riders.module';
+import { RouteDeviationModule } from './route-deviation/route-deviation.module';
+import { FileMetadataModule } from './file-metadata/file-metadata.module';
+import { SlaModule } from './sla/sla.module';
+import { SorobanModule } from './soroban/soroban.module';
+import { SurgeSimulationModule } from './surge-simulation/surge-simulation.module';
+import { THROTTLE_TTL_MS } from './config/throttle-limits.config';
 import { TrackingModule } from './tracking/tracking.module';
 import { TransparencyModule } from './transparency/transparency.module';
-import { PolicyCenterModule } from './policy-center/policy-center.module';
+import { UserActivityModule } from './user-activity/user-activity.module';
+import { UsersModule } from './users/users.module';
+import { UssdModule } from './ussd/ussd.module';
+// UssdSessionModule (ussd-session/) is excluded: its UssdService injects IOrderService
+// by interface type which is erased at runtime and cannot be resolved by NestJS DI
+// without a concrete token. Deferred until the module is refactored to use a
+// proper injection token (e.g. Symbol('ORDER_SERVICE') or a concrete class).
+import { WorkflowModule } from './workflow/workflow.module';
+import { RoleAwareThrottlerGuard } from './throttler/role-aware-throttler.guard';
+import { throttleGetTracker } from './throttler/throttle-tracker.util';
 
 import type Redis from 'ioredis';
 
-// Placeholder for activity logging interceptor (if exists, else will need to be implemented)
-// import { ActivityLoggingInterceptor } from './common/interceptors/activity-logging.interceptor';
-
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    // ── Single authoritative configuration bootstrap ──────────────────────
+    // AppConfigModule wraps ConfigModule.forRoot with env validation.
+    // All other modules that need ConfigService import ConfigModule (not forRoot)
+    // to receive the already-initialised global config.
+    AppConfigModule,
+
     EventEmitterModule.forRoot(),
-    TypeOrmModule.forRootAsync({
-      imports: [ConfigModule],
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres',
-        host: config.get<string>('DB_HOST', 'localhost'),
-        port: config.get<number>('DB_PORT', 5432),
-        username: config.get<string>('DB_USERNAME', 'postgres'),
-        password: config.get<string>('DB_PASSWORD', 'postgres'),
-        database: config.get<string>('DB_DATABASE', 'health_chain'),
-        autoLoadEntities: true,
-        synchronize: true, // DEV ONLY
+
+    // Global BullMQ Redis connection — individual modules register their own queues
+    BullModule.forRootAsync({
+      useFactory: (configService: ConfigService) => ({
+        connection: {
+          host: configService.get<string>('REDIS_HOST', 'localhost'),
+          port: configService.get<number>('REDIS_PORT', 6379),
+        },
       }),
       inject: [ConfigService],
     }),
+
+    TypeOrmModule.forRootAsync({
+      useFactory: (config: ConfigService) => {
+        const nodeEnv = config.get<string>('NODE_ENV', 'development');
+        // synchronize is only permitted in local development/test environments.
+        // DatabaseSyncGuard.validateSynchronizeConfig is called in main.ts before
+        // the app initialises, so this value is already validated at bootstrap.
+        const synchronize = nodeEnv === 'development' || nodeEnv === 'test';
+        return {
+          type: 'postgres',
+          host: config.get<string>('DATABASE_HOST', 'localhost'),
+          port: config.get<number>('DATABASE_PORT', 5432),
+          username: config.get<string>('DATABASE_USERNAME', 'postgres'),
+          password: config.get<string>('DATABASE_PASSWORD', ''),
+          database: config.get<string>('DATABASE_NAME'),
+          autoLoadEntities: true,
+          synchronize,
+          migrations: ['dist/migrations/*.js'],
+          migrationsRun: false,
+        };
+      },
+      inject: [ConfigService],
+    }),
+
+    /**
+     * ThrottlerModule with Redis storage for distributed rate limiting.
+     * Per-role limits are resolved at request time by RoleAwareThrottlerGuard;
+     * the base limit here acts as a fallback only.
+     */
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        throttlers: [
+          {
+            name: 'default',
+            ttl: THROTTLE_TTL_MS,
+            limit: 30, // fallback; overridden per-role by RoleAwareThrottlerGuard
+          },
+        ],
+        storage: new ThrottlerStorageRedisService({
+          host: config.get<string>('REDIS_HOST', 'localhost'),
+          port: config.get<number>('REDIS_PORT', 6379),
+          password: config.get<string>('REDIS_PASSWORD', undefined),
+        } as unknown as Redis),
+        getTracker: throttleGetTracker,
+      }),
+    }),
+
+    // ── Core infrastructure ───────────────────────────────────────────────
+    RedisModule,
     UsersModule,
     AuthModule,
-    InventoryModule,
-    NotificationsModule,
-    UserActivityModule,
-    EventsModule,
-    TrackingModule,
+
+    // ── Health & observability ────────────────────────────────────────────
+    HealthModule,
+
+    // ── Domain modules ────────────────────────────────────────────────────
     AnomalyModule,
+    ApprovalModule,
     BatchImportModule,
-    WorkflowModule,
+    BlockchainModule,
     BloodRequestsModule,
     BloodUnitsModule,
-    BlockchainModule,
+    ColdChainModule,
+    ContractEventIndexerModule,
+    CustodyModule,
+    DeliveryProofModule,
     DispatchModule,
-    EscalationModule,
+    DisputesModule,
+    DonationModule,
+    DonorEligibilityModule,
     DonorImpactModule,
-    LocationHistoryModule,
+    EscalationModule,
+    EventsModule,
+    FileMetadataModule,
     HospitalsModule,
+    IncidentReviewsModule,
+    InventoryModule,
+    LocationHistoryModule,
     MapsModule,
-    TransparencyModule,
+    NotificationsModule,
+    OnboardingModule,
+    OrdersModule,
+    OrganizationsModule,
     PolicyCenterModule,
+    ProofBundleModule,
+    ReadinessModule,
+    ReconciliationModule,
+    RegionsModule,
+    ReportingModule,
+    ReputationModule,
+    RidersModule,
+    RouteDeviationModule,
+    SlaModule,
+    SorobanModule,
+    SurgeSimulationModule,
+    TrackingModule,
+    TransparencyModule,
+    UserActivityModule,
+    UssdModule,
+    WorkflowModule,
+    AuditLogModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
-    /** JWT authentication applied globally; use @Public() to opt-out */
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     /**
-     * Runs after JWT so throttling can use `req.user` on protected routes (IP otherwise).
+     * Runs after JWT so req.user is populated before role resolution.
+     * Replaces the generic ThrottlerGuard with role-aware limits.
      */
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: RoleAwareThrottlerGuard },
     /** Permission enforcement applied globally; use @RequirePermissions() to specify */
     { provide: APP_GUARD, useClass: PermissionsGuard },
-    // { provide: APP_INTERCEPTOR, useClass: ActivityLoggingInterceptor },
     CorrelationIdService,
   ],
 })

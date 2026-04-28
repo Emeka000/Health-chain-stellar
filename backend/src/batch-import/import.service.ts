@@ -21,6 +21,8 @@ import {
   ImportRowStatus,
 } from '../enums/import.enum';
 import { ImportValidationService } from '../import-validation.service';
+import { FileMetadataService } from '../../file-metadata/file-metadata.service';
+import { FileOwnerType } from '../../file-metadata/entities/file-metadata.entity';
 
 @Injectable()
 export class ImportService {
@@ -37,6 +39,7 @@ export class ImportService {
     private readonly inventoryRepo: Repository<InventoryEntity>,
     private readonly validationService: ImportValidationService,
     private readonly activityService: UserActivityService,
+    private readonly fileMetadata: FileMetadataService,
   ) {}
 
   /** Parse CSV buffer → stage rows → return preview */
@@ -88,6 +91,15 @@ export class ImportService {
       }),
     );
 
+    await this.fileMetadata.register({
+      ownerType: FileOwnerType.BATCH_IMPORT,
+      ownerId: batch.id,
+      storagePath: `batch-import/${batch.id}`,
+      originalFilename: filename ?? undefined,
+      contentType: 'text/csv',
+      sizeBytes: csvBuffer.length,
+    });
+
     await this.rowRepo.save(
       stagingRows.map((r) => this.rowRepo.create({ ...r, batchId: batch.id })),
     );
@@ -118,10 +130,15 @@ export class ImportService {
     }
 
     let committed = 0;
-    for (const row of rows) {
-      const id = await this.commitRow(batch.entityType, row.data);
-      await this.rowRepo.update(row.id, { committedId: id });
-      committed++;
+    try {
+      for (const row of rows) {
+        const id = await this.commitRow(batch.entityType, row.data);
+        await this.rowRepo.update(row.id, { committedId: id });
+        committed++;
+      }
+    } catch (err) {
+      await this.fileMetadata.markOrphaned(`batch-import/${batchId}`);
+      throw err;
     }
 
     await this.batchRepo.update(batchId, { status: ImportBatchStatus.COMMITTED });

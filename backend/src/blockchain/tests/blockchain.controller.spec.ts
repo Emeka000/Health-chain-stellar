@@ -6,12 +6,15 @@ import { createHmac } from 'crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 
 import { Request } from 'express';
+import { ConfigService } from '@nestjs/config';
 
 import { BlockchainController } from '../controllers/blockchain.controller';
 import { AdminGuard } from '../guards/admin.guard';
+import { BlockchainHealthService } from '../services/blockchain-health.service';
+import { FailedSorobanTxService } from '../services/failed-soroban-tx.service';
 import { QueueMetricsService } from '../services/queue-metrics.service';
 import { SorobanService } from '../services/soroban.service';
-import { SorobanTxJob } from '../types/soroban-tx.types';
+import { QueueMetrics, SorobanTxJob } from '../types/soroban-tx.types';
 
 const BASE_METRICS: QueueMetrics = {
   queueDepth: 5,
@@ -32,6 +35,9 @@ const BASE_METRICS: QueueMetrics = {
 describe('BlockchainController', () => {
   let controller: BlockchainController;
   let mockSorobanService: jest.Mocked<SorobanService>;
+  let mockQueueMetricsService: {
+    getDetailedMetrics: jest.Mock;
+  };
 
   beforeEach(async () => {
     mockSorobanService = {
@@ -70,7 +76,23 @@ describe('BlockchainController', () => {
       controllers: [BlockchainController],
       providers: [
         { provide: SorobanService, useValue: mockSorobanService },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn((key: string) =>
+              key === 'BLOCKCHAIN_CALLBACK_SECRET' ? 'test-secret' : undefined,
+            ),
+          },
+        },
         { provide: QueueMetricsService, useValue: mockQueueMetricsService },
+        {
+          provide: FailedSorobanTxService,
+          useValue: { findUnresolved: jest.fn().mockResolvedValue([]) },
+        },
+        {
+          provide: BlockchainHealthService,
+          useValue: { check: jest.fn().mockResolvedValue({ status: 'ok' }) },
+        },
       ],
     })
       .overrideGuard(AdminGuard)

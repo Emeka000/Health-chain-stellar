@@ -8,6 +8,7 @@ import { InventoryStockEntity } from '../inventory/entities/inventory-stock.enti
 
 import { BloodMatchingController } from './controllers/blood-matching.controller';
 import { BloodMatchingService } from './services/blood-matching.service';
+import { BloodCompatibilityEngine } from './compatibility/blood-compatibility.engine';
 
 @Module({
   imports: [
@@ -19,7 +20,7 @@ import { BloodMatchingService } from './services/blood-matching.service';
     ]),
   ],
   controllers: [BloodMatchingController],
-  providers: [BloodMatchingService],
-  exports: [BloodMatchingService],
+  providers: [BloodMatchingService, BloodCompatibilityEngine],
+  exports: [BloodMatchingService, BloodCompatibilityEngine],
 })
 export class BloodMatchingModule {}
