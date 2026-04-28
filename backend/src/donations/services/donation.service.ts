@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 
+import { ConsentService } from '../../consent/consent.service';
 import { DonationEntity } from '../entities/donation.entity';
 import { DonationStatus, DonationAsset } from '../enums/donation.enum';
 import { SorobanService } from '../../soroban/soroban.service';
@@ -15,10 +16,12 @@ export class DonationService {
     @InjectRepository(DonationEntity)
     private readonly donationRepository: Repository<DonationEntity>,
     private readonly sorobanService: SorobanService,
+    private readonly consentService: ConsentService,
   ) {}
 
   /**
    * Create a donation intent. Generate a unique memo for Stellar payment tracking.
+   * Requires the donor to have current (non-drifted) consent before enrolling.
    */
   async createIntent(params: {
     amount: number;
@@ -27,6 +30,11 @@ export class DonationService {
     asset?: DonationAsset;
     donorUserId?: string;
   }): Promise<DonationEntity> {
+    // Enforce consent currency before accepting the enrollment write
+    if (params.donorUserId) {
+      await this.consentService.assertCurrentConsent(params.donorUserId);
+    }
+
     const memo = `DON-${uuidv4().substring(0, 8).toUpperCase()}`;
 
     const donation = this.donationRepository.create({

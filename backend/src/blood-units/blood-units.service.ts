@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -13,6 +14,7 @@ import { PermissionsService } from '../auth/permissions.service';
 import { DonorEligibilityService } from '../donor-eligibility/donor-eligibility.service';
 import { NotificationChannel } from '../notifications/enums/notification-channel.enum';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ActorRegistryService, ActorType } from '../registry/actor-registry.service';
 import { BloodUnitTrail } from '../soroban/entities/blood-unit-trail.entity';
 import { SorobanService } from '../soroban/soroban.service';
 
@@ -50,6 +52,7 @@ export class BloodUnitsService {
     private readonly permissionsService: PermissionsService,
     private readonly donorEligibilityService: DonorEligibilityService,
     private readonly quarantineService: QuarantineService,
+    private readonly actorRegistry: ActorRegistryService,
     private readonly eventEmitter: EventEmitter2,
     @InjectRepository(BloodUnitTrail)
 
@@ -158,6 +161,7 @@ export class BloodUnitsService {
 
   async transferCustody(dto: TransferCustodyDto) {
     await this.assertUnitTransferable(dto.unitId);
+    await this.validateCustodyTransferActors(dto.fromAccount, dto.toAccount);
 
     const result = await this.sorobanService.transferCustody({
       unitId: dto.unitId,
@@ -279,6 +283,11 @@ export class BloodUnitsService {
         ]);
 
         if (sourceOrg?.blockchainAddress && destOrg?.blockchainAddress) {
+          // Verify both orgs are still registered actors before the on-chain call
+          await this.validateCustodyTransferActors(
+            sourceOrg.blockchainAddress,
+            destOrg.blockchainAddress,
+          );
           await this.sorobanService.transferCustody({
             unitId: Number(unit.blockchainUnitId),
             fromAccount: sourceOrg.blockchainAddress,
@@ -409,6 +418,10 @@ export class BloodUnitsService {
     bankId: string,
     user?: AuthenticatedUserContext,
   ) {
+    // Verify against the authoritative organisation registry first
+    await this.actorRegistry.assertActorType(bankId, ActorType.BLOOD_BANK);
+
+    // Secondary on-chain check (belt-and-suspenders)
     const isAuthorizedBank = await this.sorobanService.isBloodBank(bankId);
     if (!isAuthorizedBank) {
       throw new NotFoundException('Blood bank is not authorized on blockchain');
@@ -416,6 +429,36 @@ export class BloodUnitsService {
 
     if (user?.role) {
       this.permissionsService.assertIsBloodBankOrAdmin(user);
+    }
+  }
+
+  /**
+   * Verify that both custody-transfer endpoints are registered actors of the
+   * correct type before the on-chain call is submitted.
+   */
+  private async validateCustodyTransferActors(
+    fromAccount: string,
+    toAccount: string,
+  ): Promise<void> {
+    // Both sides must be verified organisations (blood bank or hospital)
+    const [fromOk, toOk] = await Promise.all([
+      this.actorRegistry.isVerifiedActor(fromAccount, ActorType.BLOOD_BANK).then(
+        (ok) => ok || this.actorRegistry.isVerifiedActor(fromAccount, ActorType.HOSPITAL),
+      ),
+      this.actorRegistry.isVerifiedActor(toAccount, ActorType.BLOOD_BANK).then(
+        (ok) => ok || this.actorRegistry.isVerifiedActor(toAccount, ActorType.HOSPITAL),
+      ),
+    ]);
+
+    if (!fromOk) {
+      throw new ForbiddenException(
+        `Source actor '${fromAccount}' is not a verified blood bank or hospital.`,
+      );
+    }
+    if (!toOk) {
+      throw new ForbiddenException(
+        `Destination actor '${toAccount}' is not a verified blood bank or hospital.`,
+      );
     }
   }
 

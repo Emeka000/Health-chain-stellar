@@ -21,8 +21,8 @@ import { BatchImportModule } from './batch-import/batch-import.module';
 import { BlockchainModule } from './blockchain/blockchain.module';
 import { BloodRequestsModule } from './blood-requests/blood-requests.module';
 import { BloodUnitsModule } from './blood-units/blood-units.module';
-import { ColdChainModule } from './cold-chain/cold-chain.module';
-import { AuditLogModule } from './common/audit/audit-log.module';
+import { ConsentModule } from './consent/consent.module';
+import { EventsModule } from './events/events.module';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { CorrelationIdService } from './common/middleware/correlation-id.service';
 import { AppConfigModule } from './config/config.module';
@@ -64,18 +64,7 @@ import { SurgeSimulationModule } from './surge-simulation/surge-simulation.modul
 import { THROTTLE_TTL_MS } from './config/throttle-limits.config';
 import { TrackingModule } from './tracking/tracking.module';
 import { TransparencyModule } from './transparency/transparency.module';
-import { UserActivityModule } from './user-activity/user-activity.module';
-import { UsersModule } from './users/users.module';
-import { UssdModule } from './ussd/ussd.module';
-// UssdSessionModule (ussd-session/) is excluded: its UssdService injects IOrderService
-// by interface type which is erased at runtime and cannot be resolved by NestJS DI
-// without a concrete token. Deferred until the module is refactored to use a
-// proper injection token (e.g. Symbol('ORDER_SERVICE') or a concrete class).
-import { WorkflowModule } from './workflow/workflow.module';
-import { RoleAwareThrottlerGuard } from './throttler/role-aware-throttler.guard';
-import { throttleGetTracker } from './throttler/throttle-tracker.util';
-import { ApiCompatibilityInterceptor } from './common/versioning/api-compatibility.interceptor';
-
+import { PolicyCenterModule } from './policy-center/policy-center.module';
 import type Redis from 'ioredis';
 
 @Module({
@@ -185,23 +174,7 @@ import type Redis from 'ioredis';
     OrdersModule,
     OrganizationsModule,
     PolicyCenterModule,
-    ProofBundleModule,
-    ReadinessModule,
-    ReconciliationModule,
-    RegionsModule,
-    ReportingModule,
-    ReputationModule,
-    RidersModule,
-    RouteDeviationModule,
-    SlaModule,
-    SorobanModule,
-    SurgeSimulationModule,
-    TrackingModule,
-    TransparencyModule,
-    UserActivityModule,
-    UssdModule,
-    WorkflowModule,
-    AuditLogModule,
+    ConsentModule,
   ],
   controllers: [AppController],
   providers: [
