@@ -19,9 +19,16 @@ describe('UssdSessionStore', () => {
     sessionId: 'sess-001',
     phoneNumber: '+2348012345678',
     step: UssdStep.LOGIN_PHONE,
+    sessionNonce: 'nonce-1',
+    sequenceNumber: 0,
     history: [],
+    lastRequestFingerprint: null,
+    lastRequestDepth: null,
+    lastResponse: null,
+    lastProcessedAt: null,
     createdAt: 1000,
     updatedAt: 1000,
+    expiresAt: Date.now() + 1000 * USSD_SESSION_TTL_SECONDS,
   };
 
   beforeEach(async () => {
@@ -88,11 +95,16 @@ describe('UssdSessionStore', () => {
       expect(stored.updatedAt).toBeGreaterThanOrEqual(before);
     });
 
-    it('throws when Redis fails', async () => {
+    it('falls back to memory when Redis fails', async () => {
       redisMock.setex.mockRejectedValue(new Error('Redis error'));
-      await expect(store.set({ ...mockSession })).rejects.toThrow(
-        'Redis error',
-      );
+      await expect(store.set({ ...mockSession })).resolves.toBeUndefined();
+
+      redisMock.get.mockRejectedValue(new Error('Redis error'));
+      const result = await store.get('sess-001');
+      expect(result).toMatchObject({
+        sessionId: 'sess-001',
+        step: UssdStep.LOGIN_PHONE,
+      });
     });
   });
 
@@ -114,6 +126,8 @@ describe('UssdSessionStore', () => {
       expect(session.step).toBe(UssdStep.LOGIN_PHONE);
       expect(session.history).toHaveLength(0);
       expect(session.phoneNumber).toBe('+2348099999999');
+      expect(session.sequenceNumber).toBe(0);
+      expect(session.sessionNonce).toBeDefined();
       expect(redisMock.setex).toHaveBeenCalled();
     });
   });
