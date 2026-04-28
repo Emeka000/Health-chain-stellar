@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 
 import { Repository } from 'typeorm';
@@ -16,12 +17,14 @@ import {
 } from './dto/readiness.dto';
 import { ReadinessChecklistEntity } from './entities/readiness-checklist.entity';
 import { ReadinessItemEntity } from './entities/readiness-item.entity';
+import { ReadinessDependencyEntity } from './entities/readiness-dependency.entity';
 import {
   ReadinessChecklistStatus,
   ReadinessEntityType,
   ReadinessItemKey,
   ReadinessItemStatus,
 } from './enums/readiness.enum';
+import { ReadinessGraphService } from './services/readiness-graph.service';
 
 /** All item keys that must be COMPLETE or WAIVED before sign-off */
 const ALL_ITEM_KEYS = Object.values(ReadinessItemKey);
@@ -33,6 +36,10 @@ export class ReadinessService {
     private readonly checklistRepo: Repository<ReadinessChecklistEntity>,
     @InjectRepository(ReadinessItemEntity)
     private readonly itemRepo: Repository<ReadinessItemEntity>,
+    @InjectRepository(ReadinessDependencyEntity)
+    private readonly dependencyRepo: Repository<ReadinessDependencyEntity>,
+    private readonly graphService: ReadinessGraphService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   // ── Checklist lifecycle ──────────────────────────────────────────────
@@ -152,6 +159,20 @@ export class ReadinessService {
     item.status = dto.status;
     item.evidenceUrl = dto.evidenceUrl ?? item.evidenceUrl;
     item.notes = dto.notes ?? item.notes;
+
+    if (dto.status === ReadinessItemStatus.COMPLETE) {
+      const blockers = this.graphService.getBlockers(itemKey, checklist.items, {
+        entityType: checklist.entityType,
+      });
+      if (blockers.length > 0) {
+        throw new BadRequestException(
+          `Cannot complete item '${itemKey}' because it is blocked: ${blockers
+            .map((b) => b.reason)
+            .join(', ')}`,
+        );
+      }
+    }
+
     if (dto.status !== ReadinessItemStatus.PENDING) {
       item.completedAt = new Date();
       item.completedBy = userId;
@@ -162,7 +183,18 @@ export class ReadinessService {
     await this.itemRepo.save(item);
 
     // Recompute checklist status
-    return this.recomputeStatus(checklist);
+    const updatedChecklist = await this.recomputeStatus(checklist);
+
+    // Emit event for downstream workflows
+    this.eventEmitter.emit('readiness.item_updated', {
+      checklistId: updatedChecklist.id,
+      itemKey,
+      status: dto.status,
+      entityType: updatedChecklist.entityType,
+      entityId: updatedChecklist.entityId,
+    });
+
+    return updatedChecklist;
   }
 
   // ── Sign-off ─────────────────────────────────────────────────────────
@@ -208,6 +240,53 @@ export class ReadinessService {
       },
     });
     return checklist !== null;
+  }
+
+  /**
+   * Updates the global dependency configuration.
+   * Rejects if cycles are detected.
+   */
+  async updateDependencies(
+    proposed: Array<{
+      parentItemKey: ReadinessItemKey;
+      dependsOnItemKey: ReadinessItemKey;
+    }>,
+  ) {
+    this.graphService.validateProposedDependencies(proposed);
+
+    await this.dependencyRepo.clear();
+    const entities = proposed.map((p) => this.dependencyRepo.create(p));
+    await this.dependencyRepo.save(entities);
+
+    await this.graphService.refreshGraph();
+  }
+
+  /**
+   * Generates a comprehensive report including dependency blocking details.
+   */
+  async getReadinessReport(checklistId: string) {
+    const checklist = await this.getChecklist(checklistId);
+    const report = checklist.items.map((item) => {
+      const blockers = this.graphService.getBlockers(
+        item.itemKey,
+        checklist.items,
+        { entityType: checklist.entityType },
+      );
+      return {
+        ...item,
+        isBlocked: blockers.length > 0,
+        blockingReasons: blockers.map((b) => b.reason),
+        prerequisites: this.graphService.getPrerequisites(item.itemKey),
+      };
+    });
+
+    return {
+      checklistId: checklist.id,
+      status: checklist.status,
+      entityType: checklist.entityType,
+      entityId: checklist.entityId,
+      items: report,
+    };
   }
 
   // ── Private ──────────────────────────────────────────────────────────
