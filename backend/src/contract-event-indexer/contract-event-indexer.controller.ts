@@ -2,12 +2,14 @@ import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 
 import { ContractEventIndexerService } from './contract-event-indexer.service';
 import {
+  CursorResetDto,
   DiscardPoisonEventDto,
   IngestEventDto,
   QueryContractEventsDto,
   QuarantinePoisonEventDto,
   ReplayFromLedgerDto,
   ReplayPoisonEventDto,
+  VerifyIndexedDto,
 } from './dto/contract-event.dto';
 import { PoisonEventStatus } from './entities/poison-event.entity';
 
@@ -49,6 +51,26 @@ export class ContractEventIndexerController {
   @Post('replay')
   replay(@Body() dto: ReplayFromLedgerDto) {
     return this.service.replayFromLedger(dto);
+  }
+
+  // ── Chain reorg / cursor recovery ────────────────────────────────────
+
+  /**
+   * Reset cursor(s) to a specific ledger without deleting indexed events.
+   * Use when a cursor is corrupted but events are still valid.
+   */
+  @Post('cursors/reset')
+  resetCursor(@Body() dto: CursorResetDto) {
+    return this.service.resetCursor(dto);
+  }
+
+  /**
+   * Verify indexed data integrity for a ledger range.
+   * Returns event count and any ledger gaps.
+   */
+  @Post('verify')
+  verifyIndexed(@Body() dto: VerifyIndexedDto) {
+    return this.service.verifyIndexed(dto);
   }
 
   // ── Poison-event operator endpoints ──────────────────────────────────

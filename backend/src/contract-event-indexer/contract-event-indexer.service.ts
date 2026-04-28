@@ -7,12 +7,14 @@ import { Repository } from 'typeorm';
 import { PaginatedResponse, PaginationUtil } from '../common/pagination';
 
 import {
+  CursorResetDto,
   DiscardPoisonEventDto,
   IngestEventDto,
   QueryContractEventsDto,
   QuarantinePoisonEventDto,
   ReplayFromLedgerDto,
   ReplayPoisonEventDto,
+  VerifyIndexedDto,
 } from './dto/contract-event.dto';
 import {
   ContractDomain,
@@ -30,6 +32,24 @@ export interface ReplayResult {
   fromLedger: number;
   deletedCount: number;
   message: string;
+}
+
+export interface ReorgDetection {
+  reorgDetected: boolean;
+  domain: ContractDomain;
+  projectionName: string;
+  ledgerSequence: number;
+  storedHash: string | null;
+  incomingHash: string;
+}
+
+export interface VerifyResult {
+  fromLedger: number;
+  toLedger: number;
+  domain?: ContractDomain;
+  eventCount: number;
+  ledgersWithEvents: number[];
+  gaps: number[];
 }
 
 const GLOBAL_PROJECTION = '__global__';
@@ -54,8 +74,26 @@ export class ContractEventIndexerService {
    * Uses conflict-safe upsert: duplicate dedup keys are silently ignored.
    * The idempotency key format is: ledger:txHash:eventIndex:schemaVersion
    * or falls back to SHA-256(domain+eventType+txHash+ledger).
+   *
+   * When ledgerHash is provided, the cursor is checked for a reorg:
+   * if the stored hash for the same ledger differs, a warning is logged
+   * and the caller should trigger a replay from that ledger.
    */
   async ingest(dto: IngestEventDto): Promise<ContractEventEntity | null> {
+    // Chain reorg detection: compare incoming ledger hash against stored cursor
+    if (dto.ledgerHash) {
+      const reorg = await this.detectReorg(dto.domain, dto.ledgerSequence, dto.ledgerHash, GLOBAL_PROJECTION);
+      if (reorg.reorgDetected) {
+        this.logger.warn(
+          `Chain reorg detected: domain=${dto.domain} ledger=${dto.ledgerSequence} ` +
+          `storedHash=${reorg.storedHash} incomingHash=${reorg.incomingHash}. ` +
+          `Trigger replay from ledger ${dto.ledgerSequence} to recover.`,
+        );
+        // Return null — caller must replay from this ledger
+        return null;
+      }
+    }
+
     const dedupKey = dto.idempotencyKey ?? this.buildDedupKey(dto);
 
     // Conflict-safe upsert: INSERT ... ON CONFLICT DO NOTHING
@@ -87,7 +125,7 @@ export class ContractEventIndexerService {
       where: { dedupKey },
     });
 
-    await this.advanceCursor(dto.domain, dto.ledgerSequence, GLOBAL_PROJECTION);
+    await this.advanceCursor(dto.domain, dto.ledgerSequence, GLOBAL_PROJECTION, dto.ledgerHash);
 
     this.logger.log(
       `Indexed event ${dto.domain}.${dto.eventType} ledger=${dto.ledgerSequence} dedupKey=${dedupKey}`,
@@ -154,8 +192,9 @@ export class ContractEventIndexerService {
     domain: ContractDomain,
     ledger: number,
     projectionName: string,
+    ledgerHash?: string,
   ): Promise<void> {
-    return this.advanceCursor(domain, ledger, projectionName);
+    return this.advanceCursor(domain, ledger, projectionName, ledgerHash);
   }
 
   async getProjectionCursor(
@@ -163,6 +202,102 @@ export class ContractEventIndexerService {
     projectionName: string,
   ): Promise<IndexerCursorEntity | null> {
     return this.cursorRepo.findOne({ where: { domain, projectionName } });
+  }
+
+  // ── Chain reorg detection ────────────────────────────────────────────
+
+  /**
+   * Check whether the incoming ledger hash conflicts with the stored cursor hash.
+   * A mismatch at the same ledger sequence indicates a chain reorganization.
+   */
+  async detectReorg(
+    domain: ContractDomain,
+    ledgerSequence: number,
+    incomingHash: string,
+    projectionName: string = GLOBAL_PROJECTION,
+  ): Promise<ReorgDetection> {
+    const cursor = await this.cursorRepo.findOne({ where: { domain, projectionName } });
+    const storedHash = cursor?.lastLedgerHash ?? null;
+
+    // Reorg: cursor is at the same ledger but hash differs
+    const reorgDetected =
+      cursor !== null &&
+      cursor.lastLedger === ledgerSequence &&
+      storedHash !== null &&
+      storedHash !== incomingHash;
+
+    return { reorgDetected, domain, projectionName, ledgerSequence, storedHash, incomingHash };
+  }
+
+  /**
+   * Reset cursor(s) to a specific ledger without deleting indexed events.
+   * Safe for operator use when a cursor is corrupted but events are valid.
+   */
+  async resetCursor(dto: CursorResetDto): Promise<{ reset: number; toLedger: number }> {
+    const where: Partial<IndexerCursorEntity> = {};
+    if (dto.domain) where.domain = dto.domain;
+    if (dto.projectionName) where.projectionName = dto.projectionName;
+
+    let reset: number;
+    if (Object.keys(where).length > 0) {
+      const result = await this.cursorRepo.update(where, {
+        lastLedger: dto.toLedger,
+        lastLedgerHash: null,
+      });
+      reset = (result.affected as number | undefined) ?? 0;
+    } else {
+      const result = await this.cursorRepo
+        .createQueryBuilder()
+        .update()
+        .set({ lastLedger: dto.toLedger, lastLedgerHash: null })
+        .where('1=1')
+        .execute();
+      reset = (result.affected as number | undefined) ?? 0;
+    }
+
+    this.logger.log(
+      `Cursor reset: ${reset} cursor(s) set to ledger ${dto.toLedger}` +
+      (dto.domain ? ` domain=${dto.domain}` : '') +
+      (dto.projectionName ? ` projection=${dto.projectionName}` : ''),
+    );
+    return { reset, toLedger: dto.toLedger };
+  }
+
+  /**
+   * Verify indexed data integrity for a ledger range.
+   * Returns event count and any ledger gaps (ledgers with no events).
+   */
+  async verifyIndexed(dto: VerifyIndexedDto): Promise<VerifyResult> {
+    const qb = this.eventRepo
+      .createQueryBuilder('e')
+      .select('DISTINCT e.ledger_sequence', 'ledger')
+      .where('e.ledger_sequence >= :from AND e.ledger_sequence <= :to', {
+        from: dto.fromLedger,
+        to: dto.toLedger,
+      });
+
+    if (dto.domain) qb.andWhere('e.domain = :domain', { domain: dto.domain });
+
+    const rows = (await qb.getRawMany()) as Array<{ ledger: string }>;
+    const ledgersWithEvents = rows.map((r) => Number(r.ledger)).sort((a, b) => a - b);
+
+    const countQb = this.eventRepo
+      .createQueryBuilder('e')
+      .where('e.ledger_sequence >= :from AND e.ledger_sequence <= :to', {
+        from: dto.fromLedger,
+        to: dto.toLedger,
+      });
+    if (dto.domain) countQb.andWhere('e.domain = :domain', { domain: dto.domain });
+    const eventCount = await countQb.getCount();
+
+    // Identify gaps: ledgers in range that have no events
+    const ledgerSet = new Set(ledgersWithEvents);
+    const gaps: number[] = [];
+    for (let l = dto.fromLedger; l <= dto.toLedger; l++) {
+      if (!ledgerSet.has(l)) gaps.push(l);
+    }
+
+    return { fromLedger: dto.fromLedger, toLedger: dto.toLedger, domain: dto.domain, eventCount, ledgersWithEvents, gaps };
   }
 
   // ── Replay ───────────────────────────────────────────────────────────
@@ -313,16 +448,23 @@ export class ContractEventIndexerService {
     domain: ContractDomain,
     ledger: number,
     projectionName: string,
+    ledgerHash?: string,
   ): Promise<void> {
     const cursor = await this.cursorRepo.findOne({
       where: { domain, projectionName },
     });
     if (!cursor) {
       await this.cursorRepo.save(
-        this.cursorRepo.create({ domain, projectionName, lastLedger: ledger }),
+        this.cursorRepo.create({
+          domain,
+          projectionName,
+          lastLedger: ledger,
+          lastLedgerHash: ledgerHash ?? null,
+        }),
       );
     } else if (ledger > cursor.lastLedger) {
       cursor.lastLedger = ledger;
+      if (ledgerHash) cursor.lastLedgerHash = ledgerHash;
       await this.cursorRepo.save(cursor);
     }
   }
