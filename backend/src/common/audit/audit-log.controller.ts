@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Post,
   Query,
   ParseIntPipe,
   DefaultValuePipe,
@@ -10,12 +11,16 @@ import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { RequirePermissions } from '../../auth/decorators/require-permissions.decorator';
 import { Permission } from '../../auth/enums/permission.enum';
 
+import { AuditChainService } from './audit-chain.service';
 import { AuditLogService } from './audit-log.service';
 
 @ApiTags('Audit Logs')
 @Controller('audit-logs')
 export class AuditLogController {
-  constructor(private readonly auditLogService: AuditLogService) {}
+  constructor(
+    private readonly auditLogService: AuditLogService,
+    private readonly auditChainService: AuditChainService,
+  ) {}
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
   @Get()
@@ -134,5 +139,23 @@ export class AuditLogController {
     @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
   ) {
     return this.auditLogService.findCriticalEvents(limit, offset);
+  }
+
+  /** POST /audit-logs/chain/verify — run chain integrity verification (ADMIN only) */
+  @RequirePermissions(Permission.ADMIN_ACCESS)
+  @Post('chain/verify')
+  @ApiOperation({ summary: 'Verify audit chain integrity (ADMIN only)' })
+  @ApiResponse({ status: 200, description: 'Verification report returned' })
+  verifyChain() {
+    return this.auditChainService.verify();
+  }
+
+  /** POST /audit-logs/chain/checkpoint — manually anchor a checkpoint (ADMIN only) */
+  @RequirePermissions(Permission.ADMIN_ACCESS)
+  @Post('chain/checkpoint')
+  @ApiOperation({ summary: 'Anchor an audit chain checkpoint (ADMIN only)' })
+  @ApiResponse({ status: 200, description: 'Checkpoint anchored' })
+  anchorCheckpoint() {
+    return this.auditChainService.checkpoint();
   }
 }

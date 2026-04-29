@@ -5,6 +5,7 @@ import { REQUEST } from '@nestjs/core';
 import { Repository } from 'typeorm';
 import { Request } from 'express';
 
+import { AuditChainService } from './audit-chain.service';
 import { AuditLogEntity } from './audit-log.entity';
 import {
   getAuditEventDefinition,
@@ -33,6 +34,7 @@ export class AuditLogService {
     @InjectRepository(AuditLogEntity)
     private readonly repo: Repository<AuditLogEntity>,
     @Optional() @Inject(REQUEST) private readonly request?: Request,
+    @Optional() private readonly auditChain?: AuditChainService,
   ) {}
 
   /**
@@ -68,7 +70,7 @@ export class AuditLogService {
         this.request?.ip ??
         null;
 
-      await this.repo.insert({
+      const result = await this.repo.insert({
         actorId: params.actorId,
         actorRole: params.actorRole,
         action: params.action,
@@ -83,6 +85,12 @@ export class AuditLogService {
         correlationId,
         metadata: params.metadata ?? null,
       });
+
+      // Append to cryptographic chain (non-blocking — errors are swallowed inside append())
+      const insertedId = result.identifiers[0]?.id as string | undefined;
+      if (insertedId && this.auditChain) {
+        void this.auditChain.append(insertedId);
+      }
 
       // Log critical events for immediate alerting
       if (eventDef?.severity === 'critical') {
