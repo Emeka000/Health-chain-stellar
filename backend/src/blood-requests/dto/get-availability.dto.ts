@@ -47,6 +47,13 @@ export interface BloodBankAvailabilityDto {
   reservationRisk: number;
   dispatchLoad: number;
   compatibilitySummary: string;
+  capacityBreakdown?: {
+    outstandingDispatches: number;
+    availableRiders: number;
+    slaRisk: number;
+    failureRate: number;
+    coldChainUtilization: number;
+  };
 }
 
 export interface GetAvailabilityResponseDto {
