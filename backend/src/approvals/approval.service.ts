@@ -69,7 +69,17 @@ export class ApprovalService {
     return saved;
   }
 
-  async submitDecision(params: {
+  async isApproved(targetId: string, actionType: ApprovalActionType): Promise<boolean> {
+    const request = await this.requestRepository.findOne({
+      where: {
+        targetId,
+        actionType,
+        status: ApprovalStatus.APPROVED,
+      },
+    });
+
+    return !!request;
+  }
     requestId: string;
     userId: string;
     decision: ApprovalStatus;

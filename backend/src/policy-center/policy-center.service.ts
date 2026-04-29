@@ -49,6 +49,58 @@ export class PolicyCenterService {
         defaultQuietHoursEnd: '06:00',
         defaultEmergencyBypassTier: 'normal',
       },
+      quarantine: {
+        triggerMatrix: {
+          temperatureBreach: {
+            enabled: true,
+            minTempC: 2,
+            maxTempC: 6,
+            autoQuarantine: true,
+            requiredEvidence: ['temperature_log', 'sensor_reading'],
+          },
+          contaminationSuspected: {
+            enabled: true,
+            autoQuarantine: false,
+            requiredEvidence: ['lab_report', 'visual_inspection'],
+            approvalRequired: true,
+          },
+          manualOperatorAction: {
+            enabled: true,
+            requiredEvidence: ['operator_notes'],
+            approvalRequired: false,
+          },
+          anomalyDetection: {
+            enabled: true,
+            autoQuarantine: true,
+            requiredEvidence: ['anomaly_report'],
+          },
+        },
+        dispositionRules: {
+          temperatureBreach: {
+            defaultDisposition: 'RELEASE',
+            autoApproveThresholdHours: 24,
+            requiredApprovals: 1,
+          },
+          contaminationSuspected: {
+            defaultDisposition: 'DISCARD',
+            requiredApprovals: 2,
+          },
+          manualOperatorAction: {
+            defaultDisposition: 'RELEASE',
+            requiredApprovals: 1,
+          },
+          anomalyDetection: {
+            defaultDisposition: 'RELEASE',
+            autoApproveThresholdHours: 48,
+            requiredApprovals: 1,
+          },
+        },
+        evidenceRequirements: {
+          minimumEvidenceCount: 1,
+          allowedEvidenceTypes: ['image', 'document', 'log', 'report'],
+          maxEvidenceSizeMb: 10,
+        },
+      },
     };
   }
 

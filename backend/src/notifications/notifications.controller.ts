@@ -8,6 +8,7 @@ import {
   Post,
   HttpCode,
   HttpStatus,
+  Request,
 } from '@nestjs/common';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
@@ -23,8 +24,12 @@ export class NotificationsController {
 
   @RequirePermissions(Permission.VIEW_NOTIFICATIONS)
   @Get()
-  async findAll(@Query() query: NotificationQueryDto) {
-    const result = await this.notificationsService.findForRecipient(query);
+  async findAll(@Query() query: NotificationQueryDto, @Request() req: any) {
+    const result = await this.notificationsService.findForRecipient(query, {
+      userId: req.user?.id ?? req.user?.sub ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
     return {
       message: 'Notifications retrieved successfully',
       ...result,
@@ -33,8 +38,12 @@ export class NotificationsController {
 
   @RequirePermissions(Permission.VIEW_NOTIFICATIONS)
   @Patch(':id/read')
-  async markRead(@Param('id') id: string) {
-    return this.notificationsService.markRead(id);
+  async markRead(@Param('id') id: string, @Request() req: any) {
+    return this.notificationsService.markRead(id, {
+      userId: req.user?.id ?? req.user?.sub ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   // Exposed for testing/admin purposes to trigger notifications manually

@@ -31,6 +31,17 @@ export class ReadinessController {
     return this.service.listChecklists(query);
   }
 
+  @Post('dependencies')
+  updateDependencies(
+    @Body()
+    dto: Array<{
+      parentItemKey: ReadinessItemKey;
+      dependsOnItemKey: ReadinessItemKey;
+    }>,
+  ) {
+    return this.service.updateDependencies(dto);
+  }
+
   @Get('blocked')
   listBlocked() {
     return this.service.listBlocked();
@@ -39,6 +50,11 @@ export class ReadinessController {
   @Get(':id')
   getById(@Param('id') id: string) {
     return this.service.getChecklist(id);
+  }
+
+  @Get(':id/report')
+  getReport(@Param('id') id: string) {
+    return this.service.getReadinessReport(id);
   }
 
   @Get('entity/:type/:entityId')

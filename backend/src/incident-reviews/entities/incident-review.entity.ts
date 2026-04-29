@@ -78,4 +78,52 @@ export class IncidentReviewEntity extends BaseEntity {
 
   @Column({ type: 'jsonb', nullable: true })
   metadata: Record<string, unknown> | null;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Workflow Automation Fields
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /** User assigned as owner of this incident review */
+  @Column({ name: 'owner_id', type: 'varchar', nullable: true })
+  ownerId: string | null;
+
+  /** Deadline for completing the review */
+  @Column({ name: 'due_date', type: 'timestamptz', nullable: true })
+  dueDate: Date | null;
+
+  /** Linked anomaly incident ID (if auto-created from anomaly) */
+  @Column({ name: 'linked_anomaly_id', type: 'varchar', nullable: true })
+  linkedAnomalyId: string | null;
+
+  /** Linked SLA breach ID (if auto-created from SLA breach) */
+  @Column({ name: 'linked_sla_breach_id', type: 'varchar', nullable: true })
+  linkedSlaBreachId: string | null;
+
+  /** Linked order IDs for correlated evidence */
+  @Column({ name: 'linked_order_ids', type: 'jsonb', nullable: true })
+  linkedOrderIds: string[] | null;
+
+  /** Linked telemetry IDs for correlated evidence */
+  @Column({ name: 'linked_telemetry_ids', type: 'jsonb', nullable: true })
+  linkedTelemetryIds: string[] | null;
+
+  /** Linked policy IDs for correlated evidence */
+  @Column({ name: 'linked_policy_ids', type: 'jsonb', nullable: true })
+  linkedPolicyIds: string[] | null;
+
+  /** Escalation level (0 = none, 1+ = escalated) */
+  @Column({ name: 'escalation_level', type: 'int', default: 0 })
+  escalationLevel: number;
+
+  /** Timestamp when escalated */
+  @Column({ name: 'escalated_at', type: 'timestamptz', nullable: true })
+  escalatedAt: Date | null;
+
+  /** User who validated closure */
+  @Column({ name: 'closure_validated_by', type: 'varchar', nullable: true })
+  closureValidatedBy: string | null;
+
+  /** Timestamp when closure was validated */
+  @Column({ name: 'closure_validated_at', type: 'timestamptz', nullable: true })
+  closureValidatedAt: Date | null;
 }

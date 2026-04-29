@@ -1,5 +1,5 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 
 import { Queue } from 'bullmq';
@@ -12,6 +12,8 @@ import { NotificationTemplateEntity } from './entities/notification-template.ent
 import { NotificationEntity } from './entities/notification.entity';
 import { NotificationStatus } from './enums/notification-status.enum';
 import { NotificationJobData } from './processors/notification.processor';
+import { TenantActorContext } from '../common/tenant/tenant-scope.util';
+import { SecurityEventLoggerService, SecurityEventType } from '../user-activity/security-event-logger.service';
 
 @Injectable()
 export class NotificationsService {
@@ -23,6 +25,7 @@ export class NotificationsService {
     @InjectRepository(NotificationTemplateEntity)
     private readonly templateRepo: Repository<NotificationTemplateEntity>,
     @InjectQueue('notifications') private readonly notificationsQueue: Queue,
+    private readonly securityEventLogger: SecurityEventLoggerService,
   ) {}
 
   async send(dto: SendNotificationDto): Promise<NotificationEntity[]> {
@@ -90,14 +93,23 @@ export class NotificationsService {
     return results;
   }
 
-  async findForRecipient(query: NotificationQueryDto) {
+  async findForRecipient(query: NotificationQueryDto, actor: TenantActorContext) {
     const page = query.page || 1;
     const limit = query.limit || 10;
     const skip = (page - 1) * limit;
 
     const whereClause: any = {};
-    if (query.recipientId) {
-      whereClause.recipientId = query.recipientId;
+    whereClause.recipientId = actor.userId;
+    if (query.recipientId && query.recipientId !== actor.userId) {
+      await this.securityEventLogger
+        .logEvent({
+          eventType: SecurityEventType.TENANT_ACCESS_DENIED,
+          userId: actor.userId,
+          description: 'Cross-tenant notification listing denied',
+          metadata: { requestedRecipientId: query.recipientId },
+        })
+        .catch(() => undefined);
+      throw new ForbiddenException('Cannot query notifications for another user');
     }
 
     const [items, total] = await this.notificationRepo.findAndCount({
@@ -118,10 +130,21 @@ export class NotificationsService {
     };
   }
 
-  async markRead(id: string) {
+  async markRead(id: string, actor: TenantActorContext) {
     const notification = await this.notificationRepo.findOne({ where: { id } });
     if (!notification) {
       throw new NotFoundException(`Notification '${id}' not found`);
+    }
+    if (notification.recipientId !== actor.userId && (actor.role ?? '').toLowerCase() !== 'admin') {
+      await this.securityEventLogger
+        .logEvent({
+          eventType: SecurityEventType.TENANT_ACCESS_DENIED,
+          userId: actor.userId,
+          description: 'Cross-tenant notification read denied',
+          metadata: { notificationId: id, recipientId: notification.recipientId },
+        })
+        .catch(() => undefined);
+      throw new ForbiddenException('Cannot modify another user notification');
     }
 
     notification.status = NotificationStatus.READ;

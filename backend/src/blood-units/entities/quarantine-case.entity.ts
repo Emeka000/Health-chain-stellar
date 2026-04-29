@@ -83,6 +83,13 @@ export class QuarantineCase extends BaseEntity {
   @Column({ type: 'jsonb', nullable: true })
   metadata: Record<string, unknown> | null;
 
+  @Column({ type: 'jsonb', nullable: true })
+  evidence: Array<{
+    type: string;
+    fileId: string;
+    description?: string;
+  }> | null;
+
   @Column({ type: 'boolean', default: true })
   active: boolean;
 

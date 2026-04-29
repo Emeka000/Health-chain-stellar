@@ -5,6 +5,7 @@ export enum FileOwnerType {
   DELIVERY_PROOF = 'delivery_proof',
   PROOF_BUNDLE = 'proof_bundle',
   BATCH_IMPORT = 'batch_import',
+  QUARANTINE_EVIDENCE = 'quarantine_evidence',
 }
 
 export enum FileLifecycleStatus {

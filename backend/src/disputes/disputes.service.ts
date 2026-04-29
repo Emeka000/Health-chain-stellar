@@ -1,16 +1,24 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, LessThanOrEqual, Repository } from 'typeorm';
 import { Response } from 'express';
 import * as fastcsv from 'fast-csv';
 import * as crypto from 'crypto';
 import { DisputeEntity } from './entities/dispute.entity';
 import { DisputeNoteEntity } from './entities/dispute-note.entity';
-import { DisputeSeverity, DisputeStatus, MAX_EVIDENCE_CHUNK_LENGTH, MAX_EVIDENCE_CHUNKS } from './enums/dispute.enum';
+import { DisputeOutcome, DisputeSeverity, DisputeStatus, MAX_EVIDENCE_CHUNK_LENGTH, MAX_EVIDENCE_CHUNKS } from './enums/dispute.enum';
 import { OpenDisputeDto, ResolveDisputeDto } from './dto/dispute.dto';
+import { SorobanService } from '../soroban/soroban.service';
+import {
+  ReconciliationLogEntity,
+  ReconciliationLogStatus,
+} from '../soroban/entities/reconciliation-log.entity';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationChannel } from '../notifications/enums/notification-channel.enum';
 
 const MAX_LIMIT = 100;
 const CURSOR_SECRET = process.env.CURSOR_SECRET ?? 'disputes-cursor-secret';
+const DEFAULT_DISPUTE_TIMEOUT_SECONDS = 72 * 60 * 60;
 
 function encodeCursor(createdAt: Date, id: string): string {
   const payload = JSON.stringify({ t: createdAt.toISOString(), id });
@@ -32,9 +40,15 @@ export class DisputesService {
     private readonly disputeRepo: Repository<DisputeEntity>,
     @InjectRepository(DisputeNoteEntity)
     private readonly noteRepo: Repository<DisputeNoteEntity>,
+    @InjectRepository(ReconciliationLogEntity)
+    private readonly reconciliationLogRepo: Repository<ReconciliationLogEntity>,
+    private readonly sorobanService: SorobanService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async open(dto: OpenDisputeDto, openedBy: string): Promise<DisputeEntity> {
+    const timeoutOwner: 'CHAIN' | 'BACKEND' = dto.paymentId ? 'CHAIN' : 'BACKEND';
+    const deadline = new Date(Date.now() + DEFAULT_DISPUTE_TIMEOUT_SECONDS * 1000);
     const dispute = this.disputeRepo.create({
       orderId: dto.orderId ?? null,
       paymentId: dto.paymentId ?? null,
@@ -43,6 +57,10 @@ export class DisputesService {
       description: dto.description ?? null,
       openedBy,
       status: DisputeStatus.OPEN,
+      timeoutOwner,
+      timeoutDeadlineAt: deadline,
+      timeoutProcessedAt: null,
+      timeoutDecisionReason: null,
     });
     return this.disputeRepo.save(dispute);
   }
@@ -104,6 +122,8 @@ export class DisputesService {
     d.resolvedBy = dto.resolvedBy;
     d.status = DisputeStatus.RESOLVED;
     d.resolvedAt = new Date();
+    d.timeoutProcessedAt = d.timeoutProcessedAt ?? new Date();
+    d.timeoutDecisionReason = d.timeoutDecisionReason ?? 'manual_resolution';
     return this.disputeRepo.save(d);
   }
 
@@ -198,5 +218,141 @@ export class DisputesService {
     }
 
     csvStream.end();
+  }
+
+  async scanAndProcessExpiredDisputes(now = new Date()): Promise<number> {
+    const candidates = await this.disputeRepo.find({
+      where: [
+        {
+          status: DisputeStatus.OPEN,
+          timeoutDeadlineAt: LessThanOrEqual(now),
+          timeoutProcessedAt: IsNull(),
+        },
+        {
+          status: DisputeStatus.UNDER_REVIEW,
+          timeoutDeadlineAt: LessThanOrEqual(now),
+          timeoutProcessedAt: IsNull(),
+        },
+      ],
+      order: { timeoutDeadlineAt: 'ASC' },
+      take: 100,
+    });
+
+    let processed = 0;
+    for (const dispute of candidates) {
+      const didResolve = await this.processSingleTimeout(dispute.id, now);
+      if (didResolve) processed += 1;
+    }
+    return processed;
+  }
+
+  private async processSingleTimeout(disputeId: string, now: Date): Promise<boolean> {
+    const dispute = await this.disputeRepo.findOne({ where: { id: disputeId } });
+    if (!dispute) return false;
+    if (dispute.status === DisputeStatus.RESOLVED || dispute.status === DisputeStatus.CLOSED) return false;
+    if (dispute.timeoutProcessedAt) return false;
+    if (!dispute.timeoutDeadlineAt || dispute.timeoutDeadlineAt.getTime() > now.getTime()) return false;
+
+    const onChain = dispute.contractDisputeId
+      ? await this.sorobanService.getDisputeState(dispute.contractDisputeId)
+      : null;
+
+    // Contract semantics: if already resolved on-chain, avoid duplicate backend resolution.
+    if (onChain?.status && onChain.status.toLowerCase().includes('resolved')) {
+      const affected = await this.disputeRepo.update(
+        { id: dispute.id, timeoutProcessedAt: IsNull() as any },
+        {
+          timeoutProcessedAt: now,
+          timeoutDecisionReason: 'on_chain_already_resolved',
+        },
+      );
+      if (affected.affected && affected.affected > 0) {
+        await this.persistTimeoutReconciliationLog(dispute, 'RESOLVED_ON_CHAIN', now, onChain.status);
+      }
+      return false;
+    }
+
+    const decision = this.determineTimeoutResolution(dispute);
+    const updateResult = await this.disputeRepo.update(
+      {
+        id: dispute.id,
+        timeoutProcessedAt: IsNull() as any,
+      },
+      {
+        status: DisputeStatus.RESOLVED,
+        outcome: decision.outcome,
+        resolvedBy: 'SYSTEM_TIMEOUT_SCANNER',
+        resolvedAt: now,
+        resolutionNotes: decision.notes,
+        timeoutProcessedAt: now,
+        timeoutDecisionReason: decision.reason,
+      },
+    );
+
+    // Race-safe idempotency: if no row updated, manual or concurrent worker resolved it first.
+    if (!updateResult.affected || updateResult.affected < 1) return false;
+
+    await this.persistTimeoutReconciliationLog(dispute, 'AUTO_RESOLVED_TIMEOUT', now, onChain?.status);
+    await this.sendTimeoutNotifications(dispute, decision.reason).catch(() => undefined);
+    return true;
+  }
+
+  private determineTimeoutResolution(dispute: DisputeEntity): {
+    outcome: DisputeOutcome;
+    reason: string;
+    notes: string;
+  } {
+    // Contract-aligned deterministic rule:
+    // expired unresolved disputes auto-resolve in favor of payer.
+    return {
+      outcome: DisputeOutcome.PAYER_WIN,
+      reason: 'expired_timeout_auto_refund_policy',
+      notes: `Dispute auto-resolved by timeout scanner at deadline ${dispute.timeoutDeadlineAt?.toISOString() ?? 'unknown'}`,
+    };
+  }
+
+  private async persistTimeoutReconciliationLog(
+    dispute: DisputeEntity,
+    action: 'AUTO_RESOLVED_TIMEOUT' | 'RESOLVED_ON_CHAIN',
+    at: Date,
+    onChainStatus?: string,
+  ): Promise<void> {
+    const log = this.reconciliationLogRepo.create({
+      onChainPaymentId: dispute.contractDisputeId ?? dispute.id,
+      orderId: dispute.orderId,
+      eventType:
+        action === 'AUTO_RESOLVED_TIMEOUT'
+          ? 'dispute.timeout.auto_resolved'
+          : 'dispute.timeout.on_chain_resolved',
+      ledgerSequence: 0,
+      onChainPaymentStatus: onChainStatus ?? 'unknown',
+      offChainPaymentStatus: action === 'AUTO_RESOLVED_TIMEOUT' ? 'resolved' : dispute.status,
+      status:
+        action === 'AUTO_RESOLVED_TIMEOUT'
+          ? ReconciliationLogStatus.RESOLVED
+          : ReconciliationLogStatus.DISCREPANCY,
+      discrepancyDetail:
+        action === 'AUTO_RESOLVED_TIMEOUT'
+          ? null
+          : 'On-chain dispute already resolved before backend timeout action',
+      resolvedAt: at,
+    });
+    await this.reconciliationLogRepo.save(log);
+  }
+
+  private async sendTimeoutNotifications(dispute: DisputeEntity, reason: string): Promise<void> {
+    const recipients = [dispute.openedBy, dispute.assignedTo].filter(Boolean) as string[];
+    for (const recipientId of recipients) {
+      await this.notificationsService.send({
+        recipientId,
+        channels: [NotificationChannel.IN_APP],
+        templateKey: 'dispute.timeout.auto_resolved',
+        variables: {
+          disputeId: dispute.id,
+          orderId: dispute.orderId,
+          reason,
+        },
+      });
+    }
   }
 }

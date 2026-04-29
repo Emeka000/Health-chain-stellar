@@ -1,5 +1,5 @@
 import { BullModule } from '@nestjs/bullmq';
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
@@ -8,7 +8,9 @@ import { CompensationModule } from '../common/compensation/compensation.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { MapsModule } from '../maps/maps.module';
+import { EscalationModule } from '../escalation/escalation.module';
 import { OrganizationEntity } from '../organizations/entities/organization.entity';
+import { ReportingModule } from '../reporting/reporting.module';
 
 import { BloodRequestsController } from './blood-requests.controller';
 import { BloodRequestsService } from './blood-requests.service';
@@ -62,6 +64,7 @@ import { BloodRequestSagaEntity } from './entities/blood-request-saga.entity';
     NotificationsModule,
     CompensationModule,
     MapsModule,
+    EscalationModule,
   ],
   controllers: [BloodRequestsController, RequestQueryController],
   providers: [

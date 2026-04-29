@@ -10,5 +10,14 @@ export enum IncidentRootCause {
   VEHICLE_BREAKDOWN = 'vehicle_breakdown',
   PACKAGING_FAILURE = 'packaging_failure',
   SYSTEM_ERROR = 'system_error',
+  // ── Extended taxonomy ──────────────────────────────────────────────────
+  SLA_BREACH = 'sla_breach',
+  ANOMALY_DETECTED = 'anomaly_detected',
+  COMPLIANCE_VIOLATION = 'compliance_violation',
+  ESCROW_DISPUTE = 'escrow_dispute',
+  COLD_CHAIN_FAILURE = 'cold_chain_failure',
+  POLICY_VIOLATION = 'policy_violation',
+  HUMAN_ERROR = 'human_error',
+  THIRD_PARTY_FAILURE = 'third_party_failure',
   OTHER = 'other',
 }

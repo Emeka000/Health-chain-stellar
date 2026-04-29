@@ -33,6 +33,7 @@ interface AuthenticatedRequest {
   user?: {
     id: string;
     role?: string;
+    organizationId?: string | null;
   };
 }
 
@@ -78,6 +79,7 @@ export class OrdersController {
       }),
     )
     params: OrderQueryParamsDto,
+    @Request() req: AuthenticatedRequest,
   ): Promise<PaginatedResponse<Order>> {
     // Additional validation for date range
     if (params.startDate && params.endDate) {
@@ -90,13 +92,21 @@ export class OrdersController {
       }
     }
 
-    return this.ordersService.findAllWithFilters(params);
+    return this.ordersService.findAllWithFilters(params, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   @RequirePermissions(Permission.VIEW_ORDER)
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.ordersService.findOne(id);
+  findOne(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
+    return this.ordersService.findOne(id, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   /**
@@ -112,21 +122,37 @@ export class OrdersController {
 
   @RequirePermissions(Permission.VIEW_ORDER)
   @Get(':id/history')
-  getOrderHistory(@Param('id') id: string) {
-    return this.ordersService.getOrderHistory(id);
+  getOrderHistory(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
+    return this.ordersService.getOrderHistory(id, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   @RequirePermissions(Permission.VIEW_ORDER)
   @Get(':id/track')
-  trackOrder(@Param('id') id: string) {
-    return this.ordersService.trackOrder(id);
+  trackOrder(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
+    return this.ordersService.trackOrder(id, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   @RequirePermissions(Permission.VIEW_ORDER)
   @Post(':id/preview-fees')
-  previewOrderFees(@Param('id') id: string, @Body() previewData: any) {
+  previewOrderFees(
+    @Param('id') id: string,
+    @Body() previewData: any,
+    @Request() req: AuthenticatedRequest,
+  ) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
-    return this.ordersService.previewOrderFees(id, previewData);
+    return this.ordersService.previewOrderFees(id, previewData, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   @RequirePermissions(Permission.CREATE_ORDER)
@@ -142,8 +168,16 @@ export class OrdersController {
 
   @RequirePermissions(Permission.UPDATE_ORDER)
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateOrderDto: any) {
-    return this.ordersService.update(id, updateOrderDto);
+  update(
+    @Param('id') id: string,
+    @Body() updateOrderDto: any,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.ordersService.update(id, updateOrderDto, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   @RequirePermissions(Permission.UPDATE_ORDER)
@@ -160,6 +194,11 @@ export class OrdersController {
       statusUpdateDto,
       actorId,
       actorRole,
+      {
+        userId: req.user?.id ?? 'unknown',
+        role: req.user?.role,
+        organizationId: req.user?.organizationId ?? null,
+      },
     );
   }
 
@@ -171,7 +210,11 @@ export class OrdersController {
     @Request() req: AuthenticatedRequest,
   ) {
     const actorId: string | undefined = req.user?.id;
-    return this.ordersService.assignRider(id, riderId, actorId);
+    return this.ordersService.assignRider(id, riderId, actorId, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   @RequirePermissions(Permission.DELETE_ORDER)
@@ -179,7 +222,11 @@ export class OrdersController {
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
     const actorId: string | undefined = req.user?.id;
-    return this.ordersService.remove(id, actorId);
+    return this.ordersService.remove(id, actorId, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   @RequirePermissions(Permission.UPDATE_ORDER)
@@ -192,7 +239,11 @@ export class OrdersController {
     @Request() req: AuthenticatedRequest,
   ) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
-    return this.ordersService.raiseDispute(id, dto, req.user?.id);
+    return this.ordersService.raiseDispute(id, dto, req.user?.id, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   @RequirePermissions(Permission.UPDATE_ORDER)
@@ -207,6 +258,10 @@ export class OrdersController {
     @Request() req: AuthenticatedRequest,
   ) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
-    return this.ordersService.resolveDispute(id, dto, req.user?.id);
+    return this.ordersService.resolveDispute(id, dto, req.user?.id, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 }

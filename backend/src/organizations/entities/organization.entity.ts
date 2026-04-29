@@ -7,6 +7,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
   DeleteDateColumn,
+  OneToMany,
 } from 'typeorm';
 
 import { UserEntity } from '../../users/entities/user.entity';
@@ -27,17 +28,14 @@ export class OrganizationEntity extends BaseEntity {
   @Column({ type: 'varchar', length: 255 })
   name!: string;
 
-  @Column({ name: 'legal_name', type: 'varchar', length: 200, nullable: true })
-  legalName?: string | null;
-
   @Column({ name: 'legal_name', type: 'varchar', length: 255, nullable: true })
   legalName?: string | null;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   email?: string | null;
 
-  @Column({ type: 'varchar', length: 40, nullable: true })
-  phone?: string | null;
+  @Column({ name: 'phone_number', type: 'varchar', length: 40, nullable: true })
+  phoneNumber?: string | null;
 
   @Column({ type: 'text', nullable: true })
   address?: string | null;
@@ -58,7 +56,6 @@ export class OrganizationEntity extends BaseEntity {
   })
   verificationStatus?: VerificationStatus | null;
 
-  /** Legacy status field used by OrganizationsService */
   @Column({
     type: 'varchar',
     length: 60,
@@ -66,13 +63,6 @@ export class OrganizationEntity extends BaseEntity {
     nullable: true,
   })
   status?: OrganizationVerificationStatus | null;
-
-  @Column({
-    type: 'varchar',
-    length: 40,
-    default: OrganizationVerificationStatus.PENDING_VERIFICATION,
-  })
-  status!: OrganizationVerificationStatus;
 
   @Column({
     name: 'registration_number',
@@ -105,20 +95,11 @@ export class OrganizationEntity extends BaseEntity {
   @Column({ name: 'verified_by_user_id', type: 'uuid', nullable: true })
   verifiedByUserId?: string | null;
 
-  @Column({ type: 'varchar', length: 32, nullable: true })
-  phone?: string | null;
-
-  @Column({ name: 'phone_number', type: 'varchar', length: 40, nullable: true })
-  phoneNumber?: string | null;
-
   @Column({ type: 'varchar', length: 255, nullable: true })
   website?: string | null;
 
   @Column({ type: 'text', nullable: true })
   description?: string | null;
-
-  @Column({ name: 'address_line_1', type: 'varchar', length: 255, nullable: true })
-  addressLine1?: string | null;
 
   @Column({
     name: 'address_line_1',
@@ -183,4 +164,7 @@ export class OrganizationEntity extends BaseEntity {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt!: Date;
+
+  @DeleteDateColumn({ name: 'deleted_at' })
+  deletedAt?: Date | null;
 }

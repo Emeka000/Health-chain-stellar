@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { createHash } from 'crypto';
 import {
   WebSocketGateway,
   WebSocketServer,
@@ -40,6 +41,8 @@ interface LocationUpdatePayload {
   timestamp?: string;
   speed?: number;
   heading?: number;
+  eventId?: string;
+  sequenceNumber?: number;
 }
 
 interface DeliveryStatusPayload {
@@ -47,6 +50,7 @@ interface DeliveryStatusPayload {
   status: string;
   riderId?: string;
   timestamp?: string;
+  eventId?: string;
 }
 
 interface ETAPayload {
@@ -54,7 +58,16 @@ interface ETAPayload {
   estimatedMinutes: number;
   distanceKm?: number;
   timestamp?: string;
+  eventId?: string;
 }
+
+interface StreamState {
+  lastSequenceNumber: number;
+  bufferedLocationEvents: Map<number, LocationUpdatePayload>;
+  recentEventIds: Map<string, number>;
+}
+
+const EVENT_RETENTION_MS = 5 * 60_000;
 
 @WebSocketGateway({
   namespace: '/tracking',
@@ -73,6 +86,7 @@ export class TrackingGateway
   private readonly logger = new Logger(TrackingGateway.name);
   private readonly heartbeatInterval = 30_000;
   private readonly connectedClients = new Map<string, ClientContext>();
+  private readonly streamStates = new Map<string, StreamState>();
 
   constructor(private readonly jwtService: JwtService) {}
 
@@ -154,6 +168,119 @@ export class TrackingGateway
 
   private getContext(client: Socket): ClientContext | null {
     return this.connectedClients.get(client.id) ?? null;
+  }
+
+  private getStreamKey(deliveryId: string, riderId?: string): string {
+    return `${deliveryId}:${riderId ?? 'unknown'}`;
+  }
+
+  private getStreamState(streamKey: string): StreamState {
+    const existing = this.streamStates.get(streamKey);
+    if (existing) {
+      return existing;
+    }
+
+    const created: StreamState = {
+      lastSequenceNumber: -1,
+      bufferedLocationEvents: new Map(),
+      recentEventIds: new Map(),
+    };
+    this.streamStates.set(streamKey, created);
+    return created;
+  }
+
+  private buildEventId(kind: string, payload: Record<string, unknown>): string {
+    return createHash('sha256')
+      .update(JSON.stringify({ kind, payload }))
+      .digest('hex');
+  }
+
+  private isDuplicateEvent(state: StreamState, eventId: string): boolean {
+    const now = Date.now();
+    for (const [storedId, seenAt] of state.recentEventIds) {
+      if (now - seenAt > EVENT_RETENTION_MS) {
+        state.recentEventIds.delete(storedId);
+      }
+    }
+
+    if (state.recentEventIds.has(eventId)) {
+      return true;
+    }
+
+    state.recentEventIds.set(eventId, now);
+    return false;
+  }
+
+  private emitLocationPayload(payload: LocationUpdatePayload): void {
+    const room = `delivery:${payload.deliveryId}`;
+    this.server.to(room).emit('location.update', {
+      riderId: payload.riderId,
+      deliveryId: payload.deliveryId,
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+      speed: payload.speed ?? null,
+      heading: payload.heading ?? null,
+      sequenceNumber: payload.sequenceNumber ?? null,
+      eventId: payload.eventId ?? null,
+      timestamp: payload.timestamp ?? new Date().toISOString(),
+    });
+  }
+
+  private emitStatusPayload(payload: DeliveryStatusPayload): void {
+    const room = `delivery:${payload.deliveryId}`;
+    this.server.to(room).emit('delivery.status.updated', {
+      deliveryId: payload.deliveryId,
+      status: payload.status,
+      riderId: payload.riderId ?? null,
+      eventId: payload.eventId ?? null,
+      timestamp: payload.timestamp ?? new Date().toISOString(),
+    });
+  }
+
+  private emitEtaPayload(payload: ETAPayload): void {
+    const room = `delivery:${payload.deliveryId}`;
+    this.server.to(room).emit('delivery.eta.updated', {
+      deliveryId: payload.deliveryId,
+      estimatedMinutes: payload.estimatedMinutes,
+      distanceKm: payload.distanceKm ?? null,
+      eventId: payload.eventId ?? null,
+      timestamp: payload.timestamp ?? new Date().toISOString(),
+    });
+  }
+
+  private handleLocationStream(payload: LocationUpdatePayload): void {
+    const streamKey = this.getStreamKey(payload.deliveryId, payload.riderId);
+    const state = this.getStreamState(streamKey);
+    const eventId = payload.eventId ?? this.buildEventId('location', payload);
+
+    if (this.isDuplicateEvent(state, eventId)) {
+      this.logger.debug(
+        `Duplicate location event suppressed: stream=${streamKey} eventId=${eventId}`,
+      );
+      return;
+    }
+
+    if (typeof payload.sequenceNumber !== 'number') {
+      this.emitLocationPayload({ ...payload, eventId });
+      return;
+    }
+
+    if (payload.sequenceNumber <= state.lastSequenceNumber) {
+      this.logger.debug(
+        `Late location event dropped: stream=${streamKey} seq=${payload.sequenceNumber} last=${state.lastSequenceNumber}`,
+      );
+      return;
+    }
+
+    state.bufferedLocationEvents.set(payload.sequenceNumber, { ...payload, eventId });
+
+    while (state.bufferedLocationEvents.has(state.lastSequenceNumber + 1)) {
+      const nextSequence = state.lastSequenceNumber + 1;
+      const nextPayload = state.bufferedLocationEvents.get(nextSequence)!;
+      state.bufferedLocationEvents.delete(nextSequence);
+      state.lastSequenceNumber = nextSequence;
+      this.emitLocationPayload(nextPayload);
+    }
   }
 
   private rejectUnauthorized(client: Socket, action: string, deliveryId: string): void {
@@ -256,16 +383,7 @@ export class TrackingGateway
       return;
     }
 
-    const room = `delivery:${data.deliveryId}`;
-    this.server.to(room).emit('location.update', {
-      riderId: data.riderId,
-      deliveryId: data.deliveryId,
-      latitude: data.latitude,
-      longitude: data.longitude,
-      speed: data.speed ?? null,
-      heading: data.heading ?? null,
-      timestamp: data.timestamp ?? new Date().toISOString(),
-    });
+    this.handleLocationStream(data);
   }
 
   @SubscribeMessage('delivery.status')
@@ -289,13 +407,14 @@ export class TrackingGateway
       return;
     }
 
-    const room = `delivery:${data.deliveryId}`;
-    this.server.to(room).emit('delivery.status.updated', {
-      deliveryId: data.deliveryId,
-      status: data.status,
-      riderId: data.riderId ?? null,
-      timestamp: data.timestamp ?? new Date().toISOString(),
-    });
+    const state = this.getStreamState(this.getStreamKey(data.deliveryId, data.riderId));
+    const eventId = data.eventId ?? this.buildEventId('status', data);
+    if (this.isDuplicateEvent(state, eventId)) {
+      this.logger.debug(`Duplicate status event suppressed: ${eventId}`);
+      return;
+    }
+
+    this.emitStatusPayload({ ...data, eventId });
 
     this.logger.log(`Delivery ${data.deliveryId} status → ${data.status} by user=${ctx.userId}`);
   }
@@ -320,13 +439,14 @@ export class TrackingGateway
       return;
     }
 
-    const room = `delivery:${data.deliveryId}`;
-    this.server.to(room).emit('delivery.eta.updated', {
-      deliveryId: data.deliveryId,
-      estimatedMinutes: data.estimatedMinutes,
-      distanceKm: data.distanceKm ?? null,
-      timestamp: data.timestamp ?? new Date().toISOString(),
-    });
+    const state = this.getStreamState(this.getStreamKey(data.deliveryId));
+    const eventId = data.eventId ?? this.buildEventId('eta', data);
+    if (this.isDuplicateEvent(state, eventId)) {
+      this.logger.debug(`Duplicate ETA event suppressed: ${eventId}`);
+      return;
+    }
+
+    this.emitEtaPayload({ ...data, eventId });
   }
 
   // ---------------------------------------------------------------------------
@@ -334,26 +454,24 @@ export class TrackingGateway
   // ---------------------------------------------------------------------------
 
   emitLocationUpdate(payload: LocationUpdatePayload): void {
-    const room = `delivery:${payload.deliveryId}`;
-    this.server.to(room).emit('location.update', {
-      ...payload,
-      timestamp: payload.timestamp ?? new Date().toISOString(),
-    });
+    this.handleLocationStream(payload);
   }
 
   emitDeliveryStatusUpdate(payload: DeliveryStatusPayload): void {
-    const room = `delivery:${payload.deliveryId}`;
-    this.server.to(room).emit('delivery.status.updated', {
-      ...payload,
-      timestamp: payload.timestamp ?? new Date().toISOString(),
-    });
+    const state = this.getStreamState(this.getStreamKey(payload.deliveryId, payload.riderId));
+    const eventId = payload.eventId ?? this.buildEventId('status', payload);
+    if (this.isDuplicateEvent(state, eventId)) {
+      return;
+    }
+    this.emitStatusPayload({ ...payload, eventId });
   }
 
   emitETAUpdate(payload: ETAPayload): void {
-    const room = `delivery:${payload.deliveryId}`;
-    this.server.to(room).emit('delivery.eta.updated', {
-      ...payload,
-      timestamp: payload.timestamp ?? new Date().toISOString(),
-    });
+    const state = this.getStreamState(this.getStreamKey(payload.deliveryId));
+    const eventId = payload.eventId ?? this.buildEventId('eta', payload);
+    if (this.isDuplicateEvent(state, eventId)) {
+      return;
+    }
+    this.emitEtaPayload({ ...payload, eventId });
   }
 }

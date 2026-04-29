@@ -59,4 +59,20 @@ export class DisputeEntity extends BaseEntity {
 
   @Column({ name: 'contract_dispute_id', nullable: true, type: 'varchar' })
   contractDisputeId: string | null;
+
+  /** Dispute timeout ownership model: chain authoritative when contract dispute exists. */
+  @Column({ name: 'timeout_owner', type: 'varchar', length: 16, default: 'BACKEND' })
+  timeoutOwner: 'CHAIN' | 'BACKEND';
+
+  /** Deadline at which automatic timeout resolution should be attempted. */
+  @Column({ name: 'timeout_deadline_at', type: 'timestamptz', nullable: true })
+  timeoutDeadlineAt: Date | null;
+
+  /** Marker for idempotent timeout processing to prevent duplicate auto-resolution. */
+  @Column({ name: 'timeout_processed_at', type: 'timestamptz', nullable: true })
+  timeoutProcessedAt: Date | null;
+
+  /** Why timeout resolution was chosen (contract-mirrored deterministic decision). */
+  @Column({ name: 'timeout_decision_reason', type: 'varchar', length: 128, nullable: true })
+  timeoutDecisionReason: string | null;
 }

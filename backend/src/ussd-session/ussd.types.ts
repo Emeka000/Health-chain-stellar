@@ -6,6 +6,7 @@ export enum UssdStep {
   SELECT_BLOOD_BANK = 'SELECT_BLOOD_BANK',
   CONFIRM_ORDER = 'CONFIRM_ORDER',
   ORDER_PLACED = 'ORDER_PLACED',
+  CANCELLED = 'CANCELLED',
 }
 
 export enum BloodType {
@@ -23,14 +24,21 @@ export interface UssdSession {
   sessionId: string;
   phoneNumber: string;
   step: UssdStep;
+  sessionNonce: string;
+  sequenceNumber: number;
   userId?: string;
   selectedBloodType?: string;
   selectedQuantity?: number;
   selectedBloodBankId?: string;
   selectedBloodBankName?: string;
   history: UssdStep[];
+  lastRequestFingerprint?: string | null;
+  lastRequestDepth?: number | null;
+  lastResponse?: UssdResponse | null;
+  lastProcessedAt?: number | null;
   createdAt: number;
   updatedAt: number;
+  expiresAt: number;
 }
 
 export interface UssdRequest {

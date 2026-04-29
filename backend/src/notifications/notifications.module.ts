@@ -4,6 +4,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { PolicyCenterModule } from '../policy-center/policy-center.module';
+import { UserActivityModule } from '../user-activity/user-activity.module';
 
 import { NotificationTemplateEntity } from './entities/notification-template.entity';
 import { NotificationEntity } from './entities/notification.entity';
@@ -41,6 +42,7 @@ import { ProviderFailoverService } from './providers/provider-failover.service';
     }),
     ScheduleModule.forRoot(),
     PolicyCenterModule,
+    UserActivityModule,
   ],
   controllers: [
     NotificationsController,

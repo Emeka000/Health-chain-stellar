@@ -21,8 +21,21 @@ pub fn set_admin(env: &Env, admin: &Address) {
 // ── Authorization ──────────────────────────────────────────────────────────────
 
 pub fn is_authorized_bank(env: &Env, bank: &Address) -> bool {
-    let admin = get_admin(env);
-    bank == &admin
+    env.storage()
+        .persistent()
+        .has(&DataKey::AuthorizedBank(bank.clone()))
+}
+
+pub fn set_authorized_bank(env: &Env, bank: &Address, authorized: bool) {
+    if authorized {
+        env.storage()
+            .persistent()
+            .set(&DataKey::AuthorizedBank(bank.clone()), &true);
+    } else {
+        env.storage()
+            .persistent()
+            .remove(&DataKey::AuthorizedBank(bank.clone()));
+    }
 }
 
 // ── Blood unit counter ─────────────────────────────────────────────────────────

@@ -4,11 +4,14 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrderEntity } from '../orders/entities/order.entity';
+import { RegistryModule } from '../registry/registry.module';
 import { BlockchainEvent } from '../soroban/entities/blockchain-event.entity';
 import { BloodUnitTrail } from '../soroban/entities/blood-unit-trail.entity';
 import { SorobanModule } from '../soroban/soroban.module';
 import { DonorEligibilityModule } from '../donor-eligibility/donor-eligibility.module';
 import { PolicyCenterModule } from '../policy-center/policy-center.module';
+import { ApprovalModule } from '../approvals/approval.module';
+import { FileMetadataModule } from '../file-metadata/file-metadata.module';
 
 import { BloodInventoryQueryService } from './blood-inventory-query.service';
 import { BloodStatusService } from './blood-status.service';
@@ -48,6 +51,7 @@ import { BloodUnitBatchService } from './batch/blood-unit-batch.service';
     NotificationsModule,
     DonorEligibilityModule,
     PolicyCenterModule,
+    RegistryModule,
   ],
   controllers: [BloodUnitsController, DispositionController, QuarantineController],
   providers: [

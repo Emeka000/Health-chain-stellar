@@ -97,11 +97,13 @@ describe('TrackingGateway', () => {
         on: jest.fn(),
       };
 
-      // Mock authenticated client
       (gateway as any).connectedClients.set('test-socket-id', {
         userId: 'user-123',
+        role: 'user',
         rooms: new Set(),
       });
+
+      // Mock authenticated client
     });
 
     it('should subscribe to delivery room', () => {
@@ -150,6 +152,12 @@ describe('TrackingGateway', () => {
       };
 
       (gateway as any).server = mockServer;
+      (gateway as any).connectedClients.set('test-socket-id', {
+        userId: 'rider-123',
+        role: 'rider',
+        riderId: 'rider-123',
+        rooms: new Set(),
+      });
     });
 
     it('should broadcast location update', () => {
@@ -182,6 +190,54 @@ describe('TrackingGateway', () => {
       expect(mockServer.to).not.toHaveBeenCalled();
       expect(mockServer.emit).not.toHaveBeenCalled();
     });
+
+    it('deduplicates location updates with the same eventId', () => {
+      const data = {
+        riderId: 'rider-123',
+        deliveryId: 'delivery-456',
+        latitude: 40.7128,
+        longitude: -74.006,
+        eventId: 'loc-1',
+      };
+
+      gateway.handleRiderLocation(mockSocket, data);
+      gateway.handleRiderLocation(mockSocket, data);
+
+      expect(mockServer.emit).toHaveBeenCalledTimes(1);
+    });
+
+    it('buffers out-of-order location updates and emits them in sequence order', () => {
+      gateway.handleRiderLocation(mockSocket, {
+        riderId: 'rider-123',
+        deliveryId: 'delivery-456',
+        latitude: 40.7128,
+        longitude: -74.006,
+        sequenceNumber: 1,
+        eventId: 'loc-2',
+      });
+
+      expect(mockServer.emit).not.toHaveBeenCalled();
+
+      gateway.handleRiderLocation(mockSocket, {
+        riderId: 'rider-123',
+        deliveryId: 'delivery-456',
+        latitude: 40.713,
+        longitude: -74.0058,
+        sequenceNumber: 0,
+        eventId: 'loc-1',
+      });
+
+      expect(mockServer.emit).toHaveBeenNthCalledWith(
+        1,
+        'location.update',
+        expect.objectContaining({ sequenceNumber: 0, eventId: 'loc-1' }),
+      );
+      expect(mockServer.emit).toHaveBeenNthCalledWith(
+        2,
+        'location.update',
+        expect.objectContaining({ sequenceNumber: 1, eventId: 'loc-2' }),
+      );
+    });
   });
 
   describe('Delivery Status Updates', () => {
@@ -200,6 +256,12 @@ describe('TrackingGateway', () => {
       };
 
       (gateway as any).server = mockServer;
+      (gateway as any).connectedClients.set('test-socket-id', {
+        userId: 'rider-123',
+        role: 'rider',
+        riderId: 'rider-123',
+        rooms: new Set(),
+      });
     });
 
     it('should broadcast delivery status update', () => {
@@ -236,6 +298,11 @@ describe('TrackingGateway', () => {
       };
 
       (gateway as any).server = mockServer;
+      (gateway as any).connectedClients.set('test-socket-id', {
+        userId: 'admin-1',
+        role: 'admin',
+        rooms: new Set(),
+      });
     });
 
     it('should broadcast ETA update', () => {

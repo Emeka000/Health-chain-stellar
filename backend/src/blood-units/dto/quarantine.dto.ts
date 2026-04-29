@@ -5,7 +5,11 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  IsArray,
+  ArrayMinSize,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 import {
   QuarantineDisposition,
@@ -13,6 +17,20 @@ import {
   QuarantineReviewState,
   QuarantineTriggerSource,
 } from '../enums/quarantine.enums';
+
+export class EvidenceDto {
+  @IsString()
+  @IsNotEmpty()
+  type: string;
+
+  @IsString()
+  @IsNotEmpty()
+  fileId: string;
+
+  @IsString()
+  @IsOptional()
+  description?: string;
+}
 
 export class CreateQuarantineCaseDto {
   @IsUUID('4')
@@ -39,6 +57,12 @@ export class CreateQuarantineCaseDto {
   @IsObject()
   @IsOptional()
   metadata?: Record<string, unknown>;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => EvidenceDto)
+  @ArrayMinSize(1)
+  evidence: EvidenceDto[];
 }
 
 export class AssignQuarantineReviewerDto {

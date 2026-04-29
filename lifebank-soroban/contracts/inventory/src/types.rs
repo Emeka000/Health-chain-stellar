@@ -268,6 +268,9 @@ pub enum DataKey {
 
     /// Index: Donor ID -> Vec<u64> (blood unit IDs)
     DonorIndex(Address),
+    
+    /// Authorized blood bank address
+    AuthorizedBank(Address),
 
     /// Admin address
     Admin,

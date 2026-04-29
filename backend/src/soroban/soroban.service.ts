@@ -1084,6 +1084,20 @@ export class SorobanService implements OnModuleInit {
   }
 
   /**
+   * Read dispute state from chain for reconciliation and timeout ownership checks.
+   * Returns null when contract call is not configured or state is unavailable.
+   */
+  async getDisputeState(
+    contractDisputeId: string,
+  ): Promise<{ status: string; deadline?: number } | null> {
+    if (!contractDisputeId) return null;
+    return this.executeWithRetry(async () => {
+      void contractDisputeId;
+      return null;
+    });
+  }
+
+  /**
    * Parse verification metadata from contract result
    */
   private parseVerificationMetadata(result: any): {

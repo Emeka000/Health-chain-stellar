@@ -9,7 +9,7 @@ import { IndexerStateEntity } from './entities/indexer-state.entity';
 import { ReconciliationLogEntity } from './entities/reconciliation-log.entity';
 import { SorobanIndexerService } from './soroban-indexer.service';
 import { SorobanService } from './soroban.service';
-import { BlockchainAdminController } from './blockchain-admin.controller';
+import { ContractEventIndexerModule } from '../contract-event-indexer/contract-event-indexer.module';
 
 @Module({
   imports: [

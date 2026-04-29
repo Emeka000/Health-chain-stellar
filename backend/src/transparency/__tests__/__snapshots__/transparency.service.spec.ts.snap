@@ -1,0 +1,36 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`TransparencyService – public metrics transformations aggregates fulfilled requests and blood type breakdown correctly 1`] = `
+{
+  "avgResponseTimeHours": 2.5,
+  "bloodTypeBreakdown": {
+    "A+": 10,
+    "O-": 5,
+  },
+  "fulfilledRequests": 42,
+  "generatedAt": "<timestamp>",
+  "geographicCoverage": [
+    {
+      "fulfilledRequests": 0,
+      "region": "Lagos",
+      "verifiedPartners": 4,
+    },
+  ],
+  "onChainVerifiedOrgs": 3,
+  "totalDonationsRecorded": 120,
+  "verifiedPartners": 7,
+}
+`;
+
+exports[`TransparencyService – public metrics transformations returns zeroed metrics snapshot when database is empty 1`] = `
+{
+  "avgResponseTimeHours": null,
+  "bloodTypeBreakdown": {},
+  "fulfilledRequests": 0,
+  "generatedAt": "<timestamp>",
+  "geographicCoverage": [],
+  "onChainVerifiedOrgs": 0,
+  "totalDonationsRecorded": 0,
+  "verifiedPartners": 0,
+}
+`;

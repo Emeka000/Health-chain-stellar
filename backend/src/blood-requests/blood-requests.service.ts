@@ -270,12 +270,7 @@ export class BloodRequestsService {
         ],
       });
 
-      const parent = this.bloodRequestRepo.create({
-        requestNumber,
-        dto.hospitalId,
-        reserved,
-        user.email,
-      );
+
 
       const saved = await this.persistRequest(dto, requestNumber, requiredBy, transactionHash, user.id);
       await this.enqueue(saved);

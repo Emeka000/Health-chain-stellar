@@ -34,6 +34,6 @@ import { UsersService } from './users.service';
     ImageValidationService,
     ProfileActivityService,
   ],
-  exports: [UsersService, UserRepository, TypeOrmModule],
+  exports: [UsersService, UserRepository, StorageService, TypeOrmModule],
 })
 export class UsersModule {}

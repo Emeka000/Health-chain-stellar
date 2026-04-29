@@ -52,6 +52,8 @@ export class RouteDeviationGateway
       lastKnownLatitude: event.lastKnownLatitude,
       lastKnownLongitude: event.lastKnownLongitude,
       recommendedAction: event.recommendedAction,
+      confidenceScore: event.confidenceScore,
+      telemetryContext: event.telemetryContext,
       timestamp: new Date().toISOString(),
     };
 

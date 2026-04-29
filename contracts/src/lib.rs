@@ -72,6 +72,7 @@ pub enum Error {
     InvalidMultiSigConfig = 30,
     DuplicateApproval = 31,
     EscrowNotReleasable = 32,
+    InvalidFeePayload = 33,
 }
 
 // Alias for issue/docs terminology.
@@ -2485,8 +2486,25 @@ impl HealthChainContract {
         payee: Address,
         amount: i128,
         asset: Address,
+        fee_payload: FeeStructure,
+        backend_auth: Address,
     ) -> Result<u64, Error> {
         payer.require_auth();
+        backend_auth.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&ADMIN)
+            .ok_or(Error::Unauthorized)?;
+
+        if backend_auth != admin {
+            return Err(Error::Unauthorized);
+        }
+
+        if let Err(_) = fee_payload.validate() {
+            return Err(Error::InvalidFeePayload);
+        }
 
         let mut payments: Map<u64, Payment> = env
             .storage()
@@ -2507,13 +2525,7 @@ impl HealthChainContract {
             payee,
             amount,
             asset,
-            fee_structure: FeeStructure {
-                policy_id: Symbol::new(&env, "default_fee_policy"),
-                service_fee: 0,
-                network_fee: 0,
-                performance_bonus: 0,
-                fixed_fee: 0,
-            },
+            fee_structure: fee_payload,
             status: PaymentStatus::Pending,
             escrow_released_at: None,
         };

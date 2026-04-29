@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { Keypair } from '@stellar/stellar-sdk';
 
 import { PaginatedResponse, PaginationUtil } from '../common/pagination';
 import { CreateDeliveryProofDto } from './dto/create-delivery-proof.dto';
@@ -19,6 +20,11 @@ import { FileOwnerType } from '../file-metadata/entities/file-metadata.entity';
 // Blood products must be stored between 2°C and 6°C (backend compliance threshold)
 const TEMP_MIN_CELSIUS = 2;
 const TEMP_MAX_CELSIUS = 6;
+
+interface TrustedSignerKey {
+  kid: string;
+  publicKey: string;
+}
 
 export interface DeliveryStatistics {
   totalDeliveries: number;
@@ -118,13 +124,23 @@ export class DeliveryProofService {
   }
 
   async create(dto: CreateDeliveryProofDto): Promise<DeliveryProofEntity> {
+    this.assertEvidenceDigestReferences(dto.evidenceDigestReferences);
+
+    if (!dto.requestId) {
+      throw new BadRequestException('requestId is required for delivery proof binding');
+    }
+
     const pickupTimestamp = new Date(dto.pickupTimestamp);
     const deliveredAt = new Date(dto.deliveredAt);
+    const signedAt = new Date(dto.signedAt);
 
     if (deliveredAt < pickupTimestamp) {
       throw new BadRequestException(
         'deliveredAt must be after pickupTimestamp',
       );
+    }
+    if (signedAt > new Date()) {
+      throw new BadRequestException('signedAt cannot be in the future');
     }
     if (!dto.temperatureReadings || dto.temperatureReadings.length === 0) {
       throw new BadRequestException(
@@ -135,13 +151,51 @@ export class DeliveryProofService {
     // Require all custody handoffs confirmed before delivery can be recorded (#380)
     await this.custodyService.assertCustodyComplete(dto.orderId);
 
+    const trustedSigner = this.resolveTrustedSigner(dto.signerKeyId);
+    if (trustedSigner.publicKey !== dto.signerPublicKey) {
+      throw new BadRequestException('Signer key does not match trusted rotation set');
+    }
+
+    const signedPayload = this.buildSignedPayload({
+      deliveryId: dto.deliveryId,
+      orderId: dto.orderId,
+      requestId: dto.requestId,
+      riderId: dto.riderId,
+      signerRole: dto.signerRole,
+      signedAt: dto.signedAt,
+      evidenceDigestReferences: dto.evidenceDigestReferences,
+    });
+    const payloadDigest = crypto.createHash('sha256').update(signedPayload).digest('hex');
+    try {
+      const keypair = Keypair.fromPublicKey(dto.signerPublicKey);
+      const signatureBytes = Buffer.from(dto.signature, 'base64');
+      const digestBytes = Buffer.from(payloadDigest, 'hex');
+      if (!keypair.verify(digestBytes, signatureBytes)) {
+        throw new BadRequestException('Signature verification failed');
+      }
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException('Signature verification failed');
+    }
+
     const isTemperatureCompliant = dto.temperatureReadings.every(
       (t) => t >= TEMP_MIN_CELSIUS && t <= TEMP_MAX_CELSIUS,
     );
 
+    const trustedTimestampAt = new Date();
+    const timestampAnchorHash =
+      dto.externalTimestampAnchorHash ??
+      crypto
+        .createHash('sha256')
+        .update(`${dto.deliveryId}:${dto.requestId}:${trustedTimestampAt.toISOString()}`)
+        .digest('hex');
+
     const proof = this.proofRepo.create({
+      deliveryId: dto.deliveryId,
       orderId: dto.orderId,
-      requestId: dto.requestId ?? null,
+      requestId: dto.requestId,
       riderId: dto.riderId,
       pickupTimestamp,
       pickupLocationHash: dto.pickupLocationHash ?? null,
@@ -156,7 +210,16 @@ export class DeliveryProofService {
       temperatureCelsius: dto.temperatureCelsius ?? null,
       notes: dto.notes ?? null,
       isTemperatureCompliant,
-      verified: false,
+      verified: true,
+      signerKeyId: dto.signerKeyId,
+      signerPublicKey: dto.signerPublicKey,
+      signerRole: dto.signerRole,
+      signedAt,
+      proofSignature: dto.signature,
+      proofPayloadDigest: payloadDigest,
+      trustedTimestampAt,
+      timestampAnchorHash,
+      evidenceDigestReferences: dto.evidenceDigestReferences,
     });
 
     return this.proofRepo.save(proof);
@@ -264,5 +327,54 @@ export class DeliveryProofService {
   calculateSuccessRate(successful: number, total: number): number {
     if (total === 0) return 0;
     return Math.round((successful / total) * 10000) / 100;
+  }
+
+  private resolveTrustedSigner(kid: string): TrustedSignerKey {
+    const activeKid = this.configService.get<string>('DELIVERY_PROOF_SIGNER_KID', 'delivery-proof-key-1');
+    const activePublicKey = this.configService.get<string>('DELIVERY_PROOF_SIGNER_PUBLIC_KEY');
+    const previousKid = this.configService.get<string>('DELIVERY_PROOF_PREVIOUS_SIGNER_KID');
+    const previousPublicKey = this.configService.get<string>('DELIVERY_PROOF_PREVIOUS_SIGNER_PUBLIC_KEY');
+
+    if (kid === activeKid && activePublicKey) {
+      return { kid: activeKid, publicKey: activePublicKey };
+    }
+    if (previousKid && kid === previousKid && previousPublicKey) {
+      return { kid: previousKid, publicKey: previousPublicKey };
+    }
+
+    throw new BadRequestException('Unknown proof signer key id');
+  }
+
+  private buildSignedPayload(input: {
+    deliveryId: number;
+    orderId: string;
+    requestId: string;
+    riderId: string;
+    signerRole: string;
+    signedAt: string;
+    evidenceDigestReferences: string[];
+  }): string {
+    const canonical = {
+      deliveryId: input.deliveryId,
+      orderId: input.orderId,
+      requestId: input.requestId,
+      riderId: input.riderId,
+      signerRole: input.signerRole,
+      signedAt: input.signedAt,
+      evidenceDigestReferences: [...input.evidenceDigestReferences].sort(),
+    };
+
+    return JSON.stringify(canonical);
+  }
+
+  private assertEvidenceDigestReferences(digests: string[]): void {
+    if (!digests || digests.length === 0) {
+      throw new BadRequestException('At least one evidence digest reference is required');
+    }
+
+    const invalidDigest = digests.find((digest) => !/^[a-f0-9]{64}$/i.test(digest));
+    if (invalidDigest) {
+      throw new BadRequestException('Evidence digest references must be 64-character hex values');
+    }
   }
 }

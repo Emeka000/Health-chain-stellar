@@ -1,15 +1,22 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Keypair } from '@stellar/stellar-sdk';
 
 import { DeliveryProofService } from './delivery-proof.service';
 import { DeliveryProofEntity } from './entities/delivery-proof.entity';
+import { CustodyService } from '../custody/custody.service';
+import { SorobanService } from '../soroban/soroban.service';
+import { UploadValidationService } from './upload-validation.service';
+import { FileMetadataService } from '../file-metadata/file-metadata.service';
 
 const mockProof = (
   overrides: Partial<DeliveryProofEntity> = {},
 ): DeliveryProofEntity =>
   ({
     id: 'proof-1',
+    deliveryId: 1001,
     orderId: 'order-1',
     riderId: 'rider-1',
     requestId: 'request-1',
@@ -20,6 +27,15 @@ const mockProof = (
     temperatureCelsius: 4.0,
     notes: null,
     isTemperatureCompliant: true,
+    signerKeyId: 'delivery-proof-key-1',
+    signerPublicKey: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
+    signerRole: 'rider',
+    signedAt: new Date('2024-01-15T10:00:00Z'),
+    proofSignature: null,
+    proofPayloadDigest: null,
+    trustedTimestampAt: null,
+    timestampAnchorHash: null,
+    evidenceDigestReferences: ['a'.repeat(64)],
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -36,6 +52,8 @@ const buildRepo = (proofs: DeliveryProofEntity[]) => {
   };
   return {
     findOne: jest.fn(),
+    create: jest.fn((entity) => ({ ...entity })),
+    save: jest.fn((entity) => Promise.resolve({ id: 'proof-created', ...entity })),
     createQueryBuilder: jest.fn().mockReturnValue(qb),
     _qb: qb,
   };
@@ -44,19 +62,61 @@ const buildRepo = (proofs: DeliveryProofEntity[]) => {
 describe('DeliveryProofService', () => {
   let service: DeliveryProofService;
   let repo: ReturnType<typeof buildRepo>;
+  let signerKeypair: Keypair;
+  const custodyService = { assertCustodyComplete: jest.fn().mockResolvedValue(undefined) };
+  const sorobanService = {} as SorobanService;
+  const uploadValidation = {} as UploadValidationService;
+  const fileMetadata = {} as FileMetadataService;
+  const configService = {
+    get: jest.fn((key: string, fallback?: string) => {
+      if (key === 'DELIVERY_PROOF_SIGNER_KID') return 'delivery-proof-key-1';
+      if (key === 'DELIVERY_PROOF_SIGNER_PUBLIC_KEY') return signerKeypair.publicKey();
+      if (key === 'DELIVERY_PROOF_PREVIOUS_SIGNER_KID') return undefined;
+      if (key === 'DELIVERY_PROOF_PREVIOUS_SIGNER_PUBLIC_KEY') return undefined;
+      return fallback;
+    }),
+  } as unknown as ConfigService;
 
   beforeEach(async () => {
     repo = buildRepo([mockProof()]);
+    signerKeypair = Keypair.random();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DeliveryProofService,
         { provide: getRepositoryToken(DeliveryProofEntity), useValue: repo },
+        { provide: ConfigService, useValue: configService },
+        { provide: CustodyService, useValue: custodyService },
+        { provide: SorobanService, useValue: sorobanService },
+        { provide: UploadValidationService, useValue: uploadValidation },
+        { provide: FileMetadataService, useValue: fileMetadata },
       ],
     }).compile();
 
     service = module.get(DeliveryProofService);
   });
+
+  const signPayload = (dto: {
+    deliveryId: number;
+    orderId: string;
+    requestId: string;
+    riderId: string;
+    signerRole: string;
+    signedAt: string;
+    evidenceDigestReferences: string[];
+  }): string => {
+    const canonical = JSON.stringify({
+      deliveryId: dto.deliveryId,
+      orderId: dto.orderId,
+      requestId: dto.requestId,
+      riderId: dto.riderId,
+      signerRole: dto.signerRole,
+      signedAt: dto.signedAt,
+      evidenceDigestReferences: [...dto.evidenceDigestReferences].sort(),
+    });
+    const digest = Buffer.from(require('crypto').createHash('sha256').update(canonical).digest('hex'), 'hex');
+    return Buffer.from(signerKeypair.sign(digest)).toString('base64');
+  };
 
   describe('getDeliveryProof', () => {
     it('returns proof when found', async () => {
@@ -204,6 +264,81 @@ describe('DeliveryProofService', () => {
 
     it('returns correct percentage', () => {
       expect(service.calculateSuccessRate(3, 4)).toBe(75);
+    });
+  });
+
+  describe('create', () => {
+    it('stores a verified proof when signature and digest references are valid', async () => {
+      const dto = {
+        deliveryId: 1001,
+        orderId: 'order-1',
+        requestId: 'request-1',
+        riderId: 'rider-1',
+        pickupTimestamp: '2024-01-15T09:00:00Z',
+        deliveredAt: '2024-01-15T10:00:00Z',
+        recipientName: 'John Doe',
+        temperatureReadings: [4, 5],
+        signerKeyId: 'delivery-proof-key-1',
+        signerPublicKey: signerKeypair.publicKey(),
+        signerRole: 'rider',
+        signedAt: '2024-01-15T10:01:00Z',
+        signature: '',
+        evidenceDigestReferences: ['a'.repeat(64), 'b'.repeat(64)],
+      };
+      dto.signature = signPayload(dto);
+
+      const result = await service.create(dto as any);
+
+      expect(custodyService.assertCustodyComplete).toHaveBeenCalledWith('order-1');
+      expect(result.verified).toBe(true);
+      expect(result.signerPublicKey).toBe(signerKeypair.publicKey());
+      expect(result.proofPayloadDigest).toBeDefined();
+      expect(result.trustedTimestampAt).toBeInstanceOf(Date);
+      expect(result.evidenceDigestReferences).toHaveLength(2);
+    });
+
+    it('rejects a proof with mismatched signature', async () => {
+      const dto = {
+        deliveryId: 1001,
+        orderId: 'order-1',
+        requestId: 'request-1',
+        riderId: 'rider-1',
+        pickupTimestamp: '2024-01-15T09:00:00Z',
+        deliveredAt: '2024-01-15T10:00:00Z',
+        recipientName: 'John Doe',
+        temperatureReadings: [4, 5],
+        signerKeyId: 'delivery-proof-key-1',
+        signerPublicKey: signerKeypair.publicKey(),
+        signerRole: 'rider',
+        signedAt: '2024-01-15T10:01:00Z',
+        signature: 'invalid',
+        evidenceDigestReferences: ['a'.repeat(64)],
+      };
+
+      await expect(service.create(dto as any)).rejects.toThrow('Signature verification failed');
+    });
+
+    it('rejects a proof missing evidence digests', async () => {
+      const dto = {
+        deliveryId: 1001,
+        orderId: 'order-1',
+        requestId: 'request-1',
+        riderId: 'rider-1',
+        pickupTimestamp: '2024-01-15T09:00:00Z',
+        deliveredAt: '2024-01-15T10:00:00Z',
+        recipientName: 'John Doe',
+        temperatureReadings: [4, 5],
+        signerKeyId: 'delivery-proof-key-1',
+        signerPublicKey: signerKeypair.publicKey(),
+        signerRole: 'rider',
+        signedAt: '2024-01-15T10:01:00Z',
+        signature: 'invalid',
+        evidenceDigestReferences: [],
+      };
+
+      await expect(service.create(dto as any)).rejects.toThrow(
+        'At least one evidence digest reference is required',
+      );
     });
   });
 });

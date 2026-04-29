@@ -155,6 +155,7 @@ export class AuthService {
       email: user.email,
       role: user.role ?? loginDto.role ?? 'donor',
       sid: sessionId,
+      organizationId: user.organizationId ?? null,
     };
 
     const { accessToken, refreshToken, refreshExpiresInSeconds } =
@@ -221,6 +222,7 @@ export class AuthService {
       email: user.email,
       role: user.role,
       sid: sessionId,
+      organizationId: user.organizationId ?? null,
     };
 
     const {
@@ -387,6 +389,7 @@ export class AuthService {
         email: payload.email,
         role: payload.role,
         sid: payload.sid,
+        organizationId: payload.organizationId ?? null,
       };
 
       const {

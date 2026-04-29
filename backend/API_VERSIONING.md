@@ -105,7 +105,16 @@ All API endpoints include the version in the URI path:
 ## Backward Compatibility
 
 ### Current Status
-All existing routes are available under the v1 prefix. No breaking changes have been introduced.
+All existing routes are available under the v1 prefix. Endpoint compatibility classes are now enforced with contract checks:
+
+- `additive`: only backward-compatible field additions allowed
+- `strict`: frozen response shape unless approved override exists
+- `deprecated`: endpoint emits deprecation/sunset metadata and successor link
+
+Legacy response adapters are supported on selected endpoints using:
+
+- Header: `X-API-Client-Shape: legacy`
+- Query: `?compat=legacy`
 
 ### Migration Path for Future Versions
 
@@ -180,6 +189,17 @@ Full API documentation is available via Swagger/OpenAPI:
 ```
 http://localhost:3000/api/v1/api
 ```
+
+### Contract Enforcement
+
+- Schema breaking changes are validated in `src/__contracts__/schema-diff.spec.ts`
+- OpenAPI response drift checks are validated in `src/__contracts__/openapi-diff.contract.spec.ts`
+- Endpoint compatibility and deprecation headers are validated in `src/__contracts__/api-compatibility.contract.spec.ts`
+
+### Migration Notes
+
+- Blood matching endpoint migration examples:
+  - `docs/API_MIGRATION_NOTES_BLOOD_MATCHING.md`
 
 ## Version Upgrade Guide
 

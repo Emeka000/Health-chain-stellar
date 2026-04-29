@@ -6,15 +6,20 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
+  ArrayNotEmpty,
 } from 'class-validator';
 
 export class CreateDeliveryProofDto {
+  @IsNumber()
+  @Type(() => Number)
+  deliveryId: number;
+
   @IsString()
   orderId: string;
 
-  @IsOptional()
   @IsString()
-  requestId?: string;
+  requestId: string;
 
   @IsString()
   riderId: string;
@@ -67,4 +72,28 @@ export class CreateDeliveryProofDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @IsString()
+  signerKeyId: string;
+
+  @IsString()
+  signerPublicKey: string;
+
+  @IsString()
+  signerRole: string;
+
+  @IsDateString()
+  signedAt: string;
+
+  @IsString()
+  signature: string;
+
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsString({ each: true })
+  evidenceDigestReferences: string[];
+
+  @IsOptional()
+  @IsString()
+  externalTimestampAnchorHash?: string;
 }

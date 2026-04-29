@@ -23,11 +23,18 @@ import { Permission } from '../auth/enums/permission.enum';
 
 import { CreateOrganizationReviewDto } from './dto/create-organization-review.dto';
 import { ModerateOrganizationReviewDto } from './dto/moderate-organization-review.dto';
+import {
+  ReapplyOrganizationDto,
+  ReinstateOrganizationDto,
+  SuspendOrganizationDto,
+  UnverifyOrganizationDto,
+} from './dto/org-lifecycle.dto';
 import { OrganizationReviewQueryDto } from './dto/organization-review-query.dto';
 import { RegisterOrganizationDto } from './dto/register-organization.dto';
 import { RejectOrganizationDto } from './dto/reject-organization.dto';
 import { ReportOrganizationReviewDto } from './dto/report-organization-review.dto';
 import { SearchOrganizationsDto } from './dto/search-organizations.dto';
+import { OrgVerificationLifecycleService } from './services/org-verification-lifecycle.service';
 import { OrganizationsService } from './organizations.service';
 import { OrganizationReviewsService } from './services/organization-reviews.service';
 import { VerificationSyncService } from './services/verification-sync.service';
@@ -38,6 +45,7 @@ export class OrganizationsController {
     private readonly organizationsService: OrganizationsService,
     private readonly organizationReviewsService: OrganizationReviewsService,
     private readonly verificationSyncService: VerificationSyncService,
+    private readonly lifecycleService: OrgVerificationLifecycleService,
   ) {}
 
   @Public()
@@ -228,5 +236,66 @@ export class OrganizationsController {
     @Param('id', ParseUUIDPipe) organizationId: string,
   ) {
     return this.verificationSyncService.checkSyncMismatch(organizationId);
+  }
+
+  // =========================================================================
+  // Verification Lifecycle Endpoints
+  // =========================================================================
+
+  @RequirePermissions(Permission.ADMIN_ACCESS)
+  @Post(':id/suspend')
+  suspend(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: { user: { id: string } },
+    @Body() dto: SuspendOrganizationDto,
+  ) {
+    return this.lifecycleService.suspend(id, req.user.id, dto);
+  }
+
+  @RequirePermissions(Permission.ADMIN_ACCESS)
+  @Post(':id/reinstate')
+  reinstate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: { user: { id: string } },
+    @Body() dto: ReinstateOrganizationDto,
+  ) {
+    return this.lifecycleService.reinstate(id, req.user.id, dto);
+  }
+
+  @RequirePermissions(Permission.ADMIN_ACCESS)
+  @Post(':id/unverify')
+  unverify(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: { user: { id: string } },
+    @Body() dto: UnverifyOrganizationDto,
+  ) {
+    return this.lifecycleService.unverify(id, req.user.id, dto);
+  }
+
+  @Post(':id/reapply')
+  reapply(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: { user: { id: string } },
+    @Body() dto: ReapplyOrganizationDto,
+  ) {
+    return this.lifecycleService.reapply(id, req.user.id, dto);
+  }
+
+  @RequirePermissions(Permission.ADMIN_ACCESS)
+  @Get(':id/lifecycle-history')
+  getLifecycleHistory(@Param('id', ParseUUIDPipe) id: string) {
+    return this.lifecycleService.getHistory(id);
+  }
+
+  @RequirePermissions(Permission.ADMIN_ACCESS)
+  @Get(':id/grace-period')
+  getGracePeriod(@Param('id', ParseUUIDPipe) id: string) {
+    return this.lifecycleService.getActiveGracePeriod(id);
+  }
+
+  @RequirePermissions(Permission.ADMIN_ACCESS)
+  @Get(':id/restriction-level')
+  getRestrictionLevel(@Param('id', ParseUUIDPipe) id: string) {
+    return this.lifecycleService.getRestrictionLevel(id);
   }
 }

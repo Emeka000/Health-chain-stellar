@@ -1,3 +1,68 @@
+import { ForbiddenException } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
+
+import { NotificationsService } from './notifications.service';
+import { NotificationEntity } from './entities/notification.entity';
+import { NotificationTemplateEntity } from './entities/notification-template.entity';
+import { SecurityEventLoggerService } from '../user-activity/security-event-logger.service';
+
+describe('NotificationsService tenant isolation', () => {
+  let service: NotificationsService;
+
+  const notificationRepo = {
+    findAndCount: jest.fn(),
+    findOne: jest.fn(),
+    save: jest.fn(),
+  };
+  const templateRepo = {};
+  const queue = { add: jest.fn() };
+  const securityLogger = { logEvent: jest.fn() };
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        NotificationsService,
+        { provide: getRepositoryToken(NotificationEntity), useValue: notificationRepo },
+        {
+          provide: getRepositoryToken(NotificationTemplateEntity),
+          useValue: templateRepo,
+        },
+        { provide: 'BullQueue_notifications', useValue: queue },
+        { provide: SecurityEventLoggerService, useValue: securityLogger },
+      ],
+    }).compile();
+
+    service = module.get(NotificationsService);
+  });
+
+  it('denies querying another recipient notifications', async () => {
+    await expect(
+      service.findForRecipient(
+        { recipientId: 'user-2', page: 1, limit: 10 },
+        { userId: 'user-1', role: 'hospital', organizationId: 'org-1' },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(securityLogger.logEvent).toHaveBeenCalled();
+  });
+
+  it('denies marking another user notification as read', async () => {
+    notificationRepo.findOne.mockResolvedValue({
+      id: 'n-1',
+      recipientId: 'user-2',
+      status: 'PENDING',
+    });
+    await expect(
+      service.markRead('n-1', {
+        userId: 'user-1',
+        role: 'hospital',
+        organizationId: 'org-1',
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(securityLogger.logEvent).toHaveBeenCalled();
+  });
+});
 import { getQueueToken } from '@nestjs/bullmq';
 import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';

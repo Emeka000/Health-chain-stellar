@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -33,6 +34,8 @@ import { OrderEventStoreService } from './services/order-event-store.service';
 import { OrderFeeService } from './services/order-fee.service';
 import { RequestStatusService } from './services/request-status.service';
 import { FeePreviewDto } from '../fee-policy/dto/fee-policy.dto';
+import { TenantActorContext, assertTenantAccess } from '../common/tenant/tenant-scope.util';
+import { SecurityEventLoggerService, SecurityEventType } from '../user-activity/security-event-logger.service';
 
 @Injectable()
 export class OrdersService {
@@ -50,6 +53,7 @@ export class OrdersService {
     private readonly approvalService: ApprovalService,
     private readonly slaService: SlaService,
     private readonly outboxService: OutboxService,
+    private readonly securityEventLogger: SecurityEventLoggerService,
   ) {}
 
   async findAll(status?: string, hospitalId?: string) {
@@ -62,6 +66,7 @@ export class OrdersService {
 
   async findAllWithFilters(
     params: OrderQueryParamsDto,
+    actor?: TenantActorContext,
   ): Promise<PaginatedResponse<Order>> {
     const {
       hospitalId,
@@ -70,9 +75,14 @@ export class OrdersService {
       sortBy = 'placedAt',
       sortOrder = 'desc',
     } = params;
+    const scopedHospitalId =
+      actor?.organizationId && (actor.role ?? '').toLowerCase() !== 'admin'
+        ? actor.organizationId
+        : hospitalId;
+
     const query = this.orderRepo
       .createQueryBuilder('order')
-      .where('order.hospitalId = :hospitalId', { hospitalId });
+      .where('order.hospitalId = :hospitalId', { hospitalId: scopedHospitalId });
 
     if (params.startDate)
       query.andWhere('order.placedAt >= :startDate', { startDate: params.startDate });
@@ -88,13 +98,13 @@ export class OrdersService {
     return PaginationUtil.createResponse(items as any, page, pageSize, total);
   }
 
-  async findOne(id: string) {
-    const order = await this.findOrderOrFail(id);
+  async findOne(id: string, actor?: TenantActorContext) {
+    const order = await this.findOrderOrFail(id, actor);
     return { message: 'Order retrieved successfully', data: order };
   }
 
-  async trackOrder(id: string) {
-    const order = await this.findOrderOrFail(id);
+  async trackOrder(id: string, actor?: TenantActorContext) {
+    const order = await this.findOrderOrFail(id, actor);
     const replayedStatus = await this.eventStore.replayOrderState(id);
     return {
       message: 'Order tracking information retrieved successfully',
@@ -102,8 +112,8 @@ export class OrdersService {
     };
   }
 
-  async getOrderHistory(orderId: string): Promise<OrderEventEntity[]> {
-    await this.findOrderOrFail(orderId);
+  async getOrderHistory(orderId: string, actor?: TenantActorContext): Promise<OrderEventEntity[]> {
+    await this.findOrderOrFail(orderId, actor);
     return this.eventStore.getOrderHistory(orderId);
   }
 
@@ -119,8 +129,8 @@ export class OrdersService {
     return { message: 'Order created successfully', data: saved };
   }
 
-  async update(id: string, updateDto: any) {
-    const order = await this.findOrderOrFail(id);
+  async update(id: string, updateDto: any, actor?: TenantActorContext) {
+    const order = await this.findOrderOrFail(id, actor);
     Object.assign(order, updateDto);
     const updated = await this.orderRepo.save(order);
     return { message: 'Order updated successfully', data: updated };
@@ -131,12 +141,13 @@ export class OrdersService {
     statusUpdate: UpdateRequestStatusDto | string,
     actorId?: string,
     actorRole?: string,
+    actor?: TenantActorContext,
   ) {
     const dto =
       typeof statusUpdate === 'string'
         ? { status: statusUpdate as OrderStatus }
         : statusUpdate;
-    const order = await this.findOrderOrFail(id);
+    const order = await this.findOrderOrFail(id, actor);
     const updated = await this.dataSource.transaction(async (manager) => {
       await this.requestStatusService.applyStatusUpdate(
         order,
@@ -150,8 +161,8 @@ export class OrdersService {
     return { message: 'Order status updated successfully', data: updated };
   }
 
-  async remove(id: string, actorId?: string) {
-    const order = await this.findOrderOrFail(id);
+  async remove(id: string, actorId?: string, actor?: TenantActorContext) {
+    const order = await this.findOrderOrFail(id, actor);
     await this.dataSource.transaction(async (manager) => {
       await this.requestStatusService.applyStatusUpdate(
         order,
@@ -165,8 +176,13 @@ export class OrdersService {
     return { message: 'Order cancelled successfully', data: { id } };
   }
 
-  async assignRider(orderId: string, riderId: string, actorId?: string) {
-    const order = await this.findOrderOrFail(orderId);
+  async assignRider(
+    orderId: string,
+    riderId: string,
+    actorId?: string,
+    actor?: TenantActorContext,
+  ) {
+    const order = await this.findOrderOrFail(orderId, actor);
     await this.dataSource.transaction(async (manager) => {
       order.riderId = riderId;
       await manager.save(OrderEntity, order);
@@ -189,8 +205,13 @@ export class OrdersService {
     return { message: 'Rider assigned successfully', data: { orderId, riderId } };
   }
 
-  async raiseDispute(id: string, dto: RaiseDisputeDto, actorId?: string) {
-    const order = await this.findOrderOrFail(id);
+  async raiseDispute(
+    id: string,
+    dto: RaiseDisputeDto,
+    actorId?: string,
+    actor?: TenantActorContext,
+  ) {
+    const order = await this.findOrderOrFail(id, actor);
     this.stateMachine.transition(order.status as OrderStatus, OrderStatus.DISPUTED);
     order.status = OrderStatus.DISPUTED;
     order.disputeId = dto.disputeId || `DISP-${id.split('-')[0]}-${Date.now()}`;
@@ -214,8 +235,13 @@ export class OrdersService {
     return { message: 'Dispute raised successfully', data: saved };
   }
 
-  async resolveDispute(id: string, dto: ResolveDisputeDto, actorId?: string) {
-    const order = await this.findOrderOrFail(id);
+  async resolveDispute(
+    id: string,
+    dto: ResolveDisputeDto,
+    actorId?: string,
+    actor?: TenantActorContext,
+  ) {
+    const order = await this.findOrderOrFail(id, actor);
     if (order.status !== OrderStatus.DISPUTED)
       throw new ConflictException('Order is not in DISPUTED state');
     const approvalRequest = await this.approvalService.createRequest({
@@ -232,8 +258,12 @@ export class OrdersService {
     };
   }
 
-  async finalizeDisputeResolution(id: string, resolution: any) {
-    const order = await this.findOrderOrFail(id);
+  async finalizeDisputeResolution(
+    id: string,
+    resolution: any,
+    actor?: TenantActorContext,
+  ) {
+    const order = await this.findOrderOrFail(id, actor);
     await this.dataSource.transaction(async (manager) => {
       order.status = OrderStatus.RESOLVED;
       await manager.save(OrderEntity, order);
@@ -253,8 +283,8 @@ export class OrdersService {
     return { message: 'Dispute resolution finalized and settled.' };
   }
 
-  async previewOrderFees(id: string, overrides: Partial<FeePreviewDto>) {
-    const order = await this.findOrderOrFail(id);
+  async previewOrderFees(id: string, overrides: Partial<FeePreviewDto>, actor?: TenantActorContext) {
+    const order = await this.findOrderOrFail(id, actor);
     return this.orderFeeService.preview(order, overrides);
   }
 
@@ -293,9 +323,31 @@ export class OrdersService {
     return saved;
   }
 
-  private async findOrderOrFail(id: string): Promise<OrderEntity> {
+  private async findOrderOrFail(
+    id: string,
+    actor?: TenantActorContext,
+  ): Promise<OrderEntity> {
     const order = await this.orderRepo.findOne({ where: { id } });
     if (!order) throw new NotFoundException(`Order '${id}' not found`);
+    if (actor) {
+      try {
+        assertTenantAccess(actor, {
+          resourceType: 'Order',
+          resourceId: id,
+          ownerIds: [order.hospitalId, order.bloodBankId],
+        });
+      } catch {
+        await this.securityEventLogger
+          .logEvent({
+            eventType: SecurityEventType.TENANT_ACCESS_DENIED,
+            userId: actor.userId,
+            description: 'Cross-tenant order access denied',
+            metadata: { orderId: id, hospitalId: order.hospitalId, bloodBankId: order.bloodBankId },
+          })
+          .catch(() => undefined);
+        throw new ForbiddenException('Cross-tenant order access denied');
+      }
+    }
     return order;
   }
 }

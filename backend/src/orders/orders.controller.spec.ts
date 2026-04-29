@@ -18,6 +18,7 @@ describe('OrdersController', () => {
   let controller: OrdersController;
   let service: { findAllWithFilters: jest.Mock };
   let mockGateway: Partial<OrdersGateway>;
+  const req = { user: { id: 'u1', role: 'hospital', organizationId: 'HOSP-001' } };
 
   beforeEach(async () => {
     // Create a mock gateway
@@ -108,7 +109,7 @@ describe('OrdersController', () => {
 
       jest.spyOn(service, 'findAllWithFilters').mockResolvedValue(result);
 
-      expect(await controller.findAllWithFilters(params)).toBe(result);
+      expect(await controller.findAllWithFilters(params, req as any)).toBe(result);
     });
 
     it('should throw BadRequestException when startDate is after endDate', async () => {
@@ -120,7 +121,7 @@ describe('OrdersController', () => {
         pageSize: 25,
       };
 
-      await expect(controller.findAllWithFilters(params)).rejects.toThrow(
+      await expect(controller.findAllWithFilters(params, req as any)).rejects.toThrow(
         BadRequestException,
       );
     });
@@ -146,7 +147,7 @@ describe('OrdersController', () => {
 
       jest.spyOn(service, 'findAllWithFilters').mockResolvedValue(result);
 
-      expect(await controller.findAllWithFilters(params)).toBe(result);
+      expect(await controller.findAllWithFilters(params, req as any)).toBe(result);
     });
 
     it('should accept all filter parameters', async () => {
@@ -175,8 +176,11 @@ describe('OrdersController', () => {
 
       jest.spyOn(service, 'findAllWithFilters').mockResolvedValue(result);
 
-      expect(await controller.findAllWithFilters(params)).toBe(result);
-      expect(service.findAllWithFilters).toHaveBeenCalledWith(params);
+      expect(await controller.findAllWithFilters(params, req as any)).toBe(result);
+      expect(service.findAllWithFilters).toHaveBeenCalledWith(
+        params,
+        expect.objectContaining({ organizationId: 'HOSP-001' }),
+      );
     });
   });
 });

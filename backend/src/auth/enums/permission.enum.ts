@@ -79,4 +79,10 @@ export enum Permission {
   DISPUTE_RESOLVE = 'dispute:resolve',
   VERIFICATION_ADMIN = 'verification:admin',
   SETTLEMENT_RELEASE = 'settlement:release',
+
+  // ── Blood Requests ──────────────────────────────────────────────────
+  VIEW_BLOOD_REQUESTS = 'view:blood-requests',
+
+  // ── Reporting ───────────────────────────────────────────────────────
+  DOWNLOAD_REPORTS = 'download:reports',
 }

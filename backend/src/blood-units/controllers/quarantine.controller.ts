@@ -44,9 +44,9 @@ export class QuarantineController {
   }
 
   @RequirePermissions(Permission.VIEW_BLOOD_STATUS_HISTORY)
-  @Get('cases/:caseId')
-  async getCase(@Param('caseId', ParseUUIDPipe) caseId: string) {
-    return this.quarantineService.getCase(caseId);
+  @Get('cases/:caseId/recommendation')
+  async getRecommendation(@Param('caseId', ParseUUIDPipe) caseId: string) {
+    return this.quarantineService.getRecommendedDisposition(caseId);
   }
 
   @RequirePermissions(Permission.UPDATE_BLOOD_STATUS)

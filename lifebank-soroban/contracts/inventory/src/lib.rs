@@ -34,6 +34,9 @@ impl InventoryContract {
         // Set admin
         storage::set_admin(&env, &admin);
 
+        // Authorize admin as the first blood bank
+        storage::set_authorized_bank(&env, &admin, true);
+
         Ok(())
     }
 
@@ -66,6 +69,22 @@ impl InventoryContract {
             .instance()
             .get(&DataKey::Paused)
             .unwrap_or(false)
+    }
+
+    /// Authorize or revoke a blood bank. Only admin can call this.
+    pub fn authorize_bank(env: Env, admin: Address, bank: Address, authorized: bool) -> Result<(), ContractError> {
+        admin.require_auth();
+        let stored_admin = storage::get_admin(&env);
+        if admin != stored_admin {
+            return Err(ContractError::Unauthorized);
+        }
+        storage::set_authorized_bank(&env, &bank, authorized);
+        Ok(())
+    }
+
+    /// Check if a bank is authorized
+    pub fn is_authorized_bank(env: Env, bank: Address) -> bool {
+        storage::is_authorized_bank(&env, &bank)
     }
 
     fn require_not_paused(env: &Env) -> Result<(), ContractError> {
@@ -236,13 +255,15 @@ impl InventoryContract {
 
         Self::require_not_paused(&env)?;
 
+        let blood_unit =
+            storage::get_blood_unit(&env, unit_id).ok_or(ContractError::NotFound)?;
+
         let admin = storage::get_admin(&env);
-        if authorized_by != admin {
+        if authorized_by != admin && authorized_by != blood_unit.bank_id {
             return Err(ContractError::Unauthorized);
         }
 
-        let mut blood_unit =
-            storage::get_blood_unit(&env, unit_id).ok_or(ContractError::NotFound)?;
+        let mut blood_unit = blood_unit;
 
         let current_time = env.ledger().timestamp();
         let old_status = blood_unit.status;
@@ -366,22 +387,20 @@ impl InventoryContract {
         Self::require_not_paused(&env)?;
 
         let admin = storage::get_admin(&env);
-        if authorized_by != admin {
-            return Err(ContractError::Unauthorized);
-        }
-
         let current_time = env.ledger().timestamp();
-        let mut updated_count = 0u64;
 
+        // 1. Validate all units first (atomicity)
         for i in 0..unit_ids.len() {
             let unit_id = unit_ids.get(i).ok_or(ContractError::NotFound)?;
-            let mut blood_unit =
-                storage::get_blood_unit(&env, unit_id).ok_or(ContractError::NotFound)?;
+            let blood_unit = storage::get_blood_unit(&env, unit_id).ok_or(ContractError::NotFound)?;
 
-            let old_status = blood_unit.status;
+            if authorized_by != admin && authorized_by != blood_unit.bank_id {
+                return Err(ContractError::Unauthorized);
+            }
+
             if blood_unit.is_expired(current_time) {
                 let allowed_past_shelf = matches!(
-                    (old_status, new_status),
+                    (blood_unit.status, new_status),
                     (BloodStatus::Available, BloodStatus::Expired)
                         | (BloodStatus::Reserved, BloodStatus::Expired)
                         | (BloodStatus::InTransit, BloodStatus::Expired)
@@ -393,14 +412,21 @@ impl InventoryContract {
                 }
             }
 
-            if !is_valid_transition(&old_status, &new_status) {
-                events::emit_invalid_transition(&env, unit_id, old_status, new_status);
+            if !is_valid_transition(&blood_unit.status, &new_status) {
                 return Err(ContractError::InvalidStatusTransition);
             }
+        }
+
+        // 2. All units valid, perform updates
+        let mut updated_count = 0u64;
+        for i in 0..unit_ids.len() {
+            let unit_id = unit_ids.get(i).ok_or(ContractError::NotFound)?;
+            let mut blood_unit = storage::get_blood_unit(&env, unit_id).unwrap();
+
+            let old_status = blood_unit.status;
             blood_unit.status = new_status;
             storage::set_blood_unit(&env, &blood_unit);
 
-            // Keep status index consistent for each unit.
             storage::remove_from_status_index(&env, unit_id, old_status);
             storage::add_to_status_index(&env, &blood_unit);
 
@@ -522,6 +548,12 @@ impl InventoryContract {
         for i in 0..unit_ids.len() {
             let unit_id = unit_ids.get(i).ok_or(ContractError::NotFound)?;
             let unit = storage::get_blood_unit(&env, unit_id).ok_or(ContractError::NotFound)?;
+            
+            // Explicit ownership check: prove that every selected unit belongs to the blood bank performing the action.
+            if unit.bank_id != requester {
+                return Err(ContractError::NotUnitOwner);
+            }
+
             if unit.status != BloodStatus::Available {
                 return Err(ContractError::BloodUnitNotAvailable);
             }

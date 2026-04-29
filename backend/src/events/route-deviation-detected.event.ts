@@ -8,5 +8,7 @@ export class RouteDeviationDetectedEvent {
     public readonly lastKnownLatitude: number,
     public readonly lastKnownLongitude: number,
     public readonly recommendedAction: string | null,
+    public readonly confidenceScore: number,
+    public readonly telemetryContext: Record<string, unknown>,
   ) {}
 }

@@ -2,10 +2,10 @@ import {
   Controller,
   Get,
   Post,
-  Put,
   Body,
   UseGuards,
   Param,
+  ForbiddenException,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
@@ -15,6 +15,7 @@ import {
   NotificationCategory,
   EmergencyTier,
 } from '../entities/notification-preference.entity';
+import { SecurityEventLoggerService, SecurityEventType } from '../../user-activity/security-event-logger.service';
 
 class SetPreferenceDto {
   category: NotificationCategory;
@@ -30,6 +31,7 @@ class SetPreferenceDto {
 export class NotificationPreferenceController {
   constructor(
     private readonly preferenceService: NotificationPreferenceService,
+    private readonly securityEventLogger: SecurityEventLoggerService,
   ) {}
 
   @Get()
@@ -59,7 +61,19 @@ export class NotificationPreferenceController {
   }
 
   @Get('delivery-logs/:userId')
-  async getUserDeliveryLogs(@Param('userId') userId: string) {
+  async getUserDeliveryLogs(@Param('userId') userId: string, @CurrentUser() user: any) {
+    const role = String(user?.role ?? '').toLowerCase();
+    if (role !== 'admin' && userId !== user?.id) {
+      await this.securityEventLogger
+        .logEvent({
+          eventType: SecurityEventType.TENANT_ACCESS_DENIED,
+          userId: user?.id ?? null,
+          description: 'Cross-tenant notification delivery log access denied',
+          metadata: { targetUserId: userId },
+        })
+        .catch(() => undefined);
+      throw new ForbiddenException('Cannot access another user delivery logs');
+    }
     return this.preferenceService.getDeliveryLogs(userId);
   }
 }

@@ -73,6 +73,24 @@ function minDistanceToPolylineM(
   return minDist;
 }
 
+const TELEMETRY_WINDOW_SIZE = 5;
+const ENTRY_HYSTERESIS_FACTOR = 1.1;
+const EXIT_HYSTERESIS_FACTOR = 0.9;
+
+interface TelemetrySample {
+  latitude: number;
+  longitude: number;
+  distanceM: number;
+  recordedAt: Date;
+}
+
+interface OffCorridorState {
+  firstOffAt: Date;
+  lastDistanceM: number;
+  smoothedDistanceM: number;
+  sampleCount: number;
+}
+
 function pointToSegmentDistanceM(
   pLat: number,
   pLng: number,
@@ -121,10 +139,8 @@ export class RouteDeviationService {
   private readonly logger = new Logger(RouteDeviationService.name);
 
   /** riderId → { firstOffAt: Date, lastDistanceM: number } */
-  private readonly offCorridorState = new Map<
-    string,
-    { firstOffAt: Date; lastDistanceM: number }
-  >();
+  private readonly offCorridorState = new Map<string, OffCorridorState>();
+  private readonly telemetryBuffers = new Map<string, TelemetrySample[]>();
 
   constructor(
     @InjectRepository(PlannedRouteEntity)
@@ -183,13 +199,23 @@ export class RouteDeviationService {
       polylinePoints,
     );
 
-    if (distanceM <= route.corridorRadiusM) {
-      // Back on corridor — clear off-corridor state
+    const telemetry = this.appendTelemetrySample(dto.riderId, dto, distanceM);
+    const smoothedDistanceM = this.computeSmoothedDistance(telemetry);
+    const jitterM = this.computeJitterM(telemetry);
+    const entryThresholdM = route.corridorRadiusM * ENTRY_HYSTERESIS_FACTOR;
+    const exitThresholdM = route.corridorRadiusM * EXIT_HYSTERESIS_FACTOR;
+
+    if (smoothedDistanceM <= exitThresholdM) {
+      // Back on corridor — clear off-corridor state once the smoothed path settles.
       this.offCorridorState.delete(dto.riderId);
       return;
     }
 
-    // Off corridor
+    if (smoothedDistanceM <= entryThresholdM) {
+      // Temporary excursion inside the hysteresis band — keep collecting samples.
+      return;
+    }
+
     const now = new Date();
     const existing = this.offCorridorState.get(dto.riderId);
 
@@ -197,6 +223,8 @@ export class RouteDeviationService {
       this.offCorridorState.set(dto.riderId, {
         firstOffAt: now,
         lastDistanceM: distanceM,
+        smoothedDistanceM,
+        sampleCount: telemetry.length,
       });
       return; // First off-corridor ping — wait for duration threshold
     }
@@ -207,9 +235,24 @@ export class RouteDeviationService {
     this.offCorridorState.set(dto.riderId, {
       firstOffAt: existing.firstOffAt,
       lastDistanceM: distanceM,
+      smoothedDistanceM,
+      sampleCount: telemetry.length,
     });
 
     if (durationS < route.maxDeviationSeconds) return; // Not yet past duration threshold
+
+    const confidenceScore = this.computeConfidenceScore({
+      smoothedDistanceM,
+      routeRadiusM: route.corridorRadiusM,
+      durationS,
+      maxDeviationSeconds: route.maxDeviationSeconds,
+      jitterM,
+      sampleCount: telemetry.length,
+    });
+
+    if (confidenceScore < 0.55 && durationS < route.maxDeviationSeconds * 2) {
+      return;
+    }
 
     // Check if there's already an open incident for this rider+order
     const openIncident = await this.incidentRepo.findOne({
@@ -246,13 +289,25 @@ export class RouteDeviationService {
       deviationDurationS: durationS,
       lastKnownLatitude: dto.latitude,
       lastKnownLongitude: dto.longitude,
-      reason: `Rider deviated ${Math.round(distanceM)}m from planned corridor for ${durationS}s`,
+      reason: `Rider deviated ${Math.round(smoothedDistanceM)}m from planned corridor for ${durationS}s`,
       recommendedAction: action,
       acknowledgedBy: null,
       acknowledgedAt: null,
       resolvedAt: null,
       scoringApplied: false,
-      metadata: null,
+      metadata: {
+        rawDistanceM: Math.round(distanceM * 100) / 100,
+        smoothedDistanceM: Math.round(smoothedDistanceM * 100) / 100,
+        jitterM: Math.round(jitterM * 100) / 100,
+        sampleCount: telemetry.length,
+        confidenceScore: Math.round(confidenceScore * 100) / 100,
+        telemetryWindow: telemetry.map((sample) => ({
+          latitude: sample.latitude,
+          longitude: sample.longitude,
+          distanceM: Math.round(sample.distanceM * 100) / 100,
+          recordedAt: sample.recordedAt.toISOString(),
+        })),
+      },
     });
 
     const saved = await this.incidentRepo.save(incident);
@@ -267,10 +322,17 @@ export class RouteDeviationService {
         dto.orderId,
         dto.riderId,
         severity,
-        distanceM,
+        smoothedDistanceM,
         dto.latitude,
         dto.longitude,
         action,
+        confidenceScore,
+        {
+          rawDistanceM: distanceM,
+          smoothedDistanceM,
+          jitterM,
+          sampleCount: telemetry.length,
+        },
       ),
     );
   }
@@ -328,5 +390,64 @@ export class RouteDeviationService {
 
   async markScoringApplied(incidentId: string): Promise<void> {
     await this.incidentRepo.update(incidentId, { scoringApplied: true });
+  }
+
+  private appendTelemetrySample(
+    riderId: string,
+    dto: LocationUpdateDto,
+    distanceM: number,
+  ): TelemetrySample[] {
+    const samples = this.telemetryBuffers.get(riderId) ?? [];
+    samples.push({
+      latitude: dto.latitude,
+      longitude: dto.longitude,
+      distanceM,
+      recordedAt: new Date(),
+    });
+    const trimmed = samples.slice(-TELEMETRY_WINDOW_SIZE);
+    this.telemetryBuffers.set(riderId, trimmed);
+    return trimmed;
+  }
+
+  private computeSmoothedDistance(samples: TelemetrySample[]): number {
+    if (samples.length === 0) return 0;
+    const total = samples.reduce((sum, sample) => sum + sample.distanceM, 0);
+    return total / samples.length;
+  }
+
+  private computeJitterM(samples: TelemetrySample[]): number {
+    if (samples.length <= 1) return 0;
+    const distances = samples.map((sample) => sample.distanceM);
+    return Math.max(...distances) - Math.min(...distances);
+  }
+
+  private computeConfidenceScore(input: {
+    smoothedDistanceM: number;
+    routeRadiusM: number;
+    durationS: number;
+    maxDeviationSeconds: number;
+    jitterM: number;
+    sampleCount: number;
+  }): number {
+    const distanceScore = Math.max(
+      0,
+      Math.min(1, (input.smoothedDistanceM - input.routeRadiusM) / input.routeRadiusM),
+    );
+    const durationScore = Math.max(
+      0,
+      Math.min(1, input.durationS / Math.max(input.maxDeviationSeconds * 2, 60)),
+    );
+    const stabilityScore = Math.max(
+      0,
+      Math.min(1, 1 - input.jitterM / Math.max(input.routeRadiusM * 2, 1)),
+    );
+    const sampleBonus = Math.max(0, Math.min(1, input.sampleCount / TELEMETRY_WINDOW_SIZE));
+
+    return (
+      0.4 * distanceScore +
+      0.3 * durationScore +
+      0.2 * stabilityScore +
+      0.1 * sampleBonus
+    );
   }
 }

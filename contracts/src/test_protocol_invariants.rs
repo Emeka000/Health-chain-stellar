@@ -313,8 +313,9 @@ fn property_completed_payments_are_terminal_and_cannot_reenter_escrow() {
     let payee = Address::generate(&fixture.env);
     let asset = Address::generate(&fixture.env);
 
+    let fee_payload = default_fee_structure(&fixture.env);
     let payment_id =
-        client(&fixture).create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset);
+        client(&fixture).create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset, &fee_payload, &fixture.admin);
     escrow_payment(&fixture, payment_id, &fixture.admin);
     assert!(client(&fixture).propose_release(&payment_id, &fixture.admin));
 

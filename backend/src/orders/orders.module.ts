@@ -10,6 +10,7 @@ import { InventoryModule } from '../inventory/inventory.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { SlaModule } from '../sla/sla.module';
 import { BlockchainEvent } from '../soroban/entities/blockchain-event.entity';
+import { UserActivityModule } from '../user-activity/user-activity.module';
 
 import { OrderEventEntity } from './entities/order-event.entity';
 import { OrderEntity } from './entities/order.entity';
@@ -34,6 +35,7 @@ import { OrderStateMachine } from './state-machine/order-state-machine';
     ApprovalModule,
     SlaModule,
     EventsModule,
+    UserActivityModule,
   ],
   controllers: [OrdersController],
   providers: [

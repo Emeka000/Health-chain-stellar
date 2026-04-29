@@ -9,16 +9,28 @@ import {
     FeePreviewDto,
     FeeBreakdownDto,
 } from './dto/fee-policy.dto';
+import { FeePolicyAnalyzerService } from './fee-policy-analyzer.service';
 
 @Injectable()
 export class FeePolicyService {
     constructor(
         @InjectRepository(FeePolicyEntity)
         private readonly repository: Repository<FeePolicyEntity>,
+        private readonly analyzerService: FeePolicyAnalyzerService,
     ) { }
 
     async create(createDto: CreateFeePolicyDto): Promise<FeePolicyEntity> {
         const policy = this.repository.create(createDto);
+
+        // Check for conflicts before saving
+        const conflicts = await this.analyzerService.validatePolicyForActivation(policy);
+        if (conflicts.some(c => c.severity === 'error')) {
+            throw new BadRequestException({
+                message: 'Policy conflicts detected',
+                conflicts: conflicts.filter(c => c.severity === 'error'),
+            });
+        }
+
         return this.repository.save(policy);
     }
 
@@ -142,6 +154,16 @@ export class FeePolicyService {
     ): Promise<FeePolicyEntity> {
         await this.findOne(id);
         const policy = this.repository.create({ id, ...updateDto });
+
+        // Check for conflicts before saving
+        const conflicts = await this.analyzerService.validatePolicyForActivation(policy);
+        if (conflicts.some(c => c.severity === 'error')) {
+            throw new BadRequestException({
+                message: 'Policy conflicts detected',
+                conflicts: conflicts.filter(c => c.severity === 'error'),
+            });
+        }
+
         return this.repository.save(policy);
     }
 

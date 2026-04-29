@@ -30,6 +30,7 @@ pub enum ContractError {
     InsufficientBalance = 130,
     InsufficientPermissions = 131,
     NotAuthorizedBloodBank = 132,
+    NotUnitOwner = 133,
 
     // Blood-specific errors (140-149)
     BloodUnitNotAvailable = 140,

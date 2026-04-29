@@ -1,16 +1,18 @@
 import {
   Column,
+  CreateDateColumn,
   Entity,
   Index,
   JoinColumn,
   ManyToOne,
   OneToMany,
-  Index,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
 } from 'typeorm';
 
 import { BloodComponent } from '../../blood-units/enums/blood-component.enum';
 import { BloodType } from '../../blood-units/enums/blood-type.enum';
-import { BloodRequestStatus } from '../enums/blood-request-status.enum';
+import { RequestStatus, BloodRequestStatus } from '../enums/blood-request-status.enum';
 import { EscalationTier } from '../../escalation/enums/escalation-tier.enum';
 
 import { BloodRequestItemEntity } from './blood-request-item.entity';
@@ -89,7 +91,7 @@ export class BloodRequestEntity {
   @Column({
     type: 'varchar',
     length: 32,
-    default: RequestStatus.PENDING,
+    default: BloodRequestStatus.PENDING,
   })
   status: RequestStatus;
 
@@ -336,7 +338,7 @@ export class BloodRequestEntity {
   /**
    * Update the request status
    */
-  updateStatus(newStatus: BloodRequestStatus): void {
+  updateStatus(newStatus: RequestStatus): void {
     this.status = newStatus;
   }
 

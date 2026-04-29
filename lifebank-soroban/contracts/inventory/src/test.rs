@@ -1658,3 +1658,58 @@ fn test_batch_register_blood_unauthorized_bank() {
     let entries = vec![&env, (BloodType::APositive, 450u32, None::<Address>)];
     client.batch_register_blood(&unauthorized, &entries);
 }
+
+#[test]
+fn test_update_status_allowed_for_owner() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    let bank = Address::generate(&env);
+    client.authorize_bank(&admin, &bank, &true);
+
+    let unit_id = client.register_blood(&bank, &BloodType::APositive, &450u32, &None);
+
+    // Bank (owner) should be able to update status even if not admin
+    let updated = client.update_status(
+        &unit_id,
+        &BloodStatus::Reserved,
+        &bank,
+        &None,
+    );
+    assert_eq!(updated.status, BloodStatus::Reserved);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #102)")]
+fn test_update_status_denied_for_non_owner_non_admin() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    let bank1 = Address::generate(&env);
+    let bank2 = Address::generate(&env);
+    client.authorize_bank(&admin, &bank1, &true);
+    client.authorize_bank(&admin, &bank2, &true);
+
+    let unit_id = client.register_blood(&bank1, &BloodType::APositive, &450u32, &None);
+
+    // Bank2 (not owner, not admin) should be denied
+    client.update_status(&unit_id, &BloodStatus::Reserved, &bank2, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #133)")]
+fn test_reserve_blood_fails_on_mixed_ownership() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    let bank1 = Address::generate(&env);
+    let bank2 = Address::generate(&env);
+    client.authorize_bank(&admin, &bank1, &true);
+    client.authorize_bank(&admin, &bank2, &true);
+
+    let id1 = client.register_blood(&bank1, &BloodType::APositive, &450u32, &None);
+    let id2 = client.register_blood(&bank2, &BloodType::APositive, &450u32, &None);
+
+    // Bank1 tries to reserve both units (but only owns one)
+    client.reserve_blood(&bank1, &vec![&env, id1, id2], &123, &3600);
+}

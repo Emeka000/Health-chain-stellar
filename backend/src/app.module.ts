@@ -2,9 +2,11 @@ import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
 
 import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 
@@ -19,8 +21,8 @@ import { BatchImportModule } from './batch-import/batch-import.module';
 import { BlockchainModule } from './blockchain/blockchain.module';
 import { BloodRequestsModule } from './blood-requests/blood-requests.module';
 import { BloodUnitsModule } from './blood-units/blood-units.module';
-import { ColdChainModule } from './cold-chain/cold-chain.module';
-import { AuditLogModule } from './common/audit/audit-log.module';
+import { ConsentModule } from './consent/consent.module';
+import { EventsModule } from './events/events.module';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { CorrelationIdService } from './common/middleware/correlation-id.service';
 import { AppConfigModule } from './config/config.module';
@@ -33,6 +35,7 @@ import { DonationModule } from './donations/donation.module';
 import { DonorEligibilityModule } from './donor-eligibility/donor-eligibility.module';
 import { DonorImpactModule } from './donor-impact/donor-impact.module';
 import { EscalationModule } from './escalation/escalation.module';
+import { EscrowGovernanceModule } from './escrow-governance/escrow-governance.module';
 import { EventsModule } from './events/events.module';
 import { FeeCorrectionModule } from './fee-correction/fee-correction.module';
 import { HealthModule } from './health/health.module';
@@ -62,17 +65,7 @@ import { SurgeSimulationModule } from './surge-simulation/surge-simulation.modul
 import { THROTTLE_TTL_MS } from './config/throttle-limits.config';
 import { TrackingModule } from './tracking/tracking.module';
 import { TransparencyModule } from './transparency/transparency.module';
-import { UserActivityModule } from './user-activity/user-activity.module';
-import { UsersModule } from './users/users.module';
-import { UssdModule } from './ussd/ussd.module';
-// UssdSessionModule (ussd-session/) is excluded: its UssdService injects IOrderService
-// by interface type which is erased at runtime and cannot be resolved by NestJS DI
-// without a concrete token. Deferred until the module is refactored to use a
-// proper injection token (e.g. Symbol('ORDER_SERVICE') or a concrete class).
-import { WorkflowModule } from './workflow/workflow.module';
-import { RoleAwareThrottlerGuard } from './throttler/role-aware-throttler.guard';
-import { throttleGetTracker } from './throttler/throttle-tracker.util';
-
+import { PolicyCenterModule } from './policy-center/policy-center.module';
 import type Redis from 'ioredis';
 
 @Module({
@@ -84,6 +77,7 @@ import type Redis from 'ioredis';
     AppConfigModule,
 
     EventEmitterModule.forRoot(),
+    ScheduleModule.forRoot(),
 
     // Global BullMQ Redis connection — individual modules register their own queues
     BullModule.forRootAsync({
@@ -168,6 +162,7 @@ import type Redis from 'ioredis';
     DonorEligibilityModule,
     DonorImpactModule,
     EscalationModule,
+    EscrowGovernanceModule,
     EventsModule,
     FeeCorrectionModule,
     FileMetadataModule,
@@ -181,23 +176,7 @@ import type Redis from 'ioredis';
     OrdersModule,
     OrganizationsModule,
     PolicyCenterModule,
-    ProofBundleModule,
-    ReadinessModule,
-    ReconciliationModule,
-    RegionsModule,
-    ReportingModule,
-    ReputationModule,
-    RidersModule,
-    RouteDeviationModule,
-    SlaModule,
-    SorobanModule,
-    SurgeSimulationModule,
-    TrackingModule,
-    TransparencyModule,
-    UserActivityModule,
-    UssdModule,
-    WorkflowModule,
-    AuditLogModule,
+    ConsentModule,
   ],
   controllers: [AppController],
   providers: [
@@ -210,7 +189,8 @@ import type Redis from 'ioredis';
     { provide: APP_GUARD, useClass: RoleAwareThrottlerGuard },
     /** Permission enforcement applied globally; use @RequirePermissions() to specify */
     { provide: APP_GUARD, useClass: PermissionsGuard },
+    { provide: APP_INTERCEPTOR, useClass: ApiCompatibilityInterceptor },
     CorrelationIdService,
   ],
 })
-export class AppModule {}
+export class AppModule { }
