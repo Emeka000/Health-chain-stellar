@@ -14,6 +14,18 @@ export enum SecurityEventType {
   AUTH_REFRESH_TOKEN_REPLAY = 'AUTH_REFRESH_TOKEN_REPLAY',
   AUTH_SESSION_RISK_ELEVATED = 'AUTH_SESSION_RISK_ELEVATED',
   AUTH_STEP_UP_REQUIRED = 'AUTH_STEP_UP_REQUIRED',
+  
+  // WebSocket-specific security events (Issue #562)
+  WS_NO_TOKEN = 'WS_NO_TOKEN',
+  WS_INVALID_TOKEN = 'WS_INVALID_TOKEN',
+  WS_INVALID_CLAIMS = 'WS_INVALID_CLAIMS',
+  WS_PRIVILEGE_VIOLATION = 'WS_PRIVILEGE_VIOLATION',
+  WS_TENANT_ESCAPE_ATTEMPT = 'WS_TENANT_ESCAPE_ATTEMPT',
+  WS_RATE_LIMITED = 'WS_RATE_LIMITED',
+  WS_AUTH_SUCCESS = 'WS_AUTH_SUCCESS',
+  WS_AUTH_ERROR = 'WS_AUTH_ERROR',
+  WS_TOKEN_REFRESH_FAILED = 'WS_TOKEN_REFRESH_FAILED',
+  WS_HEARTBEAT_TIMEOUT = 'WS_HEARTBEAT_TIMEOUT',
 }
 
 export interface SecurityEvent {
@@ -92,6 +104,24 @@ export class SecurityEventLoggerService {
       case SecurityEventType.AUTH_SESSION_RISK_ELEVATED:
       case SecurityEventType.AUTH_STEP_UP_REQUIRED:
         return ActivityType.AUTH_SESSION_RISK_ELEVATED;
+      
+      // WebSocket events map to existing activity types
+      case SecurityEventType.WS_NO_TOKEN:
+      case SecurityEventType.WS_INVALID_TOKEN:
+      case SecurityEventType.WS_INVALID_CLAIMS:
+      case SecurityEventType.WS_AUTH_ERROR:
+        return ActivityType.AUTH_LOGIN_FAILED;
+      
+      case SecurityEventType.WS_AUTH_SUCCESS:
+        return ActivityType.AUTH_LOGIN_SUCCESS;
+      
+      case SecurityEventType.WS_PRIVILEGE_VIOLATION:
+      case SecurityEventType.WS_TENANT_ESCAPE_ATTEMPT:
+      case SecurityEventType.WS_RATE_LIMITED:
+      case SecurityEventType.WS_TOKEN_REFRESH_FAILED:
+      case SecurityEventType.WS_HEARTBEAT_TIMEOUT:
+        return ActivityType.AUTH_SESSION_RISK_ELEVATED;
+      
       default:
         return ActivityType.AUTH_LOGIN_FAILED;
     }
