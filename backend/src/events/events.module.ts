@@ -1,19 +1,45 @@
-import { Module } from '@nestjs/common';
+import { Module, Global } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 
-import { OutboxConsumer } from './outbox-consumer';
-import { OutboxController } from './outbox.controller';
-import { OutboxDeadLetterEntity } from './outbox-dead-letter.entity';
-import { OutboxEventEntity } from './outbox-event.entity';
-import { OutboxProducer } from './outbox-producer';
-import { OutboxService } from './outbox.service';
+import { DeadLetterEventEntity } from './entities/dead-letter-event.entity';
+import { DeadLetterService } from './dead-letter.service';
+import { DeadLetterController } from './dead-letter.controller';
+import { EventSchemaRegistryService } from './event-schema-registry.service';
+import { CanonicalEventEmitterService } from './canonical-event-emitter.service';
+import { EventSystemInitializerService } from './event-system-initializer.service';
 
+/**
+ * Events Module
+ * 
+ * Provides canonical event infrastructure including:
+ * - Event envelope standardization
+ * - Schema validation
+ * - Dead-letter storage and replay
+ * - Event emission with validation
+ */
+@Global()
 @Module({
   imports: [
-    TypeOrmModule.forFeature([OutboxEventEntity, OutboxDeadLetterEntity]),
+    TypeOrmModule.forFeature([DeadLetterEventEntity]),
+    EventEmitterModule.forRoot({
+      wildcard: true,
+      delimiter: '.',
+      maxListeners: 50,
+      verboseMemoryLeak: true,
+    }),
   ],
-  controllers: [OutboxController],
-  providers: [OutboxService, OutboxProducer, OutboxConsumer],
-  exports: [OutboxService],
+  controllers: [DeadLetterController],
+  providers: [
+    DeadLetterService,
+    EventSchemaRegistryService,
+    CanonicalEventEmitterService,
+    EventSystemInitializerService,
+  ],
+  exports: [
+    DeadLetterService,
+    EventSchemaRegistryService,
+    CanonicalEventEmitterService,
+  ],
 })
-export class EventsModule {}
+export class EventsModule { }

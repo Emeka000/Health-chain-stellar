@@ -148,7 +148,10 @@ export class RouteDeviationService {
     @InjectRepository(RouteDeviationIncidentEntity)
     private readonly incidentRepo: Repository<RouteDeviationIncidentEntity>,
     private readonly eventEmitter: EventEmitter2,
-  ) {}
+    private readonly featureExtractor: SeverityFeatureExtractorService,
+    private readonly classifier: SeverityClassifierService,
+    private readonly triageAutomation: TriageAutomationService,
+  ) { }
 
   // ── Planned route management ─────────────────────────────────────────
 
@@ -311,6 +314,13 @@ export class RouteDeviationService {
     });
 
     const saved = await this.incidentRepo.save(incident);
+
+    // Apply advanced severity classification and triage
+    await this.classifyAndTriageDeviation(saved, {
+      orderPriority: 'STANDARD', // TODO: Get from order context
+      hasColdChainRequirement: false, // TODO: Get from order context
+    });
+
     this.logger.warn(
       `Route deviation incident created id=${saved.id} order=${dto.orderId} severity=${severity}`,
     );
@@ -391,6 +401,161 @@ export class RouteDeviationService {
   async markScoringApplied(incidentId: string): Promise<void> {
     await this.incidentRepo.update(incidentId, { scoringApplied: true });
   }
+
+  // ── Advanced Severity Classification & Triage ───────────────────────
+
+  /**
+   * Apply advanced severity classification and triage automation
+   */
+  async classifyAndTriageDeviation(
+    incident: RouteDeviationIncidentEntity,
+    context: {
+      orderPriority?: 'CRITICAL' | 'URGENT' | 'STANDARD';
+      hasColdChainRequirement?: boolean;
+      currentTemperature?: number;
+      temperatureThreshold?: number;
+      trafficCondition?: 'CLEAR' | 'MODERATE' | 'HEAVY' | 'UNKNOWN';
+      trafficDelayMinutes?: number;
+      riderReliabilityScore?: number;
+    } = {},
+  ): Promise<void> {
+    try {
+      // Extract features
+      const features = await this.featureExtractor.extractFeatures(
+        incident,
+        context,
+      );
+
+      // Classify severity
+      const classification = this.classifier.classify(features);
+
+      // Update incident with classification results
+      await this.incidentRepo.update(incident.id, {
+        severity: classification.severity,
+        recommendedAction: classification.explanation,
+        metadata: {
+          ...incident.metadata,
+          classification: {
+            riskScore: classification.riskScore,
+            confidence: classification.confidence,
+            contributingFactors: classification.contributingFactors,
+            timestamp: new Date().toISOString(),
+          },
+        },
+      });
+
+      // Execute triage automation
+      const triageResult = await this.triageAutomation.executeTriage(
+        incident,
+        classification,
+        {
+          orderPriority: context.orderPriority,
+          hasColdChainRequirement: context.hasColdChainRequirement,
+          riderDeviationHistory: features.riderDeviationHistory,
+        },
+      );
+
+      this.logger.log(
+        `Classified and triaged deviation ${incident.id}: severity=${classification.severity}, risk=${classification.riskScore}, actions=${triageResult.actions.length}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to classify and triage deviation ${incident.id}`,
+        error,
+      );
+    }
+  }
+
+  /**
+   * Reclassify an existing deviation with updated context
+   */
+  async reclassifyDeviation(
+    incidentId: string,
+    context: {
+      orderPriority?: 'CRITICAL' | 'URGENT' | 'STANDARD';
+      hasColdChainRequirement?: boolean;
+      currentTemperature?: number;
+      temperatureThreshold?: number;
+      trafficCondition?: 'CLEAR' | 'MODERATE' | 'HEAVY' | 'UNKNOWN';
+      trafficDelayMinutes?: number;
+      riderReliabilityScore?: number;
+    },
+  ): Promise<void> {
+    const incident = await this.incidentRepo.findOne({
+      where: { id: incidentId },
+    });
+
+    if (!incident) {
+      throw new NotFoundException(`Deviation incident ${incidentId} not found`);
+    }
+
+    await this.classifyAndTriageDeviation(incident, context);
+  }
+
+  /**
+   * Override severity with operator rationale
+   */
+  async overrideSeverity(
+    incidentId: string,
+    newSeverity: DeviationSeverity,
+    operatorId: string,
+    rationale: string,
+  ): Promise<RouteDeviationIncidentEntity> {
+    await this.triageAutomation.overrideSeverity(
+      incidentId,
+      newSeverity,
+      operatorId,
+      rationale,
+    );
+
+    return this.incidentRepo.findOne({ where: { id: incidentId } })!;
+  }
+
+  /**
+   * Validate classification against historical annotated data
+   */
+  async validateClassification(
+    incidentId: string,
+    actualSeverity: DeviationSeverity,
+  ): Promise<{
+    correct: boolean;
+    error: number;
+    feedback: string;
+  }> {
+    const incident = await this.incidentRepo.findOne({
+      where: { id: incidentId },
+    });
+
+    if (!incident) {
+      throw new NotFoundException(`Deviation incident ${incidentId} not found`);
+    }
+
+    const features = await this.featureExtractor.extractFeatures(incident);
+    const classification = this.classifier.classify(features);
+
+    return this.classifier.validateClassification(
+      classification.severity,
+      actualSeverity,
+      features,
+    );
+  }
+
+  /**
+   * Get triage statistics
+   */
+  async getTriageStatistics(params: {
+    startDate?: Date;
+    endDate?: Date;
+  }): Promise<{
+    totalDeviations: number;
+    bySeverity: Record<DeviationSeverity, number>;
+    overrideCount: number;
+    overrideRate: number;
+  }> {
+    return this.triageAutomation.getTriageStatistics(params);
+  }
+
+  // ── Private Helper Methods ──────────────────────────────────────────
 
   private appendTelemetrySample(
     riderId: string,

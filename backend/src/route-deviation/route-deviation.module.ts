@@ -9,6 +9,9 @@ import { RouteDeviationIncidentEntity } from './entities/route-deviation-inciden
 import { RouteDeviationController } from './route-deviation.controller';
 import { RouteDeviationGateway } from './route-deviation.gateway';
 import { RouteDeviationService } from './route-deviation.service';
+import { SeverityFeatureExtractorService } from './severity-feature-extractor.service';
+import { SeverityClassifierService } from './severity-classifier.service';
+import { TriageAutomationService } from './triage-automation.service';
 
 @Module({
   imports: [
@@ -23,7 +26,10 @@ import { RouteDeviationService } from './route-deviation.service';
     RouteDeviationService,
     RouteDeviationGateway,
     DeviationIncidentListener,
+    SeverityFeatureExtractorService,
+    SeverityClassifierService,
+    TriageAutomationService,
   ],
   exports: [RouteDeviationService],
 })
-export class RouteDeviationModule {}
+export class RouteDeviationModule { }
