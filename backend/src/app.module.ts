@@ -59,6 +59,7 @@ import { ReputationModule } from './reputation/reputation.module';
 import { RidersModule } from './riders/riders.module';
 import { RouteDeviationModule } from './route-deviation/route-deviation.module';
 import { FileMetadataModule } from './file-metadata/file-metadata.module';
+import { MigrationSafetyModule } from './migrations/migration-safety.module';
 import { SlaModule } from './sla/sla.module';
 import { SorobanModule } from './soroban/soroban.module';
 import { SurgeSimulationModule } from './surge-simulation/surge-simulation.module';
@@ -171,6 +172,7 @@ import type Redis from 'ioredis';
     InventoryModule,
     LocationHistoryModule,
     MapsModule,
+    MigrationSafetyModule,
     NotificationsModule,
     OnboardingModule,
     OrdersModule,

@@ -18,10 +18,12 @@ import { BloodStatusService } from './blood-status.service';
 import { BloodUnitsController } from './blood-units.controller';
 import { BloodUnitsService } from './blood-units.service';
 import { QrVerificationService } from './qr-verification.service';
+import { AntiReplayQrService } from './anti-replay-qr.service';
 import { QuarantineService } from './services/quarantine.service';
 import { BloodUnit, BloodUnitEntity } from './entities/blood-unit.entity';
 import { BloodStatusHistory } from './entities/blood-status-history.entity';
 import { QrVerificationLogEntity } from './entities/qr-verification-log.entity';
+import { QrNonceRegistryEntity } from './entities/qr-nonce-registry.entity';
 import { UnitDispositionRecord } from './entities/unit-disposition.entity';
 import { QuarantineCase } from './entities/quarantine-case.entity';
 import { DispositionController } from './controllers/disposition.controller';
@@ -41,6 +43,7 @@ import { BloodUnitBatchService } from './batch/blood-unit-batch.service';
       BloodStatusHistory,
       BlockchainEvent,
       QrVerificationLogEntity,
+      QrNonceRegistryEntity,
       OrderEntity,
       UnitDispositionRecord,
       QuarantineCase,
@@ -59,6 +62,7 @@ import { BloodUnitBatchService } from './batch/blood-unit-batch.service';
     BloodStatusService,
     BloodInventoryQueryService,
     QrVerificationService,
+    AntiReplayQrService,
     DispositionService,
     QuarantineService,
     BloodUnitBatchService,
@@ -69,6 +73,7 @@ import { BloodUnitBatchService } from './batch/blood-unit-batch.service';
     BloodInventoryQueryService,
     DispositionService,
     QuarantineService,
+    AntiReplayQrService,
   ],
 })
 export class BloodUnitsModule {}

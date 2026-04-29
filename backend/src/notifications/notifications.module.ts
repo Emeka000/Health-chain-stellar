@@ -11,6 +11,7 @@ import { NotificationEntity } from './entities/notification.entity';
 import { NotificationPreference } from './entities/notification-preference.entity';
 import { NotificationDeliveryLog } from './entities/notification-delivery-log.entity';
 import { NotificationDlqEntity } from './entities/notification-dlq.entity';
+import { NotificationFanoutAttemptEntity } from './entities/notification-fanout-attempt.entity';
 import { NotificationsGateway } from './gateways/notifications.gateway';
 import { OrderNotificationListener } from './listeners/order-notification.listener';
 import { EscalationNotificationListener } from './listeners/escalation-notification.listener';
@@ -21,6 +22,7 @@ import { NotificationsService } from './notifications.service';
 import { NotificationPreferenceService } from './services/notification-preference.service';
 import { NotificationDlqService } from './services/notification-dlq.service';
 import { DeliveryRepairService } from './services/delivery-repair.service';
+import { NotificationFanoutService } from './services/notification-fanout.service';
 import { NotificationProcessor } from './processors/notification.processor';
 import { EmailProvider } from './providers/email.provider';
 import { InAppProvider } from './providers/in-app.provider';
@@ -36,6 +38,7 @@ import { ProviderFailoverService } from './providers/provider-failover.service';
       NotificationPreference,
       NotificationDeliveryLog,
       NotificationDlqEntity,
+      NotificationFanoutAttemptEntity,
     ]),
     BullModule.registerQueue({
       name: 'notifications',
@@ -74,12 +77,14 @@ import { ProviderFailoverService } from './providers/provider-failover.service';
     NotificationPreferenceService,
     NotificationDlqService,
     DeliveryRepairService,
+    NotificationFanoutService,
   ],
   exports: [
     NotificationsService,
     NotificationPreferenceService,
     NotificationDlqService,
     EmailProvider,
+    NotificationFanoutService,
   ],
 })
 export class NotificationsModule {}
