@@ -8,4 +8,15 @@ build/
 
 .agent/
 .agents/
-issue.md
+# Test snapshots
+**/__snapshots__/
+**/*.snap
+
+# Ignore all markdown files except core docs
+*.md
+!README.md
+!requirement.md
+!requirements.md
+!task.md
+!tasks.md
+!design.md
