@@ -341,9 +341,7 @@ pub fn archive_custody_events(env: &Env, unit_id: u64) -> Result<bool, Error> {
         match event.status {
             CustodyStatus::Confirmed => confirmed += 1,
             CustodyStatus::Cancelled => cancelled += 1,
-            CustodyStatus::Pending => {
-                // Pending events for a terminal unit are stale — remove them too
-            }
+            CustodyStatus::Pending | CustodyStatus::Recovered => {}
         }
         if event.initiated_at > last_event_at {
             last_event_at = event.initiated_at;

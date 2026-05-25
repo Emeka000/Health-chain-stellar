@@ -977,13 +977,13 @@ impl HealthChainContract {
 
     /// Get the lifecycle state of an organization.
     pub fn get_organization_state(env: Env, org_id: Address) -> LifecycleState {
-        let org_key = OrgKey::Org(org_id);
+        let org_key = OrgKey::Org(org_id.clone());
         let organization: Organization = env
             .storage()
             .persistent()
             .get(&org_key)
             .unwrap_or(Organization {
-                id: org_id.clone(),
+                id: org_id,
                 verified: false,
                 verified_timestamp: None,
                 state: LifecycleState::Inactive,
@@ -3837,7 +3837,11 @@ impl HealthChainContract {
         );
 
         env.events().publish(
-            (symbol_short!("org"), symbol_short!("verified")),
+            (
+                symbol_short!("org"),
+                symbol_short!("verified"),
+                symbol_short!("v1"),
+            ),
             (org_id, admin, env.ledger().timestamp()),
         );
 
@@ -3894,7 +3898,11 @@ impl HealthChainContract {
         );
 
         env.events().publish(
-            (symbol_short!("org"), symbol_short!("unverif")),
+            (
+                symbol_short!("org"),
+                symbol_short!("unverif"),
+                symbol_short!("v1"),
+            ),
             (org_id, reason),
         );
 
@@ -6068,6 +6076,11 @@ mod test {
             &Some(symbol_short!("d2")),
         );
 
+        // Reserve units for the hospital so fulfill_request can proceed past the
+        // recipient_hospital check and reach the arithmetic overflow guard.
+        client.allocate_blood(&bank, &unit_id_1, &hospital);
+        client.allocate_blood(&bank, &unit_id_2, &hospital);
+
         let request_id = client.create_request(
             &hospital,
             &BloodType::BPositive,
@@ -7633,7 +7646,7 @@ mod test {
         assert_eq!(client.is_hospital(&hospital), false);
 
         env.mock_all_auths();
-        let result = client.create_request(
+        let result = client.try_create_request(
             &hospital,
             &BloodType::APositive,
             &450,
@@ -7641,7 +7654,7 @@ mod test {
             &(env.ledger().timestamp() + 86400),
             &String::from_str(&env, "HOSPITAL-123"),
         );
-        assert_eq!(result, Err(Error::Unauthorized));
+        assert!(matches!(result, Err(Ok(Error::Unauthorized))));
 
         env.mock_all_auths();
         client.activate_hospital(&admin, &hospital);
@@ -7664,15 +7677,15 @@ mod test {
         assert_eq!(client.is_blood_bank(&bank), false);
 
         env.mock_all_auths();
-        let result = client.register_blood(
+        let result = client.try_register_blood(
             &bank,
             &BloodType::OPositive,
             &BloodComponent::WholeBlood,
             &450,
             &(env.ledger().timestamp() + 86400),
-            &Some(String::from_str(&env, "donor1")),
+            &Some(Symbol::new(&env, "donor1")),
         );
-        assert_eq!(result, Err(Error::Unauthorized));
+        assert!(matches!(result, Err(Ok(Error::Unauthorized))));
 
         env.mock_all_auths();
         client.activate_blood_bank(&admin, &bank);
