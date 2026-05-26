@@ -1,4 +1,5 @@
 import {
+  BaseEntity,
   Column,
   CreateDateColumn,
   Entity,
@@ -118,6 +119,12 @@ export class BloodUnit extends BaseEntity {
 
   @Column({ name: 'blockchain_tx_hash', type: 'varchar', nullable: true })
   blockchainTxHash: string | null;
+
+  @Column({ name: 'reserved_for', type: 'varchar', nullable: true })
+  reservedFor: string | null;
+
+  @Column({ name: 'reserved_until', type: 'timestamp', nullable: true })
+  reservedUntil: Date | null;
 
   @OneToMany(() => BloodStatusHistory, (history) => history.bloodUnit, { cascade: true })
   statusHistory: BloodStatusHistory[];

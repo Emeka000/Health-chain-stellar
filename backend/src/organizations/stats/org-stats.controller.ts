@@ -7,7 +7,7 @@ import {
   Req,
   Res,
 } from '@nestjs/common';
-import { Response } from 'express';
+import type { Response } from 'express';
 import { OrgStatsService } from './org-stats.service';
 import { exportToExcel, exportToPdf } from './export.helper';
 

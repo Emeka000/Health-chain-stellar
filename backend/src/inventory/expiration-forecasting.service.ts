@@ -2,7 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { LessThan, MoreThan, Repository } from 'typeorm';
 
-import { BloodRequestEntity, Urgency } from '../blood-requests/entities/blood-request.entity';
+import { BloodRequestEntity } from '../blood-requests/entities/blood-request.entity';
+import { RequestUrgency as Urgency } from '../blood-requests/enums/request-urgency.enum';
 import { BloodRequestStatus } from '../blood-requests/enums/blood-request-status.enum';
 import { BloodUnit } from '../blood-units/entities/blood-unit.entity';
 import { BloodStatus } from '../blood-units/enums/blood-status.enum';
@@ -111,9 +112,8 @@ export class ExpirationForecastingService {
       this.stockRepo.find(),
       this.orgRepo.find({ where: { type: OrganizationType.BLOOD_BANK } }),
       this.requestRepo.find({
-        where: { status: BloodRequestStatus.PENDING },
-        select: ['hospitalId', 'bloodType', 'urgency'],
-      }),
+        where: { status: BloodRequestStatus.PENDING as any },
+      }) as Promise<any[]>,
     ]);
 
     const orgMap = new Map(orgs.map((o) => [o.id, o]));

@@ -10,7 +10,7 @@ import {
   Req,
 } from '@nestjs/common';
 
-import { Request } from 'express';
+import type { Request } from 'express';
 
 import { RequirePermissions } from '../../auth/decorators/require-permissions.decorator';
 import { Permission } from '../../auth/enums/permission.enum';

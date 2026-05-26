@@ -71,7 +71,7 @@ export class VerificationSyncService {
     } catch (error) {
       org.syncStatus = VerificationSyncStatus.FAILED;
       org.syncErrorMessage = error instanceof Error ? error.message : String(error);
-      org.syncRetryCount += 1;
+      org.syncRetryCount = (org.syncRetryCount ?? 0) + 1;
       await this.orgRepo.save(org);
 
       this.logger.error(
@@ -127,7 +127,7 @@ export class VerificationSyncService {
     } catch (error) {
       org.syncStatus = VerificationSyncStatus.FAILED;
       org.syncErrorMessage = error instanceof Error ? error.message : String(error);
-      org.syncRetryCount += 1;
+      org.syncRetryCount = (org.syncRetryCount ?? 0) + 1;
       await this.orgRepo.save(org);
 
       this.logger.error(
@@ -153,7 +153,7 @@ export class VerificationSyncService {
       );
     }
 
-    if (org.syncRetryCount >= this.MAX_RETRY_ATTEMPTS) {
+    if ((org.syncRetryCount ?? 0) >= this.MAX_RETRY_ATTEMPTS) {
       throw new BadRequestException(
         `Max retry attempts (${this.MAX_RETRY_ATTEMPTS}) exceeded`,
       );

@@ -7,7 +7,7 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 
 import {
   OrderCancelledEvent,
@@ -37,6 +37,8 @@ const STATUS_TO_EVENT_TYPE: Record<OrderStatus, OrderEventType> = {
   [OrderStatus.IN_TRANSIT]: OrderEventType.ORDER_IN_TRANSIT,
   [OrderStatus.DELIVERED]: OrderEventType.ORDER_DELIVERED,
   [OrderStatus.CANCELLED]: OrderEventType.ORDER_CANCELLED,
+  [OrderStatus.DISPUTED]: OrderEventType.ORDER_DISPUTED,
+  [OrderStatus.RESOLVED]: OrderEventType.ORDER_RESOLVED,
 };
 
 @Injectable()
@@ -49,7 +51,6 @@ export class RequestStatusService {
     private readonly ordersGateway: OrdersGateway,
     private readonly eventEmitter: EventEmitter2,
     private readonly inventoryService: InventoryService,
-    private readonly permissionsService: PermissionsService,
     @Optional()
     @InjectRepository(BlockchainEvent)
     private readonly blockchainEventRepo?: Repository<BlockchainEvent>,
@@ -68,10 +69,7 @@ export class RequestStatusService {
     const previousStatus = order.status;
 
     if (actorRole) {
-      this.enforceActionRole(dto.action, {
-        id: actorId ?? '',
-        role: actorRole,
-      });
+      this.enforceActionRole(dto.action, actorRole);
     }
     this.stateMachine.transition(previousStatus, nextStatus);
 

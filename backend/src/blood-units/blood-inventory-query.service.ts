@@ -176,7 +176,7 @@ export class BloodInventoryQueryService {
     const data = entities.map((entity, index) => ({
       ...entity,
       distanceMetres: Math.round(raw[index].distanceMetres),
-    }));
+    })) as (BloodUnit & { distanceMetres: number })[];
 
     const total = await query.getCount();
 

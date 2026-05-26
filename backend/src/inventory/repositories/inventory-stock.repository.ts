@@ -26,7 +26,7 @@ export class InventoryStockRepository {
     skip: number,
     take: number,
   ): Promise<[InventoryStockEntity[], number]> {
-    return this.repo.findAndCount({ where, skip, take });
+    return this.repo.findAndCount({ where: where as any, skip, take });
   }
 
   save(entity: InventoryStockEntity): Promise<InventoryStockEntity> {

@@ -35,8 +35,8 @@ export class SlaBreachListener {
         variables: {
           requestId: payload.requestId,
           urgency: payload.urgency,
-          elapsedMinutes: Math.round(payload.elapsedMs / 60_000),
-          slaMinutes: Math.round(payload.slaWindowMs / 60_000),
+          elapsedMinutes: String(Math.round(payload.elapsedMs / 60_000)),
+          slaMinutes: String(Math.round(payload.slaWindowMs / 60_000)),
           breachedAt: new Date(payload.breachedAt).toISOString(),
         },
       });

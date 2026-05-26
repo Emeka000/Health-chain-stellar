@@ -94,9 +94,6 @@ export class BloodUnitBatchService {
         blockchainTxHash: null,
         reservedFor: null,
         reservedUntil: null,
-        latitude: null,
-        longitude: null,
-        location: null,
       });
       results.push({ row: rowNumber, status: 'created' });
     }

@@ -430,6 +430,7 @@ export class AuthService {
     refreshToken: string;
     refreshExpiresInSeconds: number;
   } {
+    const { secret, kid } = this.jwtKeyService.getActiveKey();
     const accessToken = this.jwtService.sign(
       payload as unknown as Record<string, unknown>,
       { secret, keyid: kid },
@@ -453,7 +454,7 @@ export class AuthService {
         secret:
           this.configService.get<string>('JWT_REFRESH_SECRET') ??
           'refresh-secret',
-        expiresIn: refreshExpiresIn,
+        expiresIn: refreshExpiresIn as any,
       },
     );
   }

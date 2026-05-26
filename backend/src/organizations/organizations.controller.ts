@@ -28,6 +28,7 @@ import { RegisterOrganizationDto } from './dto/register-organization.dto';
 import { RejectOrganizationDto } from './dto/reject-organization.dto';
 import { ReportOrganizationReviewDto } from './dto/report-organization-review.dto';
 import { SearchOrganizationsDto } from './dto/search-organizations.dto';
+import { RevokeVerificationDto } from './dto/revoke-verification.dto';
 import { OrganizationsService } from './organizations.service';
 import { OrganizationReviewsService } from './services/organization-reviews.service';
 import { VerificationSyncService } from './services/verification-sync.service';

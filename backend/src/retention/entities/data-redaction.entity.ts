@@ -8,6 +8,8 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+import { DataCategory } from './retention-policy.entity';
+
 export enum RedactionStatus {
   PENDING = 'pending',
   IN_PROGRESS = 'in_progress',
@@ -40,9 +42,9 @@ export class DataRedactionEntity extends BaseEntity {
   @Column({
     name: 'data_category',
     type: 'enum',
-    enum: import('./retention-policy.entity').DataCategory,
+    enum: DataCategory,
   })
-  dataCategory: import('./retention-policy.entity').DataCategory;
+  dataCategory: DataCategory;
 
   @Column({ name: 'field_name', type: 'varchar', length: 255 })
   fieldName: string;

@@ -26,13 +26,13 @@ export class RestockingCampaignService {
 
   async triggerCampaignIfLow(bloodBankId: string, bloodType: string): Promise<void> {
     const stock = await this.stockRepo.findOne({
-      where: { bloodBankId, bloodType },
+      where: { bloodBankId, bloodType: bloodType as any },
     });
     if (!stock) return;
 
     // Check for existing active campaign to avoid duplicates
     const existing = await this.campaignRepo.findOne({
-      where: { bloodBankId, bloodType, status: CampaignStatus.ACTIVE },
+      where: { bloodBankId, bloodType: bloodType as any, status: CampaignStatus.ACTIVE },
     });
     if (existing) return;
 
@@ -65,7 +65,7 @@ export class RestockingCampaignService {
 
   async createCampaign(dto: CreateCampaignDto): Promise<RestockingCampaignEntity> {
     const stock = await this.stockRepo.findOne({
-      where: { bloodBankId: dto.bloodBankId, bloodType: dto.bloodType },
+      where: { bloodBankId: dto.bloodBankId, bloodType: dto.bloodType as any },
     });
 
     const campaign = await this.campaignRepo.save(

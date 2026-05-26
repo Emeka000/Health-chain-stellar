@@ -60,7 +60,7 @@ export class OrdersService {
     const where: Partial<OrderEntity> = {};
     if (status) where.status = status as OrderStatus;
     if (hospitalId) where.hospitalId = hospitalId;
-    const orders = await this.orderRepo.find({ where });
+    const orders = await this.orderRepo.find({ where: where as any });
     return { message: 'Orders retrieved successfully', data: orders };
   }
 

@@ -83,7 +83,7 @@ export class SagaCoordinatorService {
     const result = await this.sagaRepo
       .createQueryBuilder()
       .update(BloodRequestSagaEntity)
-      .set({ state: toState, context: { ...saga.context, ...(contextPatch ?? {}) }, lastError: null })
+      .set({ state: toState, context: { ...saga.context, ...(contextPatch ?? {}) } as any, lastError: null })
       .where('request_id = :requestId', { requestId })
       .andWhere('version = :version', { version: saga.version })
       .execute();

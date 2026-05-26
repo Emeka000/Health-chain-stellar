@@ -8,6 +8,9 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 
+import { THROTTLE_TTL_MS } from './config/throttle-limits.config';
+import { throttleGetTracker } from './throttler/throttle-tracker.util';
+import { RoleAwareThrottlerGuard } from './throttler/role-aware-throttler.guard';
 import { AnomalyModule } from './anomaly/anomaly.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -93,7 +96,7 @@ import type Redis from 'ioredis';
         storage: new ThrottlerStorageRedisService({
           host: config.get<string>('REDIS_HOST', 'localhost'),
           port: config.get<number>('REDIS_PORT', 6379),
-          password: config.get<string>('REDIS_PASSWORD', undefined),
+          password: config.get<string>('REDIS_PASSWORD') ?? undefined,
         } as unknown as Redis),
         getTracker: throttleGetTracker,
       }),

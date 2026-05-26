@@ -6,6 +6,7 @@ import { AppModule } from '../app.module';
 
 import { UserRole } from '../auth/enums/user-role.enum';
 import { hashPassword } from '../auth/utils/password.util';
+import { UserEntity } from '../users/entities/user.entity';
 import { BloodUnitEntity } from '../blood-units/entities/blood-unit.entity';
 import { BloodType } from '../blood-units/enums/blood-type.enum';
 import { OrganizationEntity } from '../organizations/entities/organization.entity';

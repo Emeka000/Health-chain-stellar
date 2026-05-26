@@ -1,6 +1,3 @@
 export { PaginationQueryDto } from './pagination.dto';
-export {
-  PaginationMetadata,
-  PaginatedResponse,
-  PaginationUtil,
-} from './pagination.util';
+export type { PaginationMetadata, PaginatedResponse } from './pagination.util';
+export { PaginationUtil } from './pagination.util';

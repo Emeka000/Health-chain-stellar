@@ -339,7 +339,7 @@ export class DispatchService {
     return this.riderAssignmentService.getDispatchStats();
   }
 
-  async getAssignmentLogs(orderId?: string) {
+  async getAssignmentLogs(orderId?: string): Promise<any[]> {
     return this.riderAssignmentService.getAssignmentLogs(orderId);
   }
 

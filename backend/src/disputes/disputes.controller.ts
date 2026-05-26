@@ -1,5 +1,7 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
-import { Response } from 'express';
+import { Body, Controller, Get, Param, Patch, Post, Query, Res, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Auditable } from '../common/audit/auditable.decorator';
+import { AuditLogInterceptor } from '../common/audit/audit-log.interceptor';
+import type { Response } from 'express';
 import { User } from '../auth/decorators/user.decorator';
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';

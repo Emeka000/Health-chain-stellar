@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
+import { DataSource, IsNull } from 'typeorm';
+import { InjectDataSource } from '@nestjs/typeorm';
 
 import { SoftDeleteRepository } from '../common/repositories/soft-delete.repository';
 
@@ -7,18 +8,13 @@ import { OrganizationEntity } from './entities/organization.entity';
 
 @Injectable()
 export class OrganizationRepository extends SoftDeleteRepository<OrganizationEntity> {
-  constructor(
-    @InjectRepository(OrganizationEntity)
-    repository: any,
-  ) {
-    super();
-    // Copy all properties and methods from the injected repository
-    Object.assign(this, repository);
+  constructor(@InjectDataSource() dataSource: DataSource) {
+    super(OrganizationEntity, dataSource.createEntityManager());
   }
 
   findByName(name: string): Promise<OrganizationEntity | null> {
     return this.findOne({
-      where: { name, deletedAt: null },
+      where: { name, deletedAt: IsNull() },
     });
   }
 
@@ -26,7 +22,7 @@ export class OrganizationRepository extends SoftDeleteRepository<OrganizationEnt
     registrationNumber: string,
   ): Promise<OrganizationEntity | null> {
     return this.findOne({
-      where: { registrationNumber, deletedAt: null },
+      where: { registrationNumber, deletedAt: IsNull() },
     });
   }
 

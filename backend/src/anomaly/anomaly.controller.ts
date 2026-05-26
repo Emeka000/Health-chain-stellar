@@ -16,7 +16,8 @@ import { Permission } from '../auth/enums/permission.enum';
 
 import { AnomalyService } from './anomaly.service';
 import { AnomalyScoringService } from './anomaly-scoring.service';
-import { AnomalyDriftService, FeatureBaseline } from './anomaly-drift.service';
+import { AnomalyDriftService } from './anomaly-drift.service';
+import type { FeatureBaseline } from './anomaly-drift.service';
 import { QueryAnomaliesDto } from './dto/query-anomalies.dto';
 import { ReviewAnomalyDto } from './dto/review-anomaly.dto';
 

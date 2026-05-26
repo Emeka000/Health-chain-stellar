@@ -144,7 +144,7 @@ export class InventoryService {
     for (let attempt = 0; attempt < 2; attempt++) {
       const stock = await this.stockRepo.findByBankAndType(bloodBankId, bloodType);
       if (!stock) {
-        const created = this.stockRepo.create({ bloodBankId, bloodType, availableUnitsMl: quantity });
+        const created = this.stockRepo.create({ bloodBankId, bloodType: bloodType as any, availableUnitsMl: quantity });
         await this.stockRepo.save(created);
         return;
       }
@@ -222,6 +222,36 @@ export class InventoryService {
         this.logger.error(`Failed to release expired reservation ${res.id}`, err);
       }
     }
+  }
+
+  async getCriticalStockItems() {
+    return this.getLowStockItems(5);
+  }
+
+  async getStockAggregation() {
+    return this.stockRepo.find();
+  }
+
+  async getInventoryStats(hospitalId?: string) {
+    return this.findAll(hospitalId, { page: 1, limit: 1000 } as any);
+  }
+
+  async getReorderSummary() {
+    return this.getLowStockItems(20);
+  }
+
+  async reserveStock(id: string, quantity: number): Promise<{ message: string }> {
+    const stock = await this.stockRepo.findById(id);
+    if (!stock) throw new NotFoundException(`Inventory item '${id}' not found`);
+    await this.reserveStockOrThrow(stock.bloodBankId, stock.bloodType, quantity);
+    return { message: 'Stock reserved successfully' };
+  }
+
+  async releaseStock(id: string, quantity: number): Promise<{ message: string }> {
+    const stock = await this.stockRepo.findById(id);
+    if (!stock) throw new NotFoundException(`Inventory item '${id}' not found`);
+    await this.restoreStockOrThrow(stock.bloodBankId, stock.bloodType, quantity);
+    return { message: 'Stock released successfully' };
   }
 
   // ── Audit helpers ────────────────────────────────────────────────────

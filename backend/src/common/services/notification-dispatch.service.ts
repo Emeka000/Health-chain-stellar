@@ -29,7 +29,7 @@ export class NotificationDispatchService {
         recipientId: payload.recipientId,
         channels: payload.channels ?? [NotificationChannel.IN_APP],
         templateKey: payload.templateKey,
-        variables: payload.variables,
+        variables: (payload.variables ?? {}) as Record<string, string>,
       });
     } catch (err: unknown) {
       this.logger.warn(

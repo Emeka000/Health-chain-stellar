@@ -119,7 +119,7 @@ export class SorobanService {
       throw new Error(`Queued Soroban job not found: ${jobId}`);
     }
 
-    const completion = bullJob.finished() as Promise<{
+    const completion = (bullJob as any).finished() as Promise<{
       success: boolean;
       transactionHash: string;
     }>;

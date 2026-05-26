@@ -46,7 +46,7 @@ export class BloodRequestChainService {
       });
       return result.transactionHash;
     } catch (cause) {
-      await this.compensate(requestNumber, hospitalId, items, userEmail, cause);
+      return this.compensate(requestNumber, hospitalId, items, userEmail, cause);
     }
   }
 

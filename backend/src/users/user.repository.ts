@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 
-import { DataSource } from 'typeorm';
+import { DataSource, IsNull } from 'typeorm';
 
 import { UserRole } from '../auth/enums/user-role.enum';
 import { SoftDeleteRepository } from '../common/repositories/soft-delete.repository';
@@ -16,7 +16,7 @@ export class UserRepository extends SoftDeleteRepository<UserEntity> {
 
   findByEmail(email: string): Promise<UserEntity | null> {
     return this.findOne({
-      where: { email: email.toLowerCase(), deletedAt: null },
+      where: { email: email.toLowerCase(), deletedAt: IsNull() },
     });
   }
 
@@ -28,12 +28,12 @@ export class UserRepository extends SoftDeleteRepository<UserEntity> {
   }
 
   findByOrganization(organizationId: string): Promise<UserEntity[]> {
-    return this.find({ where: { organizationId, deletedAt: null } });
+    return this.find({ where: { organizationId, deletedAt: IsNull() } });
   }
 
   findWithTwoFactorAuth(userId: string): Promise<UserEntity | null> {
     return this.findOne({
-      where: { id: userId, deletedAt: null },
+      where: { id: userId, deletedAt: IsNull() },
       relations: ['twoFactorAuth'],
     });
   }

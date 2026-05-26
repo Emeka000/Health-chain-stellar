@@ -4,9 +4,9 @@ import {
   CreateDateColumn,
   Entity,
   Index,
+  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
-  DeleteDateColumn,
 } from 'typeorm';
 
 import { UserEntity } from '../../users/entities/user.entity';
@@ -27,9 +27,6 @@ export class OrganizationEntity extends BaseEntity {
   @Column({ type: 'varchar', length: 255 })
   name!: string;
 
-  @Column({ name: 'legal_name', type: 'varchar', length: 200, nullable: true })
-  legalName?: string | null;
-
   @Column({ name: 'legal_name', type: 'varchar', length: 255, nullable: true })
   legalName?: string | null;
 
@@ -38,6 +35,9 @@ export class OrganizationEntity extends BaseEntity {
 
   @Column({ type: 'varchar', length: 40, nullable: true })
   phone?: string | null;
+
+  @Column({ name: 'phone_number', type: 'varchar', length: 40, nullable: true })
+  phoneNumber?: string | null;
 
   @Column({ type: 'text', nullable: true })
   address?: string | null;
@@ -58,7 +58,6 @@ export class OrganizationEntity extends BaseEntity {
   })
   verificationStatus?: VerificationStatus | null;
 
-  /** Legacy status field used by OrganizationsService */
   @Column({
     type: 'varchar',
     length: 60,
@@ -66,13 +65,6 @@ export class OrganizationEntity extends BaseEntity {
     nullable: true,
   })
   status?: OrganizationVerificationStatus | null;
-
-  @Column({
-    type: 'varchar',
-    length: 40,
-    default: OrganizationVerificationStatus.PENDING_VERIFICATION,
-  })
-  status!: OrganizationVerificationStatus;
 
   @Column({
     name: 'registration_number',
@@ -105,12 +97,6 @@ export class OrganizationEntity extends BaseEntity {
   @Column({ name: 'verified_by_user_id', type: 'uuid', nullable: true })
   verifiedByUserId?: string | null;
 
-  @Column({ type: 'varchar', length: 32, nullable: true })
-  phone?: string | null;
-
-  @Column({ name: 'phone_number', type: 'varchar', length: 40, nullable: true })
-  phoneNumber?: string | null;
-
   @Column({ type: 'varchar', length: 255, nullable: true })
   website?: string | null;
 
@@ -118,14 +104,6 @@ export class OrganizationEntity extends BaseEntity {
   description?: string | null;
 
   @Column({ name: 'address_line_1', type: 'varchar', length: 255, nullable: true })
-  addressLine1?: string | null;
-
-  @Column({
-    name: 'address_line_1',
-    type: 'varchar',
-    length: 255,
-    nullable: true,
-  })
   addressLine1?: string | null;
 
   @Column({
@@ -174,6 +152,31 @@ export class OrganizationEntity extends BaseEntity {
 
   @Column({ name: 'blockchain_address', type: 'varchar', length: 128, nullable: true })
   blockchainAddress?: string | null;
+
+  // Sync fields used by verification-sync service
+  @Column({ name: 'sync_status', type: 'varchar', length: 32, nullable: true })
+  syncStatus?: string | null;
+
+  @Column({ name: 'sync_retry_count', type: 'int', default: 0, nullable: true })
+  syncRetryCount?: number;
+
+  @Column({ name: 'sync_error_message', type: 'text', nullable: true })
+  syncErrorMessage?: string | null;
+
+  @Column({ name: 'synced_at', type: 'timestamp', nullable: true })
+  syncedAt?: Date | null;
+
+  @Column({ name: 'soroban_verified_at', type: 'timestamp', nullable: true })
+  sorobanVerifiedAt?: Date | null;
+
+  @Column({ name: 'verification_source', type: 'varchar', length: 64, nullable: true })
+  verificationSource?: string | null;
+
+  @Column({ name: 'verification_tx_hash', type: 'varchar', length: 128, nullable: true })
+  verificationTxHash?: string | null;
+
+  @Column({ name: 'deleted_at', type: 'timestamp', nullable: true })
+  deletedAt?: Date | null;
 
   @OneToMany(() => UserEntity, (user) => user.organization)
   users: UserEntity[];

@@ -184,7 +184,7 @@ export class UssdService {
   ): Promise<string> {
     try {
       // Create blood request
-      const request = await this.bloodRequestsService.create({
+      const result = await this.bloodRequestsService.create({
         hospitalId: session.hospitalId,
         bloodType: session.bloodType,
         quantity: session.quantity,
@@ -192,13 +192,13 @@ export class UssdService {
         deliveryLocation: session.location,
         source: 'ussd',
         phoneNumber: session.phoneNumber,
-      } as any);
+      } as any, { id: 'ussd-system', role: 'system', email: 'ussd@system' } as any);
 
-      session.requestId = request.id;
+      session.requestId = result.data.id;
       session.state = UssdSessionState.COMPLETED;
       await this.sessionRepo.save(session);
 
-      return `END Request submitted successfully!\nRef: ${request.id.substring(0, 8)}\nYou will receive updates via SMS.`;
+      return `END Request submitted successfully!\nRef: ${result.data.id.substring(0, 8)}\nYou will receive updates via SMS.`;
     } catch (error) {
       this.logger.error('Failed to create blood request from USSD', error);
       return 'END Error submitting request. Please try again or contact support.';

@@ -85,5 +85,11 @@ export class OrderEntity {
     default: EscalationTier.NONE,
   })
   escalationTier: EscalationTier;
+
+  @Column({ name: 'on_chain_payment_id', type: 'varchar', length: 255, nullable: true })
+  onChainPaymentId: string | null;
+
+  @Column({ name: 'payment_status', type: 'varchar', length: 32, nullable: true })
+  paymentStatus: string | null;
 }
 

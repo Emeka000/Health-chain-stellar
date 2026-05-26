@@ -37,8 +37,8 @@ export class RiderSearchService {
       minRating,
       minCompletionRate,
       availableOnly,
-      limit,
-      offset,
+      limit = 20,
+      offset = 0,
     } = searchDto;
 
     // Build query

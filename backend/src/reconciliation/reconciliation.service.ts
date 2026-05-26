@@ -6,7 +6,7 @@ import { DonationEntity } from '../../donations/entities/donation.entity';
 import { DonationStatus } from '../../donations/enums/donation.enum';
 import { DisputeEntity } from '../../disputes/entities/dispute.entity';
 import { DisputeStatus } from '../../disputes/enums/dispute.enum';
-import { SorobanService } from '../../soroban/soroban.service';
+import { SorobanService } from '../soroban/soroban.service';
 
 import { ReconciliationRunEntity } from '../entities/reconciliation-run.entity';
 import { ReconciliationMismatchEntity } from '../entities/reconciliation-mismatch.entity';

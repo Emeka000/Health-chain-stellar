@@ -24,7 +24,7 @@ export class ApprovalDecisionEntity {
   @Column({
     type: 'enum',
     enum: ApprovalStatus,
-    description: 'DECISION: APPROVED or REJECTED'
+    comment: 'DECISION: APPROVED or REJECTED',
   })
   decision: ApprovalStatus;
 

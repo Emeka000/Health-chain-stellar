@@ -79,4 +79,30 @@ export enum Permission {
   DISPUTE_RESOLVE = 'dispute:resolve',
   VERIFICATION_ADMIN = 'verification:admin',
   SETTLEMENT_RELEASE = 'settlement:release',
+
+  // ── Blood Requests ────────────────────────────────────────────────────
+  VIEW_BLOOD_REQUESTS = 'view:blood-requests',
+  CREATE_BLOOD_REQUEST = 'create:blood-request',
+
+  // ── Inventory extended ────────────────────────────────────────────────
+  MANAGE_INVENTORY = 'manage:inventory',
+
+  // ── Hospitals extended ───────────────────────────────────────────────
+  MANAGE_HOSPITAL_OVERRIDES = 'manage:hospital-overrides',
+  VIEW_HOSPITAL_OVERRIDES = 'view:hospital-overrides',
+
+  // ── Incident Reviews ─────────────────────────────────────────────────
+  CREATE_INCIDENT_REVIEW = 'create:incident-review',
+  VIEW_INCIDENT_REVIEWS = 'view:incident-reviews',
+  MANAGE_INCIDENT_REVIEWS = 'manage:incident-reviews',
+
+  // ── Regions ──────────────────────────────────────────────────────────
+  MANAGE_REGIONS = 'manage:regions',
+  VIEW_REGIONS = 'view:regions',
+
+  // ── Riders extended ──────────────────────────────────────────────────
+  ASSIGN_RIDER = 'assign:rider',
+
+  // ── Health / Admin ────────────────────────────────────────────────────
+  ADMIN_HEALTH_READ = 'admin:health:read',
 }

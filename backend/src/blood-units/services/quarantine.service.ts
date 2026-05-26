@@ -19,6 +19,7 @@ import { QuarantineCase } from '../entities/quarantine-case.entity';
 import { BloodStatus } from '../enums/blood-status.enum';
 import {
   QuarantineDisposition,
+  QuarantineReasonCode,
   QuarantineReviewState,
   QuarantineTriggerSource,
 } from '../enums/quarantine.enums';
@@ -101,7 +102,7 @@ export class QuarantineService {
       {
         bloodUnitId,
         triggerSource: QuarantineTriggerSource.TEMPERATURE_BREACH,
-        reasonCode: temperature < minAllowed ? 'STORAGE_ANOMALY' : 'STORAGE_ANOMALY',
+        reasonCode: QuarantineReasonCode.STORAGE_ANOMALY,
         reason: `Temperature ${temperature}C breached threshold [${minAllowed}, ${maxAllowed}]`,
         metadata: {
           observedTemperature: temperature,

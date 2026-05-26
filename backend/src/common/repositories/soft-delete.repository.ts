@@ -1,9 +1,6 @@
-import { Repository, SelectQueryBuilder, SaveOptions } from 'typeorm';
+import { Repository, SelectQueryBuilder, UpdateResult } from 'typeorm';
 
 export class SoftDeleteRepository<Entity extends { deletedAt?: Date | null }> extends Repository<Entity> {
-  /**
-   * Find records excluding soft-deleted ones
-   */
   async findActiveMany(options?: any): Promise<Entity[]> {
     return this.find({
       ...options,
@@ -14,9 +11,6 @@ export class SoftDeleteRepository<Entity extends { deletedAt?: Date | null }> ex
     });
   }
 
-  /**
-   * Find one record excluding soft-deleted ones
-   */
   async findActiveOne(options?: any): Promise<Entity | null> {
     return this.findOne({
       ...options,
@@ -27,26 +21,17 @@ export class SoftDeleteRepository<Entity extends { deletedAt?: Date | null }> ex
     });
   }
 
-  /**
-   * Create query builder with soft-delete filter applied
-   */
   createActiveQueryBuilder(alias: string): SelectQueryBuilder<Entity> {
     return this.createQueryBuilder(alias).where(`${alias}.deletedAt IS NULL`);
   }
 
-  /**
-   * Soft delete a record
-   */
-  async softDelete(id: string | string[]): Promise<void> {
+  override async softDelete(id: any): Promise<UpdateResult> {
     const ids = Array.isArray(id) ? id : [id];
-    await this.update({ id: ids } as any, { deletedAt: new Date() } as any);
+    return this.update({ id: ids } as any, { deletedAt: new Date() } as any);
   }
 
-  /**
-   * Restore a soft-deleted record
-   */
-  async restore(id: string | string[]): Promise<void> {
+  override async restore(id: any): Promise<UpdateResult> {
     const ids = Array.isArray(id) ? id : [id];
-    await this.update({ id: ids } as any, { deletedAt: null } as any);
+    return this.update({ id: ids } as any, { deletedAt: null } as any);
   }
 }

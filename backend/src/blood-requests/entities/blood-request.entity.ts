@@ -1,20 +1,23 @@
 import {
   Column,
+  CreateDateColumn,
   Entity,
   Index,
   JoinColumn,
   ManyToOne,
   OneToMany,
-  Index,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
 } from 'typeorm';
 
 import { BloodComponent } from '../../blood-units/enums/blood-component.enum';
 import { BloodType } from '../../blood-units/enums/blood-type.enum';
-import { BloodRequestStatus } from '../enums/blood-request-status.enum';
+import { BloodRequestStatus, RequestStatus } from '../enums/blood-request-status.enum';
 import { EscalationTier } from '../../escalation/enums/escalation-tier.enum';
 
 import { BloodRequestItemEntity } from './blood-request-item.entity';
 import { BloodRequestReservationEntity } from './blood-request-reservation.entity';
+import { RequestStatusHistoryEntity } from './request-status-history.entity';
 
 export enum RequestUrgency {
   CRITICAL = 'CRITICAL', // < 2 hours
@@ -202,6 +205,11 @@ export class BloodRequestEntity {
     cascade: true,
   })
   reservations: BloodRequestReservationEntity[];
+
+  @OneToMany(() => RequestStatusHistoryEntity, (h) => h.request, {
+    cascade: true,
+  })
+  statusHistory: RequestStatusHistoryEntity[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

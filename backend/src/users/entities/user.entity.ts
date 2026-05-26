@@ -81,6 +81,9 @@ export class UserEntity extends BaseEntity {
   @Column({ name: 'anonymised', type: 'boolean', default: false })
   anonymised: boolean;
 
+  @Column({ name: 'avatar_url', type: 'varchar', length: 512, nullable: true })
+  avatarUrl?: string | null;
+
   @ManyToOne(() => OrganizationEntity, {
     nullable: true,
     onDelete: 'SET NULL',

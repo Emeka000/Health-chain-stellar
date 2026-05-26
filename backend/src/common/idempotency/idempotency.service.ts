@@ -2,9 +2,9 @@ import { Injectable, Inject, Logger } from '@nestjs/common';
 
 import Redis from 'ioredis';
 
-import { ErrorCode } from '../common/errors/error-codes.enum';
+import { ErrorCode } from '../errors/error-codes.enum';
 
-import { REDIS_CLIENT } from './redis.constants';
+import { REDIS_CLIENT } from '../../redis/redis.constants';
 
 /**
  * Idempotency service for handling duplicate requests.

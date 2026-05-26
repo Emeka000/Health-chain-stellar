@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { REQUEST } from '@nestjs/core';
 
 import { Repository } from 'typeorm';
-import { Request } from 'express';
+import type { Request } from 'express';
 
 import { AuditLogEntity } from './audit-log.entity';
 import {
@@ -76,12 +76,12 @@ export class AuditLogService {
         severity: eventDef?.severity ?? null,
         resourceType: params.resourceType,
         resourceId: params.resourceId,
-        previousValue: params.previousValue ?? null,
-        nextValue: params.nextValue ?? null,
+        previousValue: (params.previousValue ?? null) as any,
+        nextValue: (params.nextValue ?? null) as any,
         ipAddress,
         userAgent,
         correlationId,
-        metadata: params.metadata ?? null,
+        metadata: (params.metadata ?? null) as any,
       });
 
       // Log critical events for immediate alerting

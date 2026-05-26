@@ -57,8 +57,8 @@ export class ApprovalService {
       finalPayload: params.finalPayload ? JSON.stringify(params.finalPayload) : null,
     });
 
-    const saved = await this.requestRepository.save(request);
-    
+    const saved = await this.requestRepository.save(request) as ApprovalRequestEntity;
+
     await this.userActivityService.logActivity({
       userId: params.requesterId,
       activityType: ActivityType.PERMISSION_CHANGED,
@@ -105,7 +105,7 @@ export class ApprovalService {
       }
     }
 
-    const saved = await this.requestRepository.save(request);
+    const saved = await this.requestRepository.save(request) as ApprovalRequestEntity;
 
     if (saved.status === ApprovalStatus.APPROVED) {
       this.eventEmitter.emit('approval.approved', saved);

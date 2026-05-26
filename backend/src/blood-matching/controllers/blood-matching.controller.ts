@@ -10,8 +10,8 @@ import {
 
 import { RequirePermissions } from '../../auth/decorators/require-permissions.decorator';
 import { Permission } from '../../auth/enums/permission.enum';
-import {
-  BloodMatchingService,
+import { BloodMatchingService } from '../services/blood-matching.service';
+import type {
   MatchingRequest,
   MatchingResponse,
 } from '../services/blood-matching.service';

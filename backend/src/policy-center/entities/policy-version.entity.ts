@@ -8,7 +8,7 @@ import {
 } from 'typeorm';
 
 import { PolicyVersionStatus } from '../enums/policy-version-status.enum';
-import { OperationalPolicyRules } from '../policy-config.types';
+import type { OperationalPolicyRules } from '../policy-config.types';
 
 @Entity('policy_versions')
 @Index(['policyName', 'version'], { unique: true })

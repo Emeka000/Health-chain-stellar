@@ -24,7 +24,7 @@ export class BloodRequestsController {
     @Body() dto: CreateBloodRequestDto,
     @Req() req: { user: { id: string; role: string; email: string } },
   ) {
-    return this.bloodRequestsService.create(dto, req.user);
+    return this.bloodRequestsService.create(dto, req.user as any);
   }
 
   /**

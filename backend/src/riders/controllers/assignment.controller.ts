@@ -9,7 +9,7 @@ export class AssignmentController {
 
   @RequirePermissions(Permission.MANAGE_RIDERS)
   @Post()
-  assign(@Body() body: { orderId: string; pickupLat: number; pickupLon: number; maxCandidates?: number }) {
+  async assign(@Body() body: { orderId: string; pickupLat: number; pickupLon: number; maxCandidates?: number }): Promise<any> {
     return this.service.assignRider(body);
   }
 

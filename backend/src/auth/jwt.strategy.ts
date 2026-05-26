@@ -37,7 +37,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       ) => {
         const decoded = decode(rawToken, { complete: true });
         const kid: string =
-          (decoded?.header as Record<string, string>)?.kid ?? 'key-1';
+          (decoded?.header as unknown as Record<string, string>)?.kid ?? 'key-1';
         const secret = jwtKeyService.resolveSecret(kid);
         if (!secret) {
           return done(new UnauthorizedException('Unknown signing key'));

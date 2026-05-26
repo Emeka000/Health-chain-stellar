@@ -1,7 +1,7 @@
 import { Injectable, Scope, Inject } from '@nestjs/common';
 import { REQUEST } from '@nestjs/core';
 
-import { Request } from 'express';
+import type { Request } from 'express';
 
 @Injectable({ scope: Scope.REQUEST })
 export class CorrelationIdService {

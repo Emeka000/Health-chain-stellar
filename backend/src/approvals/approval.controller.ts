@@ -5,7 +5,7 @@ import { Permission } from '../auth/enums/permission.enum';
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
-import { Request } from 'express';
+import type { Request } from 'express';
 
 import { ApprovalService } from './approval.service';
 import { ApprovalStatus } from './enums/approval.enum';

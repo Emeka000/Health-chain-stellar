@@ -1,5 +1,5 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
-import { TrustFactorContribution, TrustFeatureSnapshot } from './org-trust-score.entity';
+import type { TrustFactorContribution, TrustFeatureSnapshot } from './org-trust-score.entity';
 
 /** Immutable record of each trust score update for backtesting and audit */
 @Entity('org_trust_score_history')

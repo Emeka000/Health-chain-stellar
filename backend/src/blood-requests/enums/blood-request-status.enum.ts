@@ -11,3 +11,4 @@ export enum RequestStatus {
 }
 
 export const BloodRequestStatus = RequestStatus;
+export type BloodRequestStatus = RequestStatus;

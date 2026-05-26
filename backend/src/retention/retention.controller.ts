@@ -94,7 +94,7 @@ export class RetentionController {
   @Get('sensitive-fields')
   @RequirePermissions(Permission.ADMIN_ACCESS)
   @ApiOperation({ summary: 'Get sensitive fields classification' })
-  async getSensitiveFields() {
+  async getSensitiveFields(): Promise<any[]> {
     return this.sensitiveDataService.getSensitiveFields();
   }
 

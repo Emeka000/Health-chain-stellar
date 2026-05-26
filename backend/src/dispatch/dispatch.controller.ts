@@ -35,7 +35,7 @@ export class DispatchController {
 
   @RequirePermissions(Permission.VIEW_DISPATCH)
   @Get('assignments')
-  getAssignments(@Query('orderId') orderId?: string) {
+  async getAssignments(@Query('orderId') orderId?: string): Promise<any> {
     return this.dispatchService.getAssignmentLogs(orderId);
   }
 

@@ -69,7 +69,7 @@ export class ContractEventIndexerService {
         ledgerSequence: dto.ledgerSequence,
         txHash: dto.txHash ?? null,
         contractRef: dto.contractRef ?? null,
-        payload: dto.payload,
+        payload: dto.payload as any,
         entityRef: dto.entityRef ?? null,
         dedupKey,
       })

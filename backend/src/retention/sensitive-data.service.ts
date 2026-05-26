@@ -399,33 +399,42 @@ export class SensitiveDataService {
       take: 1000, // Limit for admin UI
     });
   }
-}
-        break;
 
-      case 'rider':
+  private async executeSingleRedaction(redaction: DataRedactionEntity, userId?: string): Promise<void> {
+    let originalValue: unknown;
+
+    switch (redaction.entityType) {
+      case 'blood_unit': {
+        const unit = await this.bloodUnitRepository.findOne({ where: { id: redaction.entityId } });
+        if (unit) {
+          originalValue = (unit as any)[redaction.fieldName];
+        }
+        break;
+      }
+      case 'rider': {
         const rider = await this.riderRepository.findOne({ where: { id: redaction.entityId } });
         if (rider) {
           originalValue = (rider as any)[redaction.fieldName];
         }
         break;
-
-      case 'organization':
+      }
+      case 'organization': {
         const org = await this.organizationRepository.findOne({ where: { id: redaction.entityId } });
         if (org) {
           originalValue = (org as any)[redaction.fieldName];
         }
         break;
-
-      case 'location_history':
+      }
+      case 'location_history': {
         const location = await this.locationHistoryRepository.findOne({ where: { id: redaction.entityId } });
         if (location) {
           originalValue = (location as any)[redaction.fieldName];
         }
         break;
+      }
     }
 
     if (originalValue === null || originalValue === undefined) {
-      // Field is already empty, mark as completed
       redaction.status = RedactionStatus.COMPLETED;
       redaction.executedAt = new Date();
       redaction.executedByUserId = userId;
@@ -433,10 +442,8 @@ export class SensitiveDataService {
       return;
     }
 
-    // Store original value
     redaction.originalValue = typeof originalValue === 'object' ? JSON.stringify(originalValue) : String(originalValue);
 
-    // Apply redaction based on field type
     let redactedValue: string;
 
     switch (redaction.fieldType) {
@@ -444,27 +451,21 @@ export class SensitiveDataService {
       case SensitiveFieldType.FILE_PATH:
         redactedValue = '[REDACTED]';
         break;
-
       case SensitiveFieldType.JSON:
         redactedValue = '{"redacted": true}';
         break;
-
       case SensitiveFieldType.COORDINATES:
-        // For coordinates, we can round to reduce precision or set to null
         redactedValue = '0.000000';
         break;
-
       case SensitiveFieldType.MEDICAL_DATA:
         redactedValue = '[MEDICAL_DATA_REDACTED]';
         break;
-
       default:
         redactedValue = '[REDACTED]';
     }
 
     redaction.redactedValue = redactedValue;
 
-    // Update the entity
     const updateData: any = {};
     updateData[redaction.fieldName] = redaction.fieldType === SensitiveFieldType.COORDINATES ? parseFloat(redactedValue) : redactedValue;
 
@@ -472,21 +473,17 @@ export class SensitiveDataService {
       case 'blood_unit':
         await this.bloodUnitRepository.update(redaction.entityId, updateData);
         break;
-
       case 'rider':
         await this.riderRepository.update(redaction.entityId, updateData);
         break;
-
       case 'organization':
         await this.organizationRepository.update(redaction.entityId, updateData);
         break;
-
       case 'location_history':
         await this.locationHistoryRepository.update(redaction.entityId, updateData);
         break;
     }
 
-    // Mark redaction as completed
     redaction.status = RedactionStatus.COMPLETED;
     redaction.executedAt = new Date();
     redaction.executedByUserId = userId;

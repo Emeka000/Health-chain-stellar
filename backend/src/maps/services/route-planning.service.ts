@@ -91,7 +91,7 @@ export class RoutePlanningService {
     }
 
     // Add API key
-    const apiKey = this.configService.get<string>('GOOGLE_MAPS_API_KEY');
+    const apiKey = this.configService.get<string>('GOOGLE_MAPS_API_KEY') ?? '';
     url.searchParams.set('key', apiKey);
 
     // Make API request
@@ -152,13 +152,13 @@ export class RoutePlanningService {
 
     // If optimization is requested, use traveling salesman algorithm
     if (optimizeOrder && stops.length > 2) {
-      const optimizedStops = await this.optimizeStopOrder(stops, returnToStart);
-      return this.calculateRouteForStops(optimizedStops, travelMode, true);
+      const optimizedStops = await this.optimizeStopOrder(stops, returnToStart ?? false);
+      return this.calculateRouteForStops(optimizedStops, travelMode ?? 'driving', true);
     }
 
     // Otherwise, calculate route in given order
-    const allStops = returnToStart ? [...stops, stops[0]] : stops;
-    return this.calculateRouteForStops(allStops, travelMode, false);
+    const allStops = (returnToStart ?? false) ? [...stops, stops[0]] : stops;
+    return this.calculateRouteForStops(allStops, travelMode ?? 'driving', false);
   }
 
   /**
@@ -189,7 +189,7 @@ export class RoutePlanningService {
       url.searchParams.set('departure_time', 'now');
     }
 
-    const apiKey = this.configService.get<string>('GOOGLE_MAPS_API_KEY');
+    const apiKey = this.configService.get<string>('GOOGLE_MAPS_API_KEY') ?? '';
     url.searchParams.set('key', apiKey);
 
     const response = await fetch(url.toString());

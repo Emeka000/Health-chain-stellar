@@ -10,6 +10,7 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../auth/decorators/public.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
+import { Permission } from '../auth/enums/permission.enum';
 import { SorobanRpcHealthIndicator } from './indicators/soroban-rpc.health-indicator';
 import { BullMQHealthIndicator } from './indicators/bullmq.health-indicator';
 import { RedisHealthIndicator } from './indicators/redis.health-indicator';
@@ -54,7 +55,7 @@ export class HealthController {
    */
   @Get('details')
   @UseGuards(JwtAuthGuard)
-  @RequirePermissions('admin:health:read')
+  @RequirePermissions(Permission.ADMIN_HEALTH_READ)
   @HealthCheck()
   @ApiOperation({ summary: 'Admin detailed health breakdown' })
   async details() {

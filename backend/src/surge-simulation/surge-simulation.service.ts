@@ -184,8 +184,8 @@ export class SurgeSimulationService {
 
       await this.scenarioRepo.update(scenarioId, {
         status: ScenarioStatus.COMPLETED,
-        outcome: result as unknown as Record<string, unknown>,
-      });
+        outcome: result as any,
+      } as any);
 
       return result;
     } catch (err) {

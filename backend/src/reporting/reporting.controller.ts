@@ -7,11 +7,12 @@ import {
   UseGuards,
   ValidationPipe,
 } from '@nestjs/common';
-import { Response } from 'express';
-import { ReportingService, ReportingFilterDto } from './reporting.service';
+import type { Response } from 'express';
+import { ReportingService } from './reporting.service';
+import type { ReportingFilterDto } from './reporting.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
-import { RequirePermissions } from '../auth/decorators/permissions.decorator';
+import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
 
 @Controller('reporting')

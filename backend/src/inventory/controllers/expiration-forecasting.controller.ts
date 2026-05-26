@@ -1,9 +1,9 @@
 import { Controller, Get, Query } from '@nestjs/common';
 
-import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
-import { Permission } from '../auth/enums/permission.enum';
+import { RequirePermissions } from '../../auth/decorators/require-permissions.decorator';
+import { Permission } from '../../auth/enums/permission.enum';
 
-import { ExpirationForecastingService } from './expiration-forecasting.service';
+import { ExpirationForecastingService } from '../expiration-forecasting.service';
 
 @Controller('inventory/expiration')
 export class ExpirationForecastingController {

@@ -19,7 +19,7 @@ import {
 } from '@nestjs/common';
 
 import { ConfigService } from '@nestjs/config';
-import { Request } from 'express';
+import type { Request } from 'express';
 
 import { BlockchainCallbackDto } from '../dto/blockchain-callback.dto';
 import { AdminGuard } from '../guards/admin.guard';
@@ -124,7 +124,7 @@ export class BlockchainController {
     @Req() request: Request,
   ): Promise<{ success: boolean }> {
     this.verifyWebhookSignature(
-      callback,
+      callback as unknown as Record<string, unknown>,
       request.headers['x-webhook-signature'] as string,
     );
 

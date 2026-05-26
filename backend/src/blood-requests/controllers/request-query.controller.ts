@@ -1,6 +1,6 @@
 import { Controller, Get, Query, Res, Header } from '@nestjs/common';
 
-import { Response } from 'express';
+import type { Response } from 'express';
 
 import { RequirePermissions } from '../../auth/decorators/require-permissions.decorator';
 import { Permission } from '../../auth/enums/permission.enum';

@@ -36,6 +36,15 @@ const ALLOWED_STATUS_TRANSITIONS: Record<RiderStatus, RiderStatus[]> = {
   [RiderStatus.ON_DELIVERY]: [RiderStatus.AVAILABLE, RiderStatus.OFFLINE],
 };
 
+export interface RiderRecord {
+  id: string;
+  name: string;
+  phoneNumber?: string;
+  status: RiderStatus;
+  latitude?: number;
+  longitude?: number;
+}
+
 @Injectable()
 export class RidersService {
   constructor(

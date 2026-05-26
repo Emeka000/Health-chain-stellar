@@ -137,23 +137,25 @@ export class QueueMetricsService implements OnModuleInit {
   // ─── Bull event listeners ──────────────────────────────────────────────────
 
   private attachQueueListeners(): void {
+    const queue = this.txQueue as any;
+
     // Main queue events
-    this.txQueue.on('waiting', (_jobId: string) => {
+    queue.on('waiting', (_job: any) => {
       this.counters.queued++;
     });
 
-    this.txQueue.on('active', (job: Job) => {
+    queue.on('active', (job: Job) => {
       this.counters.processing++;
-      this.jobStartTimes.set(job.id, Date.now());
+      if (job.id) this.jobStartTimes.set(job.id, Date.now());
     });
 
-    this.txQueue.on('completed', (job: Job) => {
+    queue.on('completed', (job: Job) => {
       this.counters.processing = Math.max(0, this.counters.processing - 1);
       this.counters.success++;
-      this.recordTiming(job.id);
+      if (job.id) this.recordTiming(job.id);
     });
 
-    this.txQueue.on('failed', (job: Job, _err: Error) => {
+    queue.on('failed', (job: Job, _err: Error) => {
       this.counters.processing = Math.max(0, this.counters.processing - 1);
       this.counters.failure++;
 
@@ -165,7 +167,7 @@ export class QueueMetricsService implements OnModuleInit {
       }
     });
 
-    this.txQueue.on('stalled', (_job: Job) => {
+    queue.on('stalled', (_job: Job) => {
       // Stalled jobs are re-queued by Bull; treat as a retry
       this.counters.retries++;
       this.logger.warn(`[Metrics] Stalled job detected — counted as retry`);

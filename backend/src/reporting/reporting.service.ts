@@ -197,6 +197,6 @@ export class ReportingService {
       data.orders[0].forEach((o: any) => sheet.addRow(o));
     }
 
-    return workbook.xlsx.writeBuffer() as Promise<Buffer>;
+    return workbook.xlsx.writeBuffer() as unknown as Promise<Buffer>;
   }
 }
