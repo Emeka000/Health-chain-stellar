@@ -2,6 +2,8 @@
 
 import React, { useState } from 'react';
 import { ArrowLeft, Eye, EyeOff } from 'lucide-react';
+import { api } from '@/lib/api/http-client';
+import { useToast } from '@/lib/hooks/useToast';
 
 interface BloodDonorFormData {
   // Basic Info
@@ -86,6 +88,60 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
     consentToMedicalScreening: false,
   });
 
+  const { success, error: showError } = useToast();
+
+  const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+  const isStrongPassword = (password: string) => {
+    return /^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/.test(password);
+  };
+
+  const getAge = (dateString: string) => {
+    const date = new Date(dateString);
+    const today = new Date();
+    let age = today.getFullYear() - date.getFullYear();
+    const monthDiff = today.getMonth() - date.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < date.getDate())) {
+      age -= 1;
+    }
+    return age;
+  };
+
+  const validateForm = () => {
+    if (!isValidEmail(formData.email.trim())) {
+      showError('Please enter a valid email address.');
+      return false;
+    }
+
+    if (!isStrongPassword(formData.password)) {
+      showError('Password must be at least 8 characters and include letters, numbers, and a special character.');
+      return false;
+    }
+
+    if (formData.password !== formData.confirmPassword) {
+      showError('Passwords do not match.');
+      return false;
+    }
+
+    if (!formData.dateOfBirth) {
+      showError('Please enter a valid date of birth.');
+      return false;
+    }
+
+    const age = getAge(formData.dateOfBirth);
+    if (Number.isNaN(age) || age < 18) {
+      showError('Blood donors must be at least 18 years old.');
+      return false;
+    }
+
+    if (formData.hasRecentTravel && !formData.travelDetails.trim()) {
+      showError('Please provide travel details for recent international travel.');
+      return false;
+    }
+
+    return true;
+  };
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
     
@@ -120,32 +176,35 @@ const BloodDonorSignup: React.FC<BloodDonorSignupProps> = ({ onBack, onSuccess }
     
     if (isLoading) return;
 
-    if (formData.password !== formData.confirmPassword) {
-      alert('Passwords do not match');
+    if (!validateForm()) {
       return;
     }
 
     if (!formData.agreeToTerms || !formData.agreeToPrivacyPolicy || !formData.consentToMedicalScreening) {
-      alert('Please agree to all terms and conditions');
+      showError('Please agree to all terms and conditions.');
       return;
     }
 
     setIsLoading(true);
 
     try {
-      // API call logic
-      console.log('Blood donor signup data:', formData);
-      
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      alert('Registration successful! Please check your email for verification.');
+      await api.post('/auth/register', {
+        email: formData.email.trim().toLowerCase(),
+        password: formData.password,
+        name: `${formData.firstName.trim()} ${formData.lastName.trim()}`,
+        role: 'donor',
+      }, {
+        skipAuth: true,
+      });
+
+      success('Registration successful! Please check your email for verification.');
+
       if (onSuccess) {
         onSuccess();
       }
     } catch (error) {
       console.error('Signup error:', error);
-      alert('Failed to create account. Please try again.');
+      showError('Failed to create account. Please try again.');
     } finally {
       setIsLoading(false);
     }
