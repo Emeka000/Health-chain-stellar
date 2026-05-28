@@ -528,7 +528,9 @@ export class BloodUnitsService {
   private async assertUnitTransferable(blockchainUnitId: number): Promise<void> {
     const unit = await this.findByBlockchainUnitId(blockchainUnitId);
     if (!unit) {
-      return;
+      throw new NotFoundException(
+        `Blood unit with blockchain ID ${blockchainUnitId} not found`,
+      );
     }
 
     const normalizedStatus = String((unit as unknown as { status?: string }).status || '').toUpperCase();

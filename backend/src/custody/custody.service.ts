@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
@@ -9,6 +9,8 @@ import { ConfirmHandoffDto, RecordHandoffDto } from './dto/custody.dto';
 
 @Injectable()
 export class CustodyService {
+  private readonly logger = new Logger(CustodyService.name);
+
   constructor(
     @InjectRepository(CustodyHandoffEntity)
     private readonly handoffRepo: Repository<CustodyHandoffEntity>,
@@ -26,8 +28,10 @@ export class CustodyService {
         condition: `${dto.fromActorType}→${dto.toActorType}`,
       });
       contractEventId = result.transactionHash;
-    } catch {
-      // Non-fatal: persist off-chain even if on-chain call fails
+    } catch (err: unknown) {
+      this.logger.warn(
+        `On-chain custody transfer failed for unit ${dto.bloodUnitId}: ${(err as Error).message}. Persisting off-chain record only.`,
+      );
     }
 
     const handoff = this.handoffRepo.create({

@@ -4,9 +4,9 @@ import {
   BadRequestException,
   Inject,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
+import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
 
-import { Repository } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import {
@@ -20,6 +20,7 @@ import {
   LogActivityParams,
 } from './services/profile-activity.service';
 import { StorageService } from './services/storage.service';
+import { PaginationQueryDto, PaginationUtil } from '../common/pagination';
 
 @Injectable()
 export class UsersService {
@@ -33,8 +34,9 @@ export class UsersService {
     private readonly profileActivityService: ProfileActivityService,
   ) {}
 
-  async findAll() {
-    const users = await this.userRepository.find({
+  async findAll(pagination?: PaginationQueryDto) {
+    const { page = 1, pageSize = 25 } = pagination ?? {};
+    const [users, total] = await this.userRepository.findAndCount({
       select: [
         'id',
         'email',
@@ -44,11 +46,14 @@ export class UsersService {
         'role',
         'createdAt',
       ],
+      skip: PaginationUtil.calculateSkip(page, pageSize),
+      take: pageSize,
     });
 
     return {
       message: 'Users retrieved successfully',
       data: users,
+      pagination: PaginationUtil.createMetadata(page, pageSize, total),
     };
   }
 
