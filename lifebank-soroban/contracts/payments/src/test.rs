@@ -207,8 +207,8 @@ fn test_terminal_payment_does_not_block_new_active_payment_for_different_request
     // Payments for distinct request IDs must never interfere.
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
-    let (id1, _, _) = make_payment(&env, &client, 100, 200);
-    client.update_status(&id1, &PaymentStatus::Refunded);
+    let (id1, payer1, _) = make_payment(&env, &client, 100, 200);
+    client.update_status(&id1, &PaymentStatus::Refunded, &payer1);
 
     // A payment for a different request must still be accepted.
     let (id2, _, _) = make_payment(&env, &client, 101, 300);
@@ -310,12 +310,12 @@ fn test_get_payments_by_payee_pagination() {
 fn test_get_payments_by_status_filters_correctly() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
-    let (id1, _, _) = make_payment(&env, &client, 1, 100);
-    let (id2, _, _) = make_payment(&env, &client, 2, 200);
+    let (id1, payer1, _) = make_payment(&env, &client, 1, 100);
+    let (id2, payer2, _) = make_payment(&env, &client, 2, 200);
     make_payment(&env, &client, 3, 300);
 
-    client.update_status(&id1, &PaymentStatus::Locked);
-    client.update_status(&id2, &PaymentStatus::Locked);
+    client.update_status(&id1, &PaymentStatus::Locked, &payer1);
+    client.update_status(&id2, &PaymentStatus::Locked, &payer2);
 
     let locked = client.get_payments_by_status(&PaymentStatus::Locked, &0u32, &20u32);
     assert_eq!(locked.items.len(), 2);
@@ -340,8 +340,8 @@ fn test_get_payments_by_status_pagination() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
     for i in 1u64..=5 {
-        let (id, _, _) = make_payment(&env, &client, i, 100);
-        client.update_status(&id, &PaymentStatus::Refunded);
+        let (id, payer, _) = make_payment(&env, &client, i, 100);
+        client.update_status(&id, &PaymentStatus::Refunded, &payer);
     }
 
     let page0 = client.get_payments_by_status(&PaymentStatus::Refunded, &0u32, &3u32);
@@ -372,16 +372,16 @@ fn test_statistics_counts_and_totals_correctly() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
 
-    let (id1, _, _) = make_payment(&env, &client, 1, 1000);
-    let (id2, _, _) = make_payment(&env, &client, 2, 2000);
-    let (id3, _, _) = make_payment(&env, &client, 3, 500);
-    let (id4, _, _) = make_payment(&env, &client, 4, 750);
+    let (id1, payer1, _) = make_payment(&env, &client, 1, 1000);
+    let (id2, payer2, _) = make_payment(&env, &client, 2, 2000);
+    let (id3, payer3, _) = make_payment(&env, &client, 3, 500);
+    let (id4, payer4, _) = make_payment(&env, &client, 4, 750);
     make_payment(&env, &client, 5, 300); // stays Pending
 
-    client.update_status(&id1, &PaymentStatus::Locked);
-    client.update_status(&id2, &PaymentStatus::Locked);
-    client.update_status(&id3, &PaymentStatus::Released);
-    client.update_status(&id4, &PaymentStatus::Refunded);
+    client.update_status(&id1, &PaymentStatus::Locked, &payer1);
+    client.update_status(&id2, &PaymentStatus::Locked, &payer2);
+    client.update_status(&id3, &PaymentStatus::Released, &payer3);
+    client.update_status(&id4, &PaymentStatus::Refunded, &payer4);
 
     let stats = client.get_payment_statistics();
     assert_eq!(stats.count_locked, 2);
@@ -396,12 +396,12 @@ fn test_statistics_counts_and_totals_correctly() {
 fn test_statistics_ignores_pending_cancelled_disputed() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
-    let (id1, _, _) = make_payment(&env, &client, 1, 100);
-    let (id2, _, _) = make_payment(&env, &client, 2, 200);
+    let (id1, payer1, _) = make_payment(&env, &client, 1, 100);
+    let (id2, payer2, _) = make_payment(&env, &client, 2, 200);
     make_payment(&env, &client, 3, 300); // stays Pending
 
-    client.update_status(&id1, &PaymentStatus::Cancelled);
-    client.update_status(&id2, &PaymentStatus::Disputed);
+    client.update_status(&id1, &PaymentStatus::Cancelled, &payer1);
+    client.update_status(&id2, &PaymentStatus::Disputed, &payer2);
 
     let stats = client.get_payment_statistics();
     assert_eq!(stats.count_locked, 0);
@@ -473,13 +473,13 @@ fn test_timeline_unknown_request_returns_empty() {
 fn test_update_status_changes_payment_status() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
-    let (id, _, _) = make_payment(&env, &client, 1, 500);
+    let (id, payer, _) = make_payment(&env, &client, 1, 500);
 
-    client.update_status(&id, &PaymentStatus::Locked);
+    client.update_status(&id, &PaymentStatus::Locked, &payer);
     let p = client.get_payment(&id);
     assert_eq!(p.status, PaymentStatus::Locked);
 
-    client.update_status(&id, &PaymentStatus::Released);
+    client.update_status(&id, &PaymentStatus::Released, &payer);
     let p = client.get_payment(&id);
     assert_eq!(p.status, PaymentStatus::Released);
 }
@@ -488,7 +488,8 @@ fn test_update_status_changes_payment_status() {
 fn test_update_status_returns_not_found_for_missing_payment() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
-    let result = client.try_update_status(&999u64, &PaymentStatus::Locked);
+    let caller = Address::generate(&env);
+    let result = client.try_update_status(&999u64, &PaymentStatus::Locked, &caller);
     assert!(result.is_err());
 }
 
@@ -728,7 +729,7 @@ fn test_process_expired_disputes_refunds_after_timeout() {
 
     // Record dispute at t=1000; updated_at becomes 1000.
     client.record_dispute(&pid, &DisputeReason::FailedDelivery,
-        &soroban_sdk::String::from_str(&env, "case-1"));
+        &soroban_sdk::String::from_str(&env, "case-1"), &hospital);
 
     // Set a short timeout of 500s.
     client.set_dispute_timeout(&admin, &500u64);
@@ -758,7 +759,7 @@ fn test_process_expired_disputes_skips_non_expired() {
     env.ledger().with_mut(|l| l.timestamp = 1_000);
     let pid = client.create_escrow(&2u64, &hospital, &payee, &500i128, &token_id);
     client.record_dispute(&pid, &DisputeReason::Other,
-        &soroban_sdk::String::from_str(&env, "case-2"));
+        &soroban_sdk::String::from_str(&env, "case-2"), &hospital);
 
     client.set_dispute_timeout(&admin, &5_000u64);
 
@@ -809,4 +810,69 @@ fn test_vesting_events_emitted() {
     // Events are published — verify no panic and schedule is updated
     let schedule = client.get_vesting(&donor);
     assert_eq!(schedule.claimed, 200_000i128);
+}
+
+// ── Auth guard tests (Issues #811, #812, #813) ─────────────────────────────────
+
+#[test]
+fn test_update_status_rejects_non_payer_non_admin() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let (id, _payer, _payee) = make_payment(&env, &client, 1, 500);
+    let stranger = Address::generate(&env);
+    let result = client.try_update_status(&id, &PaymentStatus::Locked, &stranger);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
+fn test_record_dispute_rejects_non_payer_non_payee() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let (id, _payer, _payee) = make_payment(&env, &client, 2, 500);
+    let stranger = Address::generate(&env);
+    let result = client.try_record_dispute(
+        &id,
+        &DisputeReason::Other,
+        &soroban_sdk::String::from_str(&env, "case-x"),
+        &stranger,
+    );
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
+fn test_resolve_dispute_rejects_non_admin() {
+    let (env, cid, admin) = setup_with_admin();
+    let client = PaymentContractClient::new(&env, &cid);
+    let hospital = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 10_000);
+    let pid = client.create_escrow(&10u64, &hospital, &payee, &1_000i128, &token_id);
+    client.record_dispute(
+        &pid,
+        &DisputeReason::Other,
+        &soroban_sdk::String::from_str(&env, "case-x"),
+        &hospital,
+    );
+    let stranger = Address::generate(&env);
+    let result = client.try_resolve_dispute(&pid, &stranger);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
+fn test_resolve_dispute_allowed_for_admin() {
+    let (env, cid, admin) = setup_with_admin();
+    let client = PaymentContractClient::new(&env, &cid);
+    let hospital = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 10_000);
+    let pid = client.create_escrow(&11u64, &hospital, &payee, &1_000i128, &token_id);
+    client.record_dispute(
+        &pid,
+        &DisputeReason::Other,
+        &soroban_sdk::String::from_str(&env, "case-y"),
+        &hospital,
+    );
+    client.resolve_dispute(&pid, &admin);
+    let p = client.get_payment(&pid);
+    assert!(p.dispute_resolved);
 }

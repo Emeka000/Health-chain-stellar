@@ -542,6 +542,14 @@ impl PaymentContract {
         Ok(())
     }
 
+    fn is_admin(env: &Env, caller: &Address) -> bool {
+        env.storage()
+            .instance()
+            .get::<_, Address>(&ADMIN_KEY)
+            .map(|a| a == *caller)
+            .unwrap_or(false)
+    }
+
     pub fn create_payment(
         env: Env,
         request_id: u64,
@@ -772,9 +780,18 @@ impl PaymentContract {
         Ok(())
     }
 
-    pub fn update_status(env: Env, payment_id: u64, status: PaymentStatus) -> Result<(), Error> {
+    pub fn update_status(
+        env: Env,
+        payment_id: u64,
+        status: PaymentStatus,
+        caller: Address,
+    ) -> Result<(), Error> {
+        caller.require_auth();
         Self::require_not_paused(&env)?;
         let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
+        if caller != payment.payer && !Self::is_admin(&env, &caller) {
+            return Err(Error::Unauthorized);
+        }
         let old_status = payment.status;
         payment.status = status;
         payment.updated_at = env.ledger().timestamp();
@@ -802,9 +819,14 @@ impl PaymentContract {
         payment_id: u64,
         reason: DisputeReason,
         case_id: String,
+        caller: Address,
     ) -> Result<(), Error> {
+        caller.require_auth();
         Self::require_not_paused(&env)?;
         let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
+        if caller != payment.payer && caller != payment.payee {
+            return Err(Error::Unauthorized);
+        }
         let old_status = payment.status;
         payment.status = PaymentStatus::Disputed;
         payment.dispute_reason_code = Some(dispute_reason_to_code(reason));
@@ -826,8 +848,10 @@ impl PaymentContract {
         Ok(())
     }
 
-    pub fn resolve_dispute(env: Env, payment_id: u64) -> Result<(), Error> {
+    pub fn resolve_dispute(env: Env, payment_id: u64, caller: Address) -> Result<(), Error> {
+        caller.require_auth();
         Self::require_not_paused(&env)?;
+        Self::require_admin(&env, &caller)?;
         let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
         if payment.dispute_case_id.is_some() {
             payment.dispute_resolved = true;
