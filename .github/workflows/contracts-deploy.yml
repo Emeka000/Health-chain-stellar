@@ -1,0 +1,226 @@
+name: Contracts CI/CD
+
+on:
+  pull_request:
+    paths:
+      - 'lifebank-soroban/**'
+      - 'contracts/**'
+      - '.github/workflows/contracts-deploy.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'lifebank-soroban/**'
+      - 'contracts/**'
+      - '.github/workflows/contracts-deploy.yml'
+
+env:
+  RUST_VERSION: '1.79.0'
+  SOROBAN_CLI_VERSION: '21.5.0'
+
+jobs:
+  test:
+    name: Test Contracts
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          target: wasm32-unknown-unknown
+          components: rustfmt, clippy
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            lifebank-soroban/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Run contract tests
+        working-directory: lifebank-soroban
+        run: |
+          cargo test --workspace --all-features
+
+      - name: Run clippy
+        working-directory: lifebank-soroban
+        run: |
+          cargo clippy --workspace --all-features -- -D warnings
+
+      - name: Check formatting
+        working-directory: lifebank-soroban
+        run: |
+          cargo fmt --all -- --check
+
+  build:
+    name: Build Contracts
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          target: wasm32-unknown-unknown
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            lifebank-soroban/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build contracts
+        working-directory: lifebank-soroban
+        run: |
+          cargo build --release --target wasm32-unknown-unknown
+
+      - name: Upload contract artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-wasm-files
+          path: lifebank-soroban/target/wasm32-unknown-unknown/release/*.wasm
+          retention-days: 7
+
+  deploy-testnet:
+    name: Deploy to Stellar Testnet
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: testnet
+      url: https://stellar.expert/explorer/testnet
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          target: wasm32-unknown-unknown
+
+      - name: Install Stellar CLI
+        run: |
+          cargo install --locked soroban-cli --version ${{ env.SOROBAN_CLI_VERSION }}
+
+      - name: Download contract artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: contract-wasm-files
+          path: ./wasm-files
+
+      - name: Configure Stellar CLI for Testnet
+        run: |
+          soroban network add testnet \
+            --rpc-url https://soroban-testnet.stellar.org:443 \
+            --network-passphrase "Test SDF Network ; September 2015"
+
+      - name: Deploy contracts to Testnet
+        env:
+          STELLAR_SECRET_KEY: ${{ secrets.STELLAR_TESTNET_SECRET_KEY }}
+        run: |
+          # Create contracts.json if it doesn't exist
+          mkdir -p deployment
+          echo '{"network": "testnet", "contracts": {}}' > deployment/contracts-testnet.json
+          
+          # Deploy each contract
+          for contract in inventory requests payments temperature delivery reputation identity; do
+            echo "Deploying $contract contract..."
+            
+            # Find the WASM file
+            WASM_FILE=$(find ./wasm-files -name "*${contract}*.wasm" | head -n 1)
+            
+            if [ -z "$WASM_FILE" ]; then
+              echo "Warning: WASM file for $contract not found, skipping..."
+              continue
+            fi
+            
+            # Deploy contract
+            CONTRACT_ID=$(soroban contract deploy \
+              --wasm "$WASM_FILE" \
+              --source-account "$STELLAR_SECRET_KEY" \
+              --network testnet 2>&1 | tail -n 1)
+            
+            echo "Deployed $contract: $CONTRACT_ID"
+            
+            # Update contracts.json using jq
+            jq --arg name "$contract" --arg id "$CONTRACT_ID" \
+              '.contracts[$name] = $id' \
+              deployment/contracts-testnet.json > deployment/contracts-testnet.json.tmp
+            mv deployment/contracts-testnet.json.tmp deployment/contracts-testnet.json
+          done
+          
+          # Add deployment timestamp
+          jq --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '.deployed_at = $timestamp' \
+            deployment/contracts-testnet.json > deployment/contracts-testnet.json.tmp
+          mv deployment/contracts-testnet.json.tmp deployment/contracts-testnet.json
+          
+          echo "Deployment complete!"
+          cat deployment/contracts-testnet.json
+
+      - name: Upload deployment manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: testnet-deployment-manifest
+          path: deployment/contracts-testnet.json
+          retention-days: 90
+
+      - name: Create deployment summary
+        run: |
+          echo "## 🚀 Testnet Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Network:** Stellar Testnet" >> $GITHUB_STEP_SUMMARY
+          echo "**Deployed at:** $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Deployed Contracts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          cat deployment/contracts-testnet.json >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Comment on PR (if applicable)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const contracts = JSON.parse(fs.readFileSync('deployment/contracts-testnet.json', 'utf8'));
+            
+            let comment = '## 🚀 Testnet Deployment\n\n';
+            comment += '**Network:** Stellar Testnet\n';
+            comment += `**Deployed at:** ${contracts.deployed_at}\n\n`;
+            comment += '### Contract Addresses\n\n';
+            
+            for (const [name, id] of Object.entries(contracts.contracts)) {
+              comment += `- **${name}**: \`${id}\`\n`;
+            }
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });

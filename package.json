@@ -1,0 +1,14 @@
+{
+  "name": "health-chain-stellar",
+  "version": "0.0.1",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "build:packages": "npm run build --workspaces --if-present --workspace=packages/base-sdk --workspace=packages/inventory-sdk --workspace=packages/coordinator-sdk --workspace=packages/payments-sdk --workspace=packages/requests-sdk --workspace=packages/temperature-sdk",
+    "generate-bindings": "bash scripts/generate-bindings.sh"
+  }
+}

@@ -1,5 +1,13 @@
 use soroban_sdk::{contracttype, Address, String, Vec};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[contracttype]
+pub enum Role {
+    Hospital,
+    BloodBank,
+    Rider,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
 pub enum DataKey {
@@ -9,6 +17,8 @@ pub enum DataKey {
     Initialized,
     Metadata,
     AuthorizedHospital(Address),
+    AuthorizedBloodBank(Address),
+    AuthorizedRider(Address),
     Request(u64),
 }
 

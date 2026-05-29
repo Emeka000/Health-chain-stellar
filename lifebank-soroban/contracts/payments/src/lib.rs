@@ -542,6 +542,14 @@ impl PaymentContract {
         Ok(())
     }
 
+    fn is_admin(env: &Env, caller: &Address) -> bool {
+        env.storage()
+            .instance()
+            .get::<_, Address>(&ADMIN_KEY)
+            .map(|a| a == *caller)
+            .unwrap_or(false)
+    }
+
     pub fn create_payment(
         env: Env,
         request_id: u64,
@@ -694,9 +702,14 @@ impl PaymentContract {
         Ok(id)
     }
 
-    /// Release escrowed funds to the payee. Admin only.
+    /// Release escrowed funds to the payee. Requires two-party confirmation.
     /// Transfers the locked amount from the contract to the payee and marks
     /// the payment as Released.
+    ///
+    /// Issue #848 fix: Two-step confirmation process
+    /// - Coordinator (admin) confirms delivery via release_escrow
+    /// - Hospital (payer) confirms receipt via confirm_receipt
+    /// - Payment only releases when both parties have confirmed
     pub fn release_escrow(env: Env, caller: Address, payment_id: u64) -> Result<(), Error> {
         caller.require_auth();
         Self::require_not_paused(&env)?;
@@ -708,6 +721,24 @@ impl PaymentContract {
             return Err(Error::PaymentNotLocked);
         }
 
+        // Mark coordinator confirmation
+        let coord_key = (payment_id, "coord_ok");
+        env.storage().persistent().set(&coord_key, &true);
+
+        // Check if hospital has also confirmed
+        let hosp_key = (payment_id, "hosp_ok");
+        let hospital_confirmed: bool = env.storage().persistent().get(&hosp_key).unwrap_or(false);
+
+        if !hospital_confirmed {
+            // Coordinator confirmed but waiting for hospital
+            env.events().publish(
+                (symbol_short!("payment"), symbol_short!("coord_ok")),
+                payment_id,
+            );
+            return Ok(());
+        }
+
+        // Both parties confirmed - release payment
         let token_addr = payment.token.clone().ok_or(Error::NotEscrowPayment)?;
         let token_client = token::Client::new(&env, &token_addr);
         token_client.transfer(
@@ -725,6 +756,73 @@ impl PaymentContract {
         index_by_status(&env, PaymentStatus::Released, payment_id);
         update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Released);
         remove_from_request_index(&env, payment.request_id);
+
+        // Clean up confirmation flags
+        env.storage().persistent().remove(&coord_key);
+        env.storage().persistent().remove(&hosp_key);
+
+        env.events().publish(
+            (symbol_short!("payment"), symbol_short!("released")),
+            (payment_id, payment.payee.clone(), payment.amount),
+        );
+        Ok(())
+    }
+
+    /// Hospital confirms receipt of blood units (issue #848 fix).
+    /// Payment is only released when both coordinator and hospital confirm.
+    pub fn confirm_receipt(env: Env, payment_id: u64, hospital: Address) -> Result<(), Error> {
+        hospital.require_auth();
+        Self::require_not_paused(&env)?;
+
+        let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
+
+        if payment.status != PaymentStatus::Locked {
+            return Err(Error::PaymentNotLocked);
+        }
+
+        if payment.payer != hospital {
+            return Err(Error::Unauthorized);
+        }
+
+        // Mark hospital confirmation
+        let hosp_key = (payment_id, "hosp_ok");
+        env.storage().persistent().set(&hosp_key, &true);
+
+        // Check if coordinator has also confirmed
+        let coord_key = (payment_id, "coord_ok");
+        let coordinator_confirmed: bool = env.storage().persistent().get(&coord_key).unwrap_or(false);
+
+        if !coordinator_confirmed {
+            // Hospital confirmed but waiting for coordinator
+            env.events().publish(
+                (symbol_short!("payment"), symbol_short!("hosp_ok")),
+                payment_id,
+            );
+            return Ok(());
+        }
+
+        // Both parties confirmed - release payment
+        let token_addr = payment.token.clone().ok_or(Error::NotEscrowPayment)?;
+        let token_client = token::Client::new(&env, &token_addr);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &payment.payee,
+            &payment.amount,
+        );
+
+        let old_status = payment.status;
+        payment.status = PaymentStatus::Released;
+        payment.updated_at = env.ledger().timestamp();
+        store_payment(&env, &payment);
+
+        remove_from_status_index(&env, old_status, payment_id);
+        index_by_status(&env, PaymentStatus::Released, payment_id);
+        update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Released);
+        remove_from_request_index(&env, payment.request_id);
+
+        // Clean up confirmation flags
+        env.storage().persistent().remove(&coord_key);
+        env.storage().persistent().remove(&hosp_key);
 
         env.events().publish(
             (symbol_short!("payment"), symbol_short!("released")),
@@ -772,9 +870,18 @@ impl PaymentContract {
         Ok(())
     }
 
-    pub fn update_status(env: Env, payment_id: u64, status: PaymentStatus) -> Result<(), Error> {
+    pub fn update_status(
+        env: Env,
+        payment_id: u64,
+        status: PaymentStatus,
+        caller: Address,
+    ) -> Result<(), Error> {
+        caller.require_auth();
         Self::require_not_paused(&env)?;
         let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
+        if caller != payment.payer && !Self::is_admin(&env, &caller) {
+            return Err(Error::Unauthorized);
+        }
         let old_status = payment.status;
         payment.status = status;
         payment.updated_at = env.ledger().timestamp();
@@ -802,9 +909,14 @@ impl PaymentContract {
         payment_id: u64,
         reason: DisputeReason,
         case_id: String,
+        caller: Address,
     ) -> Result<(), Error> {
+        caller.require_auth();
         Self::require_not_paused(&env)?;
         let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
+        if caller != payment.payer && caller != payment.payee {
+            return Err(Error::Unauthorized);
+        }
         let old_status = payment.status;
         payment.status = PaymentStatus::Disputed;
         payment.dispute_reason_code = Some(dispute_reason_to_code(reason));
@@ -826,8 +938,10 @@ impl PaymentContract {
         Ok(())
     }
 
-    pub fn resolve_dispute(env: Env, payment_id: u64) -> Result<(), Error> {
+    pub fn resolve_dispute(env: Env, payment_id: u64, caller: Address) -> Result<(), Error> {
+        caller.require_auth();
         Self::require_not_paused(&env)?;
+        Self::require_admin(&env, &caller)?;
         let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
         if payment.dispute_case_id.is_some() {
             payment.dispute_resolved = true;
@@ -1230,3 +1344,4 @@ impl PaymentContract {
 }
 
 mod test;
+mod test_two_party_confirmation;

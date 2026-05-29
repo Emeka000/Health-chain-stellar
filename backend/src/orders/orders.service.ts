@@ -220,6 +220,8 @@ export class OrdersService {
     const order = await this.findOrderOrFail(orderId, actor);
     await this.dataSource.transaction(async (manager) => {
       order.riderId = riderId;
+      this.stateMachine.transition(order.status as OrderStatus, OrderStatus.DISPATCHED);
+      order.status = OrderStatus.DISPATCHED;
       await manager.save(OrderEntity, order);
       await this.outboxService.publishInTransaction(
         manager,

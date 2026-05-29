@@ -32,6 +32,9 @@ pub struct WorkflowRecord {
     /// Geographic location or identifier supplied by the confirmer at delivery.
     /// None until confirm_delivery() is called.
     pub delivery_location: Option<String>,
+    /// Unix timestamp after which the workflow may be expired by anyone.
+    /// Set at allocation time: `ledger.timestamp() + WORKFLOW_TIMEOUT_SECS`.
+    pub expires_at: u64,
 }
 
 /// Summary of a sustained temperature excursion (mirrors temperature contract type).

@@ -1,0 +1,22 @@
+[package]
+name = "lifebank-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+inventory-contract = { path = "../inventory" }
+payment-contract = { path = "../payments" }
+
+[dev-dependencies]
+proptest = "1.4"
+arbitrary = "1.3"
+
+[[test]]
+name = "fuzz_inventory"
+path = "tests/fuzz_inventory.rs"
+
+[[test]]
+name = "fuzz_payments"
+path = "tests/fuzz_payments.rs"

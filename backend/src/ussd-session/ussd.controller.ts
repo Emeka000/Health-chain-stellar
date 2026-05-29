@@ -10,6 +10,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 
 import { UssdSessionDto } from './ussd.dto';
 import { UssdService } from './ussd.service';
@@ -18,6 +19,7 @@ import { UssdRequest } from './ussd.types';
 import type { Response } from 'express';
 
 @ApiTags('USSD')
+@Throttle({ default: { limit: 5, ttl: 60_000 } })
 @Controller('ussd')
 export class UssdController {
   private readonly logger = new Logger(UssdController.name);

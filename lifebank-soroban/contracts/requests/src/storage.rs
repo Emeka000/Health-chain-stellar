@@ -84,6 +84,44 @@ pub fn is_hospital_authorized(env: &Env, hospital: &Address) -> bool {
         .unwrap_or(false)
 }
 
+pub fn authorize_blood_bank(env: &Env, blood_bank: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::AuthorizedBloodBank(blood_bank.clone()), &true);
+}
+
+pub fn revoke_blood_bank(env: &Env, blood_bank: &Address) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::AuthorizedBloodBank(blood_bank.clone()));
+}
+
+pub fn is_blood_bank_authorized(env: &Env, blood_bank: &Address) -> bool {
+    env.storage()
+        .instance()
+        .get::<DataKey, bool>(&DataKey::AuthorizedBloodBank(blood_bank.clone()))
+        .unwrap_or(false)
+}
+
+pub fn authorize_rider(env: &Env, rider: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::AuthorizedRider(rider.clone()), &true);
+}
+
+pub fn revoke_rider(env: &Env, rider: &Address) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::AuthorizedRider(rider.clone()));
+}
+
+pub fn is_rider_authorized(env: &Env, rider: &Address) -> bool {
+    env.storage()
+        .instance()
+        .get::<DataKey, bool>(&DataKey::AuthorizedRider(rider.clone()))
+        .unwrap_or(false)
+}
+
 pub fn set_request(env: &Env, request: &BloodRequest) {
     env.storage()
         .persistent()

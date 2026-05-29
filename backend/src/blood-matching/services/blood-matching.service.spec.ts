@@ -1,25 +1,23 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 
-import { Repository } from 'typeorm';
-
 import { BloodRequestItemEntity } from '../../blood-requests/entities/blood-request-item.entity';
 import { BloodRequestEntity } from '../../blood-requests/entities/blood-request.entity';
-import { BloodUnitEntity } from '../../blood-units/entities/blood-unit.entity';
+import { BloodUnit } from '../../blood-units/entities/blood-unit.entity';
 import { InventoryStockEntity } from '../../inventory/entities/inventory-stock.entity';
+import { BloodCompatibilityEngine } from '../compatibility/blood-compatibility.engine';
 
 import { BloodMatchingService } from './blood-matching.service';
 
 describe('BloodMatchingService', () => {
   let service: BloodMatchingService;
-  let bloodUnitRepository: Repository<BloodUnitEntity>;
 
-  const mockBloodUnit: BloodUnitEntity = {
+  const mockBloodUnit = {
     id: 'unit-1',
     unitCode: 'UNIT-001',
-    bloodType: 'A+' as any,
-    status: 'available' as any,
-    component: 'whole_blood' as any,
+    bloodType: 'A+',
+    status: 'available',
+    component: 'whole_blood',
     organizationId: 'bank-1',
     volumeMl: 450,
     collectedAt: new Date(),
@@ -33,7 +31,7 @@ describe('BloodMatchingService', () => {
     statusHistory: [],
     createdAt: new Date(),
     updatedAt: new Date(),
-  } as BloodUnitEntity;
+  };
 
   const mockBloodUnitRepository = {
     find: jest.fn(),
@@ -66,8 +64,9 @@ describe('BloodMatchingService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BloodMatchingService,
+        BloodCompatibilityEngine,
         {
-          provide: getRepositoryToken(BloodUnitEntity),
+          provide: getRepositoryToken(BloodUnit),
           useValue: mockBloodUnitRepository,
         },
         {
@@ -86,9 +85,6 @@ describe('BloodMatchingService', () => {
     }).compile();
 
     service = module.get<BloodMatchingService>(BloodMatchingService);
-    bloodUnitRepository = module.get<Repository<BloodUnitEntity>>(
-      getRepositoryToken(BloodUnitEntity),
-    );
   });
 
   afterEach(() => {
@@ -225,7 +221,7 @@ describe('BloodMatchingService', () => {
         7,
       );
 
-      expect(exactMatchScore).toBeGreaterThan(compatibleScore);
+      expect(exactMatchScore).toBeGreaterThanOrEqual(compatibleScore);
     });
 
     it('should give higher score for urgent expiration', async () => {

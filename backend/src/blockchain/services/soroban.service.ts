@@ -192,10 +192,10 @@ export class SorobanService {
    */
   async getQueueMetrics(): Promise<QueueMetrics> {
     const detailed = await this.queueMetricsService.getDetailedMetrics();
-    
-    // Calculate processing rate from successful jobs over time since reset
-    const sinceMs = Date.now() - Date.parse(detailed.since);
-    const processingRate = sinceMs > 0 ? (detailed.counters.success / (sinceMs / 1000)) : null;
+
+    // Calculate processing rate from Redis rolling counter
+    const lastMinuteCount = await this.txQueue.client.get('soroban:completed:last_minute');
+    const processingRate = lastMinuteCount ? Number(lastMinuteCount) / 60 : 0;
 
     return {
       queueDepth: detailed.live.waiting + detailed.live.active,
@@ -500,5 +500,17 @@ export class SorobanService {
     );
 
     return result;
+  }
+
+  private async handleAllocationEvent(payload: any): Promise<void> {
+    this.logger.debug('Processing allocation event from blockchain', { payload });
+  }
+
+  private async handleDeliveryEvent(payload: any): Promise<void> {
+    this.logger.debug('Processing delivery event from blockchain', { payload });
+  }
+
+  private async handlePaymentReleasedEvent(payload: any): Promise<void> {
+    this.logger.debug('Processing payment released event from blockchain', { payload });
   }
 }

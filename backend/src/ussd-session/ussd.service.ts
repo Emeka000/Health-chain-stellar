@@ -45,16 +45,24 @@ export class UssdService {
       !session.selectedQuantity ||
       !session.selectedBloodBankId
     ) {
+      this.logger.error(
+        `Incomplete session data for order creation | session ${session.sessionId}`,
+      );
       throw new Error('Incomplete session data for order creation');
     }
 
-    await this.orderService.createOrder({
-      userId: session.userId,
-      bloodType: session.selectedBloodType,
-      quantity: session.selectedQuantity,
-      bloodBankId: session.selectedBloodBankId,
-      channel: 'USSD',
-    });
+    try {
+      await this.orderService.createOrder({
+        userId: session.userId,
+        bloodType: session.selectedBloodType,
+        quantity: session.selectedQuantity,
+        bloodBankId: session.selectedBloodBankId,
+        channel: 'USSD',
+      });
+    } catch (err) {
+      this.logger.error('Order creation failed in USSD flow', err);
+      throw err;
+    }
 
     this.logger.log(
       `Order placed via USSD | user ${session.userId} | ${session.selectedBloodType} x${session.selectedQuantity} from ${session.selectedBloodBankId}`,

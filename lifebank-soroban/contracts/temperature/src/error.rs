@@ -9,6 +9,8 @@ pub enum ContractError {
     ThresholdNotFound = 602,
     InvalidThreshold = 603,
     AlreadyInitialized = 604,
+    ChangeNotReady = 605,
+    NoPendingChange = 606,
     ContractPaused = 605,
     /// Coordinator contract address not configured
     CoordinatorNotSet = 606,

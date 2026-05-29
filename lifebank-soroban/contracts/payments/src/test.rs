@@ -207,8 +207,8 @@ fn test_terminal_payment_does_not_block_new_active_payment_for_different_request
     // Payments for distinct request IDs must never interfere.
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
-    let (id1, _, _) = make_payment(&env, &client, 100, 200);
-    client.update_status(&id1, &PaymentStatus::Refunded);
+    let (id1, payer1, _) = make_payment(&env, &client, 100, 200);
+    client.update_status(&id1, &PaymentStatus::Refunded, &payer1);
 
     // A payment for a different request must still be accepted.
     let (id2, _, _) = make_payment(&env, &client, 101, 300);
@@ -310,12 +310,12 @@ fn test_get_payments_by_payee_pagination() {
 fn test_get_payments_by_status_filters_correctly() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
-    let (id1, _, _) = make_payment(&env, &client, 1, 100);
-    let (id2, _, _) = make_payment(&env, &client, 2, 200);
+    let (id1, payer1, _) = make_payment(&env, &client, 1, 100);
+    let (id2, payer2, _) = make_payment(&env, &client, 2, 200);
     make_payment(&env, &client, 3, 300);
 
-    client.update_status(&id1, &PaymentStatus::Locked);
-    client.update_status(&id2, &PaymentStatus::Locked);
+    client.update_status(&id1, &PaymentStatus::Locked, &payer1);
+    client.update_status(&id2, &PaymentStatus::Locked, &payer2);
 
     let locked = client.get_payments_by_status(&PaymentStatus::Locked, &0u32, &20u32);
     assert_eq!(locked.items.len(), 2);
@@ -340,8 +340,8 @@ fn test_get_payments_by_status_pagination() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
     for i in 1u64..=5 {
-        let (id, _, _) = make_payment(&env, &client, i, 100);
-        client.update_status(&id, &PaymentStatus::Refunded);
+        let (id, payer, _) = make_payment(&env, &client, i, 100);
+        client.update_status(&id, &PaymentStatus::Refunded, &payer);
     }
 
     let page0 = client.get_payments_by_status(&PaymentStatus::Refunded, &0u32, &3u32);
@@ -372,16 +372,16 @@ fn test_statistics_counts_and_totals_correctly() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
 
-    let (id1, _, _) = make_payment(&env, &client, 1, 1000);
-    let (id2, _, _) = make_payment(&env, &client, 2, 2000);
-    let (id3, _, _) = make_payment(&env, &client, 3, 500);
-    let (id4, _, _) = make_payment(&env, &client, 4, 750);
+    let (id1, payer1, _) = make_payment(&env, &client, 1, 1000);
+    let (id2, payer2, _) = make_payment(&env, &client, 2, 2000);
+    let (id3, payer3, _) = make_payment(&env, &client, 3, 500);
+    let (id4, payer4, _) = make_payment(&env, &client, 4, 750);
     make_payment(&env, &client, 5, 300); // stays Pending
 
-    client.update_status(&id1, &PaymentStatus::Locked);
-    client.update_status(&id2, &PaymentStatus::Locked);
-    client.update_status(&id3, &PaymentStatus::Released);
-    client.update_status(&id4, &PaymentStatus::Refunded);
+    client.update_status(&id1, &PaymentStatus::Locked, &payer1);
+    client.update_status(&id2, &PaymentStatus::Locked, &payer2);
+    client.update_status(&id3, &PaymentStatus::Released, &payer3);
+    client.update_status(&id4, &PaymentStatus::Refunded, &payer4);
 
     let stats = client.get_payment_statistics();
     assert_eq!(stats.count_locked, 2);
@@ -396,12 +396,12 @@ fn test_statistics_counts_and_totals_correctly() {
 fn test_statistics_ignores_pending_cancelled_disputed() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
-    let (id1, _, _) = make_payment(&env, &client, 1, 100);
-    let (id2, _, _) = make_payment(&env, &client, 2, 200);
+    let (id1, payer1, _) = make_payment(&env, &client, 1, 100);
+    let (id2, payer2, _) = make_payment(&env, &client, 2, 200);
     make_payment(&env, &client, 3, 300); // stays Pending
 
-    client.update_status(&id1, &PaymentStatus::Cancelled);
-    client.update_status(&id2, &PaymentStatus::Disputed);
+    client.update_status(&id1, &PaymentStatus::Cancelled, &payer1);
+    client.update_status(&id2, &PaymentStatus::Disputed, &payer2);
 
     let stats = client.get_payment_statistics();
     assert_eq!(stats.count_locked, 0);
@@ -473,13 +473,13 @@ fn test_timeline_unknown_request_returns_empty() {
 fn test_update_status_changes_payment_status() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
-    let (id, _, _) = make_payment(&env, &client, 1, 500);
+    let (id, payer, _) = make_payment(&env, &client, 1, 500);
 
-    client.update_status(&id, &PaymentStatus::Locked);
+    client.update_status(&id, &PaymentStatus::Locked, &payer);
     let p = client.get_payment(&id);
     assert_eq!(p.status, PaymentStatus::Locked);
 
-    client.update_status(&id, &PaymentStatus::Released);
+    client.update_status(&id, &PaymentStatus::Released, &payer);
     let p = client.get_payment(&id);
     assert_eq!(p.status, PaymentStatus::Released);
 }
@@ -488,7 +488,8 @@ fn test_update_status_changes_payment_status() {
 fn test_update_status_returns_not_found_for_missing_payment() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
-    let result = client.try_update_status(&999u64, &PaymentStatus::Locked);
+    let caller = Address::generate(&env);
+    let result = client.try_update_status(&999u64, &PaymentStatus::Locked, &caller);
     assert!(result.is_err());
 }
 
@@ -531,6 +532,30 @@ fn test_create_pledge_rejects_zero_interval() {
     let region = soroban_sdk::String::from_str(&env, "r");
     let r = client.try_create_pledge(&donor, &100i128, &0u64, &pool, &cause, &region, &false);
     assert!(r.is_err());
+}
+
+#[test]
+fn test_create_pledge_rejects_zero_amount() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let donor = Address::generate(&env);
+    let pool = soroban_sdk::String::from_str(&env, "pool");
+    let cause = soroban_sdk::String::from_str(&env, "c");
+    let region = soroban_sdk::String::from_str(&env, "r");
+    let result = client.try_create_pledge(&donor, &0i128, &86_400u64, &pool, &cause, &region, &false);
+    assert_eq!(result, Err(Ok(Error::InvalidAmount)), "Zero amount pledge must be rejected");
+}
+
+#[test]
+fn test_create_pledge_rejects_negative_amount() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let donor = Address::generate(&env);
+    let pool = soroban_sdk::String::from_str(&env, "pool");
+    let cause = soroban_sdk::String::from_str(&env, "c");
+    let region = soroban_sdk::String::from_str(&env, "r");
+    let result = client.try_create_pledge(&donor, &-500i128, &86_400u64, &pool, &cause, &region, &false);
+    assert_eq!(result, Err(Ok(Error::InvalidAmount)), "Negative amount pledge must be rejected");
 }
 
 // ── Circuit breaker tests ─────────────────────────────────────────────────────
@@ -728,7 +753,7 @@ fn test_process_expired_disputes_refunds_after_timeout() {
 
     // Record dispute at t=1000; updated_at becomes 1000.
     client.record_dispute(&pid, &DisputeReason::FailedDelivery,
-        &soroban_sdk::String::from_str(&env, "case-1"));
+        &soroban_sdk::String::from_str(&env, "case-1"), &hospital);
 
     // Set a short timeout of 500s.
     client.set_dispute_timeout(&admin, &500u64);
@@ -758,7 +783,7 @@ fn test_process_expired_disputes_skips_non_expired() {
     env.ledger().with_mut(|l| l.timestamp = 1_000);
     let pid = client.create_escrow(&2u64, &hospital, &payee, &500i128, &token_id);
     client.record_dispute(&pid, &DisputeReason::Other,
-        &soroban_sdk::String::from_str(&env, "case-2"));
+        &soroban_sdk::String::from_str(&env, "case-2"), &hospital);
 
     client.set_dispute_timeout(&admin, &5_000u64);
 
@@ -809,4 +834,115 @@ fn test_vesting_events_emitted() {
     // Events are published — verify no panic and schedule is updated
     let schedule = client.get_vesting(&donor);
     assert_eq!(schedule.claimed, 200_000i128);
+}
+
+// ── SAC token integration tests (issue #853) ───────────────────────────────────
+
+/// create_escrow transfers the exact amount from the payer to the contract.
+#[test]
+fn test_create_escrow_transfers_tokens_to_contract() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
+
+    let hospital = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 5_000);
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token_id);
+
+    assert_eq!(token_client.balance(&hospital), 5_000);
+    assert_eq!(token_client.balance(&cid), 0);
+
+    client.create_escrow(&1u64, &hospital, &payee, &3_000i128, &token_id);
+
+    assert_eq!(token_client.balance(&hospital), 2_000, "Payer should have 5000 - 3000 = 2000 tokens left");
+    assert_eq!(token_client.balance(&cid), 3_000, "Contract should hold the escrowed 3000 tokens");
+}
+
+/// release_escrow transfers the locked amount from the contract to the payee.
+#[test]
+fn test_release_escrow_transfers_tokens_to_payee() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
+
+    let hospital = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 2_000);
+
+    let payment_id = client.create_escrow(&1u64, &hospital, &payee, &2_000i128, &token_id);
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token_id);
+    assert_eq!(token_client.balance(&cid), 2_000);
+    assert_eq!(token_client.balance(&payee), 0);
+
+    client.release_escrow(&admin, &payment_id);
+
+    assert_eq!(token_client.balance(&cid), 0, "Contract should have no tokens after release");
+    assert_eq!(token_client.balance(&payee), 2_000, "Payee should receive the escrowed tokens");
+
+    let p = client.get_payment(&payment_id);
+    assert_eq!(p.status, PaymentStatus::Released);
+}
+
+/// refund_escrow returns the locked amount from the contract back to the payer.
+#[test]
+fn test_refund_escrow_returns_tokens_to_payer() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
+
+    let hospital = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 4_000);
+
+    let payment_id = client.create_escrow(&1u64, &hospital, &payee, &4_000i128, &token_id);
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token_id);
+    assert_eq!(token_client.balance(&hospital), 0);
+    assert_eq!(token_client.balance(&cid), 4_000);
+
+    client.refund_escrow(&admin, &payment_id);
+
+    assert_eq!(token_client.balance(&cid), 0, "Contract should have no tokens after refund");
+    assert_eq!(token_client.balance(&hospital), 4_000, "Payer should receive full refund");
+
+    let p = client.get_payment(&payment_id);
+    assert_eq!(p.status, PaymentStatus::Refunded);
+}
+
+/// create_escrow rejects a zero amount.
+#[test]
+fn test_create_escrow_rejects_zero_amount() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
+
+    let hospital = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 1_000);
+
+    let result = client.try_create_escrow(&1u64, &hospital, &payee, &0i128, &token_id);
+    assert_eq!(result, Err(Ok(Error::InvalidAmount)), "Zero amount escrow must be rejected");
+}
+
+/// create_escrow rejects a negative amount.
+#[test]
+fn test_create_escrow_rejects_negative_amount() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
+
+    let hospital = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 1_000);
+
+    let result = client.try_create_escrow(&1u64, &hospital, &payee, &-1i128, &token_id);
+    assert_eq!(result, Err(Ok(Error::InvalidAmount)), "Negative amount escrow must be rejected");
 }

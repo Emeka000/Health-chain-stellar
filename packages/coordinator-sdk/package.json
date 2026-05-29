@@ -1,0 +1,21 @@
+{
+  "name": "@healthchain/coordinator-sdk",
+  "version": "0.0.1",
+  "description": "TypeScript client bindings for the HealthChain Coordinator Soroban contract",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^14.5.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  },
+  "files": [
+    "dist",
+    "src"
+  ]
+}

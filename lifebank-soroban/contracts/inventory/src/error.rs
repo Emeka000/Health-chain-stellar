@@ -43,4 +43,8 @@ pub enum ContractError {
 
     // Circuit breaker (160)
     ContractPaused = 160,
+
+    // Role-based access control (170-179)
+    InvalidRole = 170,
+    InsufficientRolePermission = 171,
 }

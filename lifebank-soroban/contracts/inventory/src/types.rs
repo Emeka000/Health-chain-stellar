@@ -247,6 +247,20 @@ impl BloodUnit {
     }
 }
 
+/// Role-based access control for blood unit status transitions
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Role {
+    /// Contract administrator - can perform any operation
+    Admin,
+    /// Blood bank operator - manages blood inventory and unit ownership
+    BloodBank,
+    /// Delivery rider - can mark units as InTransit
+    Rider,
+    /// Hospital staff - can mark units as Delivered
+    Hospital,
+}
+
 /// Storage key types for efficient querying
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -274,6 +288,9 @@ pub enum DataKey {
 
     /// Admin address
     Admin,
+
+    /// Role assignment: address -> Role
+    Role(Address),
 
     /// Status change history for a blood unit — stores current page number
     StatusHistory(u64),
