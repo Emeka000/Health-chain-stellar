@@ -85,11 +85,11 @@ export class SurgeSimulationService {
 
     let baselineStockUnits = dto.overrideStockUnits;
     if (baselineStockUnits === undefined) {
-      const rows = await this.inventoryRepo.find();
-      baselineStockUnits = rows.reduce(
-        (sum, r) => sum + (Number(r.availableUnitsMl) || 0),
-        0,
-      );
+      const _aggResult = await this.inventoryRepo
+        .createQueryBuilder('s')
+        .select('SUM(s.availableUnitsMl)', 'total')
+        .getRawOne<{ total: string }>();
+      baselineStockUnits = parseInt(_aggResult?.total ?? '0', 10);
     }
 
     let riderCapacityUnits = dto.overrideRiderCapacityUnits;
