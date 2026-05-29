@@ -27,6 +27,7 @@ import { BloodUnitEntity } from './entities/blood-unit.entity';
 interface AuthenticatedUserContext {
   id: string;
   role: string;
+  organizationId?: string;
 }
 
 @Injectable()

@@ -18,6 +18,7 @@ import {
 } from '../common/pagination';
 
 import { InventoryStockEntity } from './entities/inventory-stock.entity';
+import { InventoryRepository } from './repositories/inventory.repository';
 
 @Injectable()
 export class InventoryService {
@@ -25,6 +26,7 @@ export class InventoryService {
     @InjectRepository(InventoryStockEntity)
     private readonly inventoryRepo: Repository<InventoryStockEntity>,
     private readonly unitInvariant: ReservedUnitInvariantService,
+    private readonly customInventoryRepo: InventoryRepository,
   ) {}
 
   async findAll(
@@ -130,6 +132,11 @@ export class InventoryService {
       message: 'Stock updated successfully',
       data,
     };
+  }
+
+  async getStockAggregation() {
+    const data = await this.customInventoryRepo.getStockAggregationByBloodType();
+    return { data };
   }
 
   async getLowStockItems(threshold: number = 10) {

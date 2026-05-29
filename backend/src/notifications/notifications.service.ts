@@ -1,5 +1,5 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 
 import { Queue } from 'bullmq';
@@ -52,7 +52,7 @@ export class NotificationsService {
           `Template compilation failed for key ${templateKey}`,
           err,
         );
-        throw new Error('Template compilation failed');
+        throw new InternalServerErrorException('Template compilation failed');
       }
 
       // 3. Create Notification DB entry

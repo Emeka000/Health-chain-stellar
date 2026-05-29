@@ -118,10 +118,25 @@ export class WorkflowOrchestrationService {
 
   /**
    * Rollback – admin-only. Releases units and refunds payment on-chain.
+   * Only allowed for orders in PENDING, CONFIRMED, DISPATCHED, or IN_TRANSIT status.
    */
   async rollback(params: {
     requestId: string;
   }): Promise<{ jobId: string }> {
+    const order = await this.orderRepo.findOne({ where: { id: params.requestId } });
+    if (!order) throw new BadRequestException(`Order ${params.requestId} not found`);
+    const rollbackableStatuses = [
+      OrderStatus.PENDING,
+      OrderStatus.CONFIRMED,
+      OrderStatus.DISPATCHED,
+      OrderStatus.IN_TRANSIT,
+    ];
+    if (!rollbackableStatuses.includes(order.status)) {
+      throw new BadRequestException(
+        `Cannot rollback order with status ${order.status}. Allowed: ${rollbackableStatuses.join(', ')}`,
+      );
+    }
+
     const jobId = await this.soroban.submitTransaction({
       contractMethod: 'rollback',
       args: [params.requestId],

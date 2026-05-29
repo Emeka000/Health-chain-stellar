@@ -18,6 +18,7 @@ import { RestockingCampaignEntity } from './entities/restocking-campaign.entity'
 import { InventoryEventListener } from './inventory-event.listener';
 import { InventoryForecastingService } from './inventory-forecasting.service';
 import { InventoryController } from './inventory.controller';
+import { InventoryRepository } from './repositories/inventory.repository';
 import { InventoryService } from './inventory.service';
 import { DonorOutreachProcessor } from './processors/donor-outreach.processor';
 import { InventoryAlertService } from './services/inventory-alert.service';
@@ -46,6 +47,7 @@ import { RestockingCampaignController } from './controllers/restocking-campaign.
   controllers: [InventoryController, InventoryAlertController, RestockingCampaignController],
   providers: [
     InventoryService,
+    InventoryRepository,
     InventoryForecastingService,
     InventoryEventListener,
     DonorOutreachProcessor,
