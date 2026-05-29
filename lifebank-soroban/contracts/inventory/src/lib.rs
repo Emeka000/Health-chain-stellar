@@ -657,6 +657,7 @@ impl InventoryContract {
         let reservation = Reservation {
             unit_ids: unit_ids.clone(),
             requester: requester.clone(),
+            reserved_by: requester.clone(),
             created_timestamp: current_time,
             expiration_timestamp: expiration,
             request_id,
@@ -682,16 +683,27 @@ impl InventoryContract {
 
     /// Release a reservation, returning all units to `Available`.
     ///
-    /// Can be called by anyone — the reservation record is the authority.
+    /// Can only be called by the original reserver or admin.
     /// If the reservation has already expired (ledger time > expiration_timestamp)
     /// the call still succeeds so callers can clean up stale reservations.
     ///
     /// Records a status history entry and emits a status-change event for every
     /// unit that transitions Reserved → Available, preserving the full audit trail.
-    pub fn release_reservation(env: Env, reservation_id: u64) -> Result<(), ContractError> {
+    pub fn release_reservation(env: Env, caller: Address, reservation_id: u64) -> Result<(), ContractError> {
+        caller.require_auth();
         Self::require_not_paused(&env)?;
+        
         let reservation = storage::get_reservation(&env, reservation_id)
             .ok_or(ContractError::ReservationNotFound)?;
+
+        // Verify caller is either the original reserver or admin
+        if caller != reservation.reserved_by {
+            // Allow admin to release any reservation
+            let admin = storage::get_admin(&env);
+            if caller != admin {
+                return Err(ContractError::Unauthorized);
+            }
+        }
 
         for i in 0..reservation.unit_ids.len() {
             let unit_id = reservation.unit_ids.get(i).ok_or(ContractError::NotFound)?;
@@ -766,6 +778,24 @@ impl InventoryContract {
         }
 
         Ok(reservation_ids)
+    }
+
+    /// Upgrade the contract to a new WASM hash. Only admin can call this.
+    ///
+    /// # Arguments
+    /// * `admin` - Admin address that must authorize the upgrade
+    /// * `new_wasm_hash` - Hash of the new WASM code to upgrade to
+    ///
+    /// # Errors
+    /// * `Unauthorized` - If caller is not the admin
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), ContractError> {
+        admin.require_auth();
+        let stored_admin = storage::get_admin(&env);
+        if admin != stored_admin {
+            return Err(ContractError::Unauthorized);
+        }
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        Ok(())
     }
 }
 

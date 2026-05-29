@@ -19,11 +19,11 @@ mod validation;
 use soroban_sdk::{contract, contractimpl, Address, Env, String};
 
 mod inventory_client {
-    use soroban_sdk::{contractclient, Env};
+    use soroban_sdk::{contractclient, Address, Env};
 
     #[contractclient(name = "InventoryContractClient")]
     pub trait InventoryContractInterface {
-        fn release_reservation(env: Env, reservation_id: u64);
+        fn release_reservation(env: Env, caller: Address, reservation_id: u64);
     }
 }
 
@@ -81,22 +81,10 @@ impl RequestContract {
         if let Some(res_id) = request.reservation_id {
             let inventory_addr = storage::get_inventory_contract(env);
             let inv_client = InventoryContractClient::new(env, &inventory_addr);
-            let result = inv_client.try_release_reservation(&res_id);
-
-            match result {
-                Ok(_) => {
-                    request.reservation_id = None;
-                    true
-                }
-                Err(_) => {
-                    env.events().publish(
-                        (soroban_sdk::symbol_short!("res_err"),),
-                        (res_id,),
-                    );
-                    request.reservation_id = None;
-                    true
-                }
-            }
+            let admin = storage::get_admin(env);
+            inv_client.release_reservation(&admin, &res_id);
+            request.reservation_id = None;
+            true
         } else {
             false
         }
@@ -546,77 +534,22 @@ impl RequestContract {
         storage::is_initialized(&env)
     }
 
-    /// Update request status with role-based access control
-    ///
-    /// Only specific roles can perform specific status transitions:
-    /// - BloodBank: Pending → InProgress (marking request as being processed)
-    /// - Rider: InProgress → InTransit (marking request as in delivery)
-    /// - Hospital: InTransit → Fulfilled (confirming delivery received)
-    /// - Hospital: Pending → Cancelled (cancelling their own request)
+    /// Upgrade the contract to a new WASM hash. Only admin can call this.
     ///
     /// # Arguments
-    /// * `env` - Contract environment
-    /// * `caller` - Address performing the status update (must be authenticated)
-    /// * `request_id` - ID of the request to update
-    /// * `new_status` - New status to set
+    /// * `admin` - Admin address that must authorize the upgrade
+    /// * `new_wasm_hash` - Hash of the new WASM code to upgrade to
     ///
     /// # Errors
-    /// - `RequestNotFound`: Request with given ID doesn't exist
-    /// - `UnauthorizedStatusTransition`: Caller's role doesn't allow this transition
-    /// - `InvalidStatusTransition`: The status transition itself is not valid
-    pub fn update_request_status(
-        env: Env,
-        caller: Address,
-        request_id: u64,
-        new_status: RequestStatus,
-    ) -> Result<BloodRequest, ContractError> {
-        caller.require_auth();
+    /// * `Unauthorized` - If caller is not the admin
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), ContractError> {
+        admin.require_auth();
         storage::require_initialized(&env)?;
-
-        let mut request = storage::get_request(&env, request_id)
-            .ok_or(ContractError::RequestNotFound)?;
-
-        let current_status = request.status;
-
-        // Determine caller's role
-        let caller_role = if storage::is_hospital_authorized(&env, &caller) {
-            types::Role::Hospital
-        } else if storage::is_blood_bank_authorized(&env, &caller) {
-            types::Role::BloodBank
-        } else if storage::is_rider_authorized(&env, &caller) {
-            types::Role::Rider
-        } else {
+        let stored_admin = storage::get_admin(&env);
+        if admin != stored_admin {
             return Err(ContractError::Unauthorized);
-        };
-
-        // Validate role-based status transitions
-        use types::{RequestStatus::*, Role};
-        let is_authorized = matches!(
-            (caller_role, &current_status, &new_status),
-            (Role::BloodBank, Pending, Approved)
-                | (Role::Rider, Approved, Fulfilled)
-                | (Role::Hospital, Fulfilled, Fulfilled)
-                | (Role::Hospital, Pending, Cancelled)
-        );
-
-        if !is_authorized {
-            return Err(ContractError::UnauthorizedStatusTransition);
         }
-
-        // Update the request
-        request.status = new_status;
-        storage::set_request(&env, &request);
-
-        events::emit_status_updated(&env, request_id, current_status, new_status, &caller);
-
-        Ok(request)
-    }
-
-    pub fn is_blood_bank_authorized(env: Env, blood_bank: Address) -> bool {
-        storage::is_blood_bank_authorized(&env, &blood_bank)
-    }
-
-    pub fn is_rider_authorized(env: Env, rider: Address) -> bool {
-        storage::is_rider_authorized(&env, &rider)
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        Ok(())
     }
 }

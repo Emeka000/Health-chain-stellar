@@ -323,6 +323,7 @@ pub enum DataKey {
 pub struct Reservation {
     pub unit_ids: Vec<u64>,
     pub requester: Address,
+    pub reserved_by: Address,
     pub created_timestamp: u64,
     pub expiration_timestamp: u64,
     pub request_id: u64,

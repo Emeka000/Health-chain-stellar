@@ -186,15 +186,37 @@ fn get_admin(env: &Env) -> Address {
 }
 
 fn load_workflow(env: &Env, request_id: u64) -> Option<WorkflowRecord> {
+    const WORKFLOW_TTL_LEDGERS: u32 = 535_680; // ~30 days at 5s/ledger
+    
+    let key = DataKey::Workflow(request_id);
+    
+    // Extend TTL on every read
+    env.storage().persistent().extend_ttl(
+        &key,
+        WORKFLOW_TTL_LEDGERS,
+        WORKFLOW_TTL_LEDGERS,
+    );
+    
     env.storage()
         .persistent()
-        .get(&DataKey::Workflow(request_id))
+        .get(&key)
 }
 
 fn save_workflow(env: &Env, wf: &WorkflowRecord) {
+    const WORKFLOW_TTL_LEDGERS: u32 = 535_680; // ~30 days at 5s/ledger
+    
+    let key = DataKey::Workflow(wf.request_id);
+    
     env.storage()
         .persistent()
-        .set(&DataKey::Workflow(wf.request_id), wf);
+        .set(&key, wf);
+        
+    // Extend TTL on every write
+    env.storage().persistent().extend_ttl(
+        &key,
+        WORKFLOW_TTL_LEDGERS,
+        WORKFLOW_TTL_LEDGERS,
+    );
 }
 
 // ── Contract ───────────────────────────────────────────────────────────────────
@@ -761,6 +783,28 @@ impl CoordinatorContract {
         if !env.storage().instance().has(&DataKey::Admin) {
             return Err(CoordinatorError::NotInitialized);
         }
+        Ok(())
+    }
+
+    /// Upgrade the contract to a new WASM hash. Only admin can call this.
+    ///
+    /// # Arguments
+    /// * `admin` - Admin address that must authorize the upgrade
+    /// * `new_wasm_hash` - Hash of the new WASM code to upgrade to
+    ///
+    /// # Errors
+    /// * `Unauthorized` - If caller is not the admin
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), CoordinatorError> {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(CoordinatorError::Unauthorized)?;
+        if admin != stored {
+            return Err(CoordinatorError::Unauthorized);
+        }
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
     }
 }
