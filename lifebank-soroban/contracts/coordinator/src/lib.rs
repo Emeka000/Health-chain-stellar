@@ -20,6 +20,12 @@ pub use types::{DataKey, ExcursionSummary, WorkflowRecord, WorkflowStatus};
 
 use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String, Vec};
 
+/// Default workflow expiry window: 6 hours expressed in seconds.
+/// After `allocate_units` is called, if `confirm_delivery` is never invoked
+/// within this window, anyone may call `expire_workflow` to roll back the
+/// allocation and free the reserved units and escrowed payment.
+const WORKFLOW_TIMEOUT_SECS: u64 = 6 * 60 * 60;
+
 // ── Minimal interface types mirroring the domain contracts ────────────────────
 // These allow the coordinator to inspect cross-contract return values without
 // importing compiled WASMs. The domain contracts must keep these in sync.
@@ -391,6 +397,7 @@ impl CoordinatorContract {
                 status: WorkflowStatus::Allocated,
                 delivery_confirmed: false,
                 delivery_location: None,
+                expires_at: env.ledger().timestamp() + WORKFLOW_TIMEOUT_SECS,
             },
         );
 
@@ -563,6 +570,87 @@ impl CoordinatorContract {
             (
                 symbol_short!("coord"),
                 symbol_short!("rollbk"),
+                symbol_short!("v1"),
+            ),
+            request_id,
+        );
+
+        Ok(())
+    }
+
+    /// Expire a stale workflow once its deadline has elapsed.
+    ///
+    /// Any caller may invoke this once `ledger.timestamp() >= record.expires_at`.
+    /// The workflow must be in the `Allocated` state (i.e. `confirm_delivery`
+    /// was never called).  On success the workflow is rolled back: reserved
+    /// inventory units are released back to `Available` and the escrowed
+    /// payment is refunded to the payer.
+    ///
+    /// # Errors
+    /// - `WorkflowNotFound`    — no workflow exists for `request_id`
+    /// - `WorkflowNotExpired`  — the expiry deadline has not yet passed
+    /// - `InvalidWorkflowState`— workflow is not in the `Allocated` state
+    ///   (already delivered, settled, or rolled back)
+    pub fn expire_workflow(
+        env: Env,
+        request_id: u64,
+    ) -> Result<(), CoordinatorError> {
+        Self::require_initialized(&env)?;
+
+        let wf = load_workflow(&env, request_id).ok_or(CoordinatorError::WorkflowNotFound)?;
+
+        if env.ledger().timestamp() < wf.expires_at {
+            return Err(CoordinatorError::WorkflowNotExpired);
+        }
+
+        if wf.status != WorkflowStatus::Allocated {
+            return Err(CoordinatorError::InvalidWorkflowState);
+        }
+
+        // Reuse the existing rollback logic to release units and refund payment.
+        // We call `get_admin` only to satisfy the inventory client's admin
+        // parameter — the coordinator itself is authorised to update inventory.
+        let inv_addr: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::InventoryContract)
+            .unwrap();
+        let inv_client = InventoryContractClient::new(&env, &inv_addr);
+        let inv_admin = inv_client.get_admin();
+
+        for i in 0..wf.unit_ids.len() {
+            let uid = wf.unit_ids.get(i).unwrap();
+            inv_client
+                .try_update_status(&uid, &BloodStatus::Available, &inv_admin, &None)
+                .map_err(|_| CoordinatorError::InventoryUpdateFailed)?
+                .map_err(|_| CoordinatorError::InventoryUpdateFailed)?;
+        }
+
+        let pay_addr: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PaymentContract)
+            .unwrap();
+        let pay_client = PaymentContractClient::new(&env, &pay_addr);
+        let payment = pay_client
+            .try_get_payment(&wf.payment_id)
+            .map_err(|_| CoordinatorError::PaymentNotFound)?
+            .map_err(|_| CoordinatorError::PaymentNotFound)?;
+        if payment.status == PaymentStatus::Locked {
+            pay_client
+                .try_update_status(&wf.payment_id, &PaymentStatus::Refunded)
+                .map_err(|_| CoordinatorError::PaymentUpdateFailed)?
+                .map_err(|_| CoordinatorError::PaymentUpdateFailed)?;
+        }
+
+        let mut expired_wf = wf;
+        expired_wf.status = WorkflowStatus::RolledBack;
+        save_workflow(&env, &expired_wf);
+
+        env.events().publish(
+            (
+                symbol_short!("coord"),
+                symbol_short!("expired"),
                 symbol_short!("v1"),
             ),
             request_id,

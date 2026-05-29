@@ -532,3 +532,99 @@ fn test_flag_temperature_breach_blocked_when_paused() {
     let payment = MockPaymentContractClient::new(&h.env, &h.pay_id).get_payment(&payment_id);
     assert_eq!(payment.status, PaymentStatus::Locked);
 }
+
+// ── Workflow expiry tests (issue #855) ────────────────────────────────────────
+
+use soroban_sdk::testutils::Ledger as _;
+
+/// expire_workflow succeeds once the deadline has elapsed, releasing units
+/// and refunding the escrowed payment.
+#[test]
+fn test_expire_workflow_rolls_back_after_deadline() {
+    let h = setup();
+    h.env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+    seed_pending_request(&h, 1);
+    let unit_id = register_unit(&h);
+    let payment_id = create_locked_payment(&h, 1);
+
+    h.coord.allocate_units(&1u64, &vec![&h.env, unit_id], &payment_id, &h.admin);
+
+    let wf = h.coord.get_workflow(&1u64);
+    assert_eq!(wf.status, WorkflowStatus::Allocated);
+    // expires_at should be 1_000 + 6 * 3600 = 22_600
+    assert_eq!(wf.expires_at, 1_000 + 6 * 60 * 60);
+
+    // Advance time past the expiry window.
+    h.env.ledger().with_mut(|l| l.timestamp = wf.expires_at + 1);
+
+    h.coord.expire_workflow(&1u64);
+
+    let wf_after = h.coord.get_workflow(&1u64);
+    assert_eq!(wf_after.status, WorkflowStatus::RolledBack, "Expired workflow must be RolledBack");
+
+    let unit = MockInventoryContractClient::new(&h.env, &h.inv_id).get_blood_unit(&unit_id);
+    assert_eq!(unit.status, BloodStatus::Available, "Units must be released after expiry");
+
+    let payment = MockPaymentContractClient::new(&h.env, &h.pay_id).get_payment(&payment_id);
+    assert_eq!(payment.status, PaymentStatus::Refunded, "Payment must be Refunded after expiry");
+}
+
+/// expire_workflow is rejected when the deadline has not yet elapsed.
+#[test]
+fn test_expire_workflow_blocked_before_deadline() {
+    let h = setup();
+    h.env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+    seed_pending_request(&h, 2);
+    let unit_id = register_unit(&h);
+    let payment_id = create_locked_payment(&h, 2);
+
+    h.coord.allocate_units(&2u64, &vec![&h.env, unit_id], &payment_id, &h.admin);
+
+    // Time has NOT advanced past expires_at.
+    let result = h.coord.try_expire_workflow(&2u64);
+    assert_eq!(
+        result,
+        Err(Ok(CoordinatorError::WorkflowNotExpired)),
+        "expire_workflow must fail before deadline"
+    );
+
+    // Workflow must remain Allocated.
+    let wf = h.coord.get_workflow(&2u64);
+    assert_eq!(wf.status, WorkflowStatus::Allocated);
+}
+
+/// expire_workflow on a non-existent workflow returns WorkflowNotFound.
+#[test]
+fn test_expire_workflow_not_found() {
+    let h = setup();
+    h.env.ledger().with_mut(|l| l.timestamp = 99_999);
+    let result = h.coord.try_expire_workflow(&9999u64);
+    assert_eq!(result, Err(Ok(CoordinatorError::WorkflowNotFound)));
+}
+
+/// expire_workflow on an already-delivered workflow returns InvalidWorkflowState.
+#[test]
+fn test_expire_workflow_blocked_for_delivered_workflow() {
+    let h = setup();
+    h.env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+    seed_pending_request(&h, 3);
+    let unit_id = register_unit(&h);
+    let payment_id = create_locked_payment(&h, 3);
+
+    h.coord.allocate_units(&3u64, &vec![&h.env, unit_id], &payment_id, &h.admin);
+    h.coord.confirm_delivery(&3u64, &h.admin, &String::from_str(&h.env, "Hospital-B"));
+
+    // Advance past expiry.
+    let wf = h.coord.get_workflow(&3u64);
+    h.env.ledger().with_mut(|l| l.timestamp = wf.expires_at + 1);
+
+    let result = h.coord.try_expire_workflow(&3u64);
+    assert_eq!(
+        result,
+        Err(Ok(CoordinatorError::InvalidWorkflowState)),
+        "expire_workflow must fail for a Delivered workflow"
+    );
+}

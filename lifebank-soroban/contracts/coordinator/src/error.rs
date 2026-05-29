@@ -33,4 +33,7 @@ pub enum CoordinatorError {
 
     /// emergency_halt() has been called; all workflow mutations are blocked.
     EmergencyHalted = 841,
+
+    /// expire_workflow() was called but the deadline has not yet elapsed.
+    WorkflowNotExpired = 842,
 }
