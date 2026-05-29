@@ -930,7 +930,7 @@ export class SorobanService implements OnModuleInit {
   /**
    * Get organization verification status from Soroban contract.
    *
-   * Reads the `get_verification_metadata` view function (read-only simulation).
+   * Reads the `get_org_status` view function (read-only simulation).
    * Results are cached in Redis for 5 minutes. Cache is invalidated deterministically
    * by invalidateOrgVerificationCache() after any write (verify / revoke).
    *
@@ -974,7 +974,7 @@ export class SorobanService implements OnModuleInit {
     })
       .addOperation(
         this.contract.call(
-          'get_verification_metadata',
+          'get_org_status',
           this.createAddressScVal(orgId),
         ),
       )
