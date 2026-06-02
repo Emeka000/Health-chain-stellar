@@ -1,106 +1,246 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Backend — HealthDonor Protocol
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+The backend is built with **NestJS (v11)** on **Node.js + TypeScript**, following a modular domain-driven architecture. It exposes a RESTful API consumed by the frontend and integrates directly with Stellar Soroban smart contracts.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+---
 
-## Description
+## Tech Stack
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+| Layer | Technology |
+|---|---|
+| Framework | NestJS 11 |
+| Language | TypeScript 5 |
+| Database | PostgreSQL via TypeORM |
+| Cache / Queue | Redis + BullMQ |
+| Auth | JWT (access + refresh tokens), Passport |
+| Blockchain | Stellar Soroban SDK |
+| API Docs | Swagger / OpenAPI (`/docs`) |
+| Notifications | Firebase (push), Nodemailer (email), Africa's Talking (SMS) |
 
-## Project setup
+---
 
-```bash
-$ npm install
+## Project Structure
+
+```
+src/
+├── auth/               # JWT auth, sessions, MFA, permissions
+├── donations/          # Donation intents, confirmations, pledges
+├── blood-requests/     # Blood request lifecycle
+├── blood-units/        # Blood unit tracking
+├── inventory/          # Inventory management
+├── orders/             # Order processing
+├── dispatch/           # Dispatch assignments
+├── riders/             # Rider management
+├── hospitals/          # Hospital registry
+├── organizations/      # Organization management
+├── soroban/            # Stellar Soroban contract integration
+├── blockchain/         # On-chain event indexing
+├── escrow-governance/  # Escrow fund management
+├── notifications/      # Multi-channel notifications
+├── tracking/           # Real-time location tracking
+├── reporting/          # Analytics and reports
+├── common/             # Shared filters, guards, middleware
+└── main.ts             # Bootstrap entry point
 ```
 
-## Environment
+---
 
-Copy `.env.example` to `.env` and update the required values before running the backend.
+## How the API Works
+
+### Base URL
+
+```
+http://localhost:3000/api/v1
+```
+
+All routes are prefixed with `/api/v1`, controlled by the `API_PREFIX` environment variable.
+
+### Authentication Flow
+
+The API uses **JWT Bearer tokens**. Most endpoints require authentication; public routes are decorated with `@Public()`.
+
+**1. Register**
+```http
+POST /api/v1/auth/register
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "SecurePassword123!",
+  "name": "John Doe",
+  "role": "donor"
+}
+```
+
+**2. Login — receive tokens**
+```http
+POST /api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "SecurePassword123!"
+}
+```
+Response:
+```json
+{
+  "access_token": "<jwt>",
+  "refresh_token": "<jwt>"
+}
+```
+
+**3. Authenticated requests — attach Bearer token**
+```http
+GET /api/v1/blood-requests
+Authorization: Bearer <access_token>
+```
+
+**4. Refresh token**
+```http
+POST /api/v1/auth/refresh
+Content-Type: application/json
+
+{ "refreshToken": "<refresh_token>" }
+```
+
+**5. Logout**
+```http
+POST /api/v1/auth/logout
+Authorization: Bearer <access_token>
+```
+
+### Request / Response Conventions
+
+- All request bodies are validated via `class-validator` DTOs. Invalid payloads return `400` with field-level errors.
+- Responses follow a consistent error shape:
+  ```json
+  {
+    "code": "AUTH_INVALID_CREDENTIALS",
+    "message": "Invalid email or password",
+    "statusCode": 401,
+    "timestamp": "2024-03-27T04:30:44.473Z"
+  }
+  ```
+- A `X-Correlation-Id` header is attached to every response for request tracing.
+- Idempotent mutation endpoints accept an optional `Idempotency-Key` header to prevent duplicate processing.
+
+### Rate Limiting
+
+Requests are throttled per role using Redis-backed distributed rate limiting:
+
+| Scope | Limit |
+|---|---|
+| Default | 30 req / min |
+| Auth routes | 10 req / min |
+| Forgot password | 5 req / min |
+
+Exceeding the limit returns `429 Too Many Requests`.
+
+### Permissions
+
+After JWT validation, a global `PermissionsGuard` enforces role-based access. Restricted endpoints use the `@RequirePermissions()` decorator:
+
+```typescript
+@RequirePermissions(Permission.MANAGE_USERS)
+@Patch('unlock')
+```
+
+### Donation API Flow
+
+```
+POST /api/v1/donations/intent      → create payment intent (returns unsigned tx)
+PATCH /api/v1/donations/:id/confirm → submit signed transaction hash on-chain
+GET  /api/v1/donations/my-donations → donor history (donations + pledges)
+GET  /api/v1/donations/:id          → single donation detail
+```
+
+### Soroban / Blockchain Integration
+
+The `SorobanModule` wraps the Stellar SDK. On-chain events are indexed by `SorobanIndexerService` and stored in PostgreSQL for fast querying. Blockchain submissions go through:
+
+```
+POST /api/v1/blockchain/submit
+GET  /api/v1/blockchain/transaction/:id
+GET  /api/v1/blockchain/status
+```
+
+### WebSocket (Real-time)
+
+Real-time events (tracking, notifications) are served over Socket.io via `@nestjs/websockets`. Connections are authenticated using the same JWT strategy via `WsAuthService`.
+
+---
+
+## Running the Backend
+
+```bash
+# Install dependencies
+npm install
+
+# Development (watch mode)
+npm run start:dev
+
+# Production
+npm run build
+npm run start:prod
+```
+
+### Environment Variables
+
+Copy `.env.example` to `.env` and fill in the required values:
 
 ```bash
 cp .env.example .env
 ```
 
-## Compile and run the project
+Key variables:
 
-```bash
-# development
-$ npm run start
+```env
+DATABASE_HOST=localhost
+DATABASE_PORT=5432
+DATABASE_USERNAME=postgres
+DATABASE_PASSWORD=
+DATABASE_NAME=
 
-# watch mode
-$ npm run start:dev
+JWT_SECRET=
+JWT_REFRESH_SECRET=
 
-# production mode
-$ npm run start:prod
+REDIS_HOST=localhost
+REDIS_PORT=6379
+
+SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+SOROBAN_CONTRACT_ID=
+SOROBAN_SECRET_KEY=
+SOROBAN_NETWORK=testnet
 ```
 
-## Run tests
+### Database Migrations
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+npm run migration:run      # apply pending migrations
+npm run migration:revert   # revert last migration
+npm run migration:generate # generate migration from entity changes
 ```
 
-## Deployment
+> `synchronize` is only enabled in `development` and `test` environments. Production always uses explicit migrations.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+---
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+## API Documentation
+
+Interactive Swagger docs are available at:
+
+```
+http://localhost:3000/docs
+```
+
+---
+
+## Testing
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+npm run test           # unit tests
+npm run test:e2e       # end-to-end tests
+npm run test:cov       # coverage report
+npm run test:contracts # Soroban contract integration tests
 ```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
