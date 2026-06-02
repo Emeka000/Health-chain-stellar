@@ -428,6 +428,37 @@ impl ReputationContract {
         Self::calculate_reputation(env, entity_id)
     }
 
+    /// Generic updater used by off-chain indexers to notify the reputation
+    /// contract of relevant events emitted by other contracts (payments,
+    /// disputes, etc.). This allows the backend to call the reputation
+    /// contract after observing on-chain events to update scores without
+    /// requiring cross-contract calls from payments.
+    ///
+    /// `event_kind` values:
+    /// 0 = payment_complete (treat as a completed assignment)
+    /// 1 = dispute_resolved_in_favor (positive outcome for the entity)
+    /// 2 = dispute_resolved_against (negative outcome — increments fraud flags)
+    pub fn update_from_event(
+        env: Env,
+        event_kind: u32,
+        entity_id: u64,
+        completed: bool,
+        response_secs: u64,
+        timestamp: u64,
+    ) -> Result<ReputationScore, Error> {
+        Self::require_not_paused(&env)?;
+
+        match event_kind {
+            // Payment completed: record assignment as completed
+            0 => Self::record_assignment(env.clone(), entity_id, true, response_secs, timestamp),
+            // Dispute resolved in favor of the entity: count as a successful completion
+            1 => Self::record_assignment(env.clone(), entity_id, true, response_secs, timestamp),
+            // Dispute resolved against the entity: flag fraud (increment fraud counter)
+            2 => Self::flag_fraud(env.clone(), entity_id, timestamp),
+            _ => Err(Error::InvalidInput),
+        }
+    }
+
     /// Apply a penalty for a violation. Can only be called by admin.
     pub fn apply_penalty(
         env: Env,

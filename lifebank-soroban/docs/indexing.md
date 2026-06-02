@@ -316,6 +316,25 @@ Emitted when a reputation score is recalculated.
 
 Score is ×100 (e.g. `7823` = 78.23 / 100).
 
+### Reputation: update_from_event
+
+The reputation contract exposes an indexer-friendly entrypoint `update_from_event`
+which backend indexers can call after observing payments or dispute events. This
+avoids tight cross-contract coupling and keeps per-transaction compute low.
+
+Call signature (indexer -> contract): `(event_kind: u32, entity_id: u64, completed: bool, response_secs: u64, timestamp: u64)`
+
+`event_kind` values:
+- `0` = `payment_complete` — record a successful completion for `entity_id`.
+- `1` = `dispute_resolved_in_favor` — treat as a positive outcome (counts as completion).
+- `2` = `dispute_resolved_against` — treat as a negative outcome; increments fraud flags.
+
+Suggested indexer behavior:
+- Subscribe to `payment:released` / `payment:refunded` / `payment:resolved` events.
+- Map the on-chain addresses/payment IDs to the internal `entity_id` (u64) used by the reputation contract.
+- Call `update_from_event` with the appropriate `event_kind` and `timestamp` derived from the event payload.
+
+
 ---
 
 ## Analytics events
