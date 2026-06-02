@@ -6,10 +6,12 @@
 //! The public contract entry-points in `lib.rs` delegate to these free functions.
 //!
 //! ## Storage Write Audit (PR checklist)
-//! - [x] `register_unit`  — writes BLOOD_UNITS, NEXT_ID, BankUnits index, DonorUnits index, StatusUnits index
-//! - [x] `update_status`  — writes BLOOD_UNITS, StatusUnits index
-//! - [x] `expire_unit`    — writes BLOOD_UNITS, StatusUnits index
-//! - [x] `check_and_expire_batch` — delegates to `expire_unit`
+//! - [x] `register_unit`          — writes BLOOD_UNITS, NEXT_ID, BankUnits index, DonorUnits index, StatusUnits index
+//! - [x] `update_status`          — writes BLOOD_UNITS, StatusUnits index
+//! - [x] `expire_unit`            — 1 read + 1 write of BLOOD_UNITS, StatusUnits index
+//! - [x] `expire_unit_in_map`     — pure in-memory mutation; no storage I/O (used by batch)
+//! - [x] `check_and_expire_batch` — 1 read + N in-memory mutations + 1 write of BLOOD_UNITS
+//! - [x] `allocate_blood` (lib.rs) — writes HospitalUnits index on allocation; deindex on cancel_allocation
 
 use soroban_sdk::{symbol_short, Address, Env, Map, Symbol, Vec};
 
@@ -163,6 +165,11 @@ pub fn update_status(
 }
 
 /// Force mark a blood unit as expired.
+///
+/// Loads the full `BLOOD_UNITS` map, delegates the mutation to
+/// [`expire_unit_in_map`], then writes the map back.  Use this for
+/// single-unit expiry; for bulk expiry prefer [`check_and_expire_batch`]
+/// which amortises the storage round-trip across all units.
 pub fn expire_unit(env: &Env, unit_id: u64) -> Result<(), Error> {
     let mut units: Map<u64, BloodUnit> = env
         .storage()
@@ -170,6 +177,31 @@ pub fn expire_unit(env: &Env, unit_id: u64) -> Result<(), Error> {
         .get(&BLOOD_UNITS)
         .unwrap_or(Map::new(env));
 
+    let expired = expire_unit_in_map(env, unit_id, &mut units)?;
+
+    // Only persist if something actually changed.
+    if expired {
+        env.storage().persistent().set(&BLOOD_UNITS, &units);
+    }
+
+    Ok(())
+}
+
+/// Mutate a single entry inside an already-loaded `units` map.
+///
+/// Returns `Ok(true)` when the unit was transitioned to `Expired`,
+/// `Ok(false)` when it was already `Expired` (no-op), and
+/// `Err` when the unit does not exist or has not yet passed its expiry date.
+///
+/// This function performs **no storage I/O** — the caller is responsible for
+/// loading the map beforehand and persisting it afterwards.  Keeping I/O out
+/// of the hot loop in [`check_and_expire_batch`] reduces the per-batch cost
+/// from O(n) reads/writes to a single read + single write.
+fn expire_unit_in_map(
+    env: &Env,
+    unit_id: u64,
+    units: &mut Map<u64, BloodUnit>,
+) -> Result<bool, Error> {
     let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
 
     let current_time = env.ledger().timestamp();
@@ -178,19 +210,16 @@ pub fn expire_unit(env: &Env, unit_id: u64) -> Result<(), Error> {
     }
 
     if unit.status == BloodStatus::Expired {
-        return Ok(());
+        // Already expired — nothing to do, not an error.
+        return Ok(false);
     }
 
     let old_status = unit.status;
     unit.status = BloodStatus::Expired;
-
     units.set(unit_id, unit);
-    env.storage().persistent().set(&BLOOD_UNITS, &units);
 
-    // Maintain status index
+    // Keep the status index and history in sync.
     reindex_status(env, unit_id, old_status, BloodStatus::Expired);
-
-    // Record in history
     record_status_change(
         env,
         unit_id,
@@ -199,21 +228,46 @@ pub fn expire_unit(env: &Env, unit_id: u64) -> Result<(), Error> {
         env.current_contract_address(),
     );
 
-    Ok(())
+    Ok(true)
 }
 
 /// Batch check and expire units.
+///
+/// Loads `BLOOD_UNITS` **once**, mutates each requested unit in-memory via
+/// [`expire_unit_in_map`], then writes the map back **once**.  This reduces
+/// the storage cost from O(n) reads + O(n) writes (the old per-unit loop) to
+/// a single read + single write regardless of batch size.
 pub fn check_and_expire_batch(env: &Env, unit_ids: Vec<u64>) -> Result<Vec<u64>, Error> {
     if unit_ids.len() > MAX_BATCH_EXPIRY_SIZE {
         return Err(Error::BatchSizeExceeded);
     }
 
+    // Single read for the entire batch.
+    let mut units: Map<u64, BloodUnit> = env
+        .storage()
+        .persistent()
+        .get(&BLOOD_UNITS)
+        .unwrap_or(Map::new(env));
+
     let mut expired_ids = Vec::new(env);
+    let mut any_changed = false;
+
     for i in 0..unit_ids.len() {
         let unit_id = unit_ids.get(i).unwrap();
-        if expire_unit(env, unit_id).is_ok() {
-            expired_ids.push_back(unit_id);
+        match expire_unit_in_map(env, unit_id, &mut units) {
+            Ok(true) => {
+                expired_ids.push_back(unit_id);
+                any_changed = true;
+            }
+            // Ok(false) = already expired, skip silently.
+            // Err(_)    = not yet expired or not found, skip silently.
+            _ => {}
         }
+    }
+
+    // Single write — only when at least one unit changed.
+    if any_changed {
+        env.storage().persistent().set(&BLOOD_UNITS, &units);
     }
 
     Ok(expired_ids)

@@ -25,6 +25,8 @@
 //! | `PENDING_APPROVALS`          | Persistent | Active multisig votes; cleaned up on execution         |
 //! | `OrgKey::Org(addr)`          | Persistent | Organization records; permanent registry               |
 //! | `DataKey::DonorUnits`        | Persistent | Donor index; grows with donations                      |
+//! | `DataKey::HospitalUnits`     | Persistent | Hospital index; units allocated/in-transit/delivered   |
+//! | `DataKey::UnitCustodyIndex`  | Persistent | Per-unit pending custody event lookup (O(1) confirm)   |
 //!
 //! ## Retention / Archival Strategy
 //!

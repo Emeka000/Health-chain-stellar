@@ -552,6 +552,10 @@ pub enum DataKey {
     DonorUnits(Address, Symbol),
     /// Status units index: BloodStatus -> Vec<u64>
     StatusUnits(BloodStatus),
+    /// Hospital units index: hospital_id -> Vec<u64> (units allocated/in-transit/delivered to this hospital)
+    HospitalUnits(Address),
+    /// Per-unit pending custody event index: unit_id -> String (event_id of the active Pending custody event)
+    UnitCustodyIndex(u64),
     /// Custody trail page: (unit_id, page_number) -> Vec<String> (max 20 event IDs)
     UnitTrailPage(u64, u32),
     /// Custody trail metadata: unit_id -> TrailMetadata
@@ -1127,6 +1131,9 @@ impl HealthChainContract {
         // Maintain status index
         reindex_status(&env, unit_id, old_status, BloodStatus::Reserved);
 
+        // Maintain hospital units index
+        index_hospital_unit(&env, &hospital, unit_id);
+
         record_status_change(
             &env,
             unit_id,
@@ -1208,6 +1215,9 @@ impl HealthChainContract {
             // Maintain status index
             reindex_status(&env, unit_id, old_status, BloodStatus::Reserved);
 
+            // Maintain hospital units index
+            index_hospital_unit(&env, &hospital, unit_id);
+
             // Record status change
             record_status_change(
                 &env,
@@ -1260,6 +1270,8 @@ impl HealthChainContract {
         }
 
         let old_status = unit.status;
+        // Capture hospital before clearing it
+        let hospital_id = unit.recipient_hospital.clone();
 
         // Update unit back to Available
         unit.status = BloodStatus::Available;
@@ -1271,6 +1283,11 @@ impl HealthChainContract {
 
         // Maintain status index
         reindex_status(&env, unit_id, old_status, BloodStatus::Available);
+
+        // Remove from hospital units index (allocation is being cancelled)
+        if let Some(ref hosp) = hospital_id {
+            deindex_hospital_unit(&env, hosp, unit_id);
+        }
 
         // Record status change
         record_status_change(
@@ -1367,6 +1384,10 @@ impl HealthChainContract {
             .persistent()
             .set(&CUSTODY_EVENTS, &custody_events);
 
+        // Maintain UnitCustodyIndex so confirm_delivery can find the pending event in O(1)
+        let index_key = DataKey::UnitCustodyIndex(unit_id);
+        env.storage().persistent().set(&index_key, &event_id);
+
         let old_status = unit.status;
         unit.status = BloodStatus::InTransit;
         unit.transfer_timestamp = Some(current_time);
@@ -1400,25 +1421,17 @@ impl HealthChainContract {
     /// Confirm blood delivery
     ///
     /// This is kept for backwards-compatibility and delegates to `confirm_transfer`.
-    /// Note: This function looks up the pending custody event by unit_id for convenience.
+    /// Note: This function looks up the pending custody event by unit_id via the
+    /// UnitCustodyIndex — O(1) instead of an O(n) scan over all custody events.
     pub fn confirm_delivery(env: Env, hospital: Address, unit_id: u64) -> Result<(), Error> {
-        // Find the pending custody event for this unit
-        let custody_events: Map<String, CustodyEvent> = env
+        // Look up the pending event_id via the per-unit custody index (O(1))
+        let index_key = DataKey::UnitCustodyIndex(unit_id);
+        let event_id: String = env
             .storage()
             .persistent()
-            .get(&CUSTODY_EVENTS)
-            .unwrap_or(Map::new(&env));
+            .get(&index_key)
+            .ok_or(Error::UnitNotFound)?;
 
-        // Search for pending custody event with matching unit_id
-        let mut found_event_id: Option<String> = None;
-        for (event_id, event) in custody_events.iter() {
-            if event.unit_id == unit_id && event.status == CustodyStatus::Pending {
-                found_event_id = Some(event_id);
-                break;
-            }
-        }
-
-        let event_id = found_event_id.ok_or(Error::UnitNotFound)?;
         Self::confirm_transfer(env, hospital, event_id)
     }
 
@@ -1506,6 +1519,11 @@ impl HealthChainContract {
                 .persistent()
                 .set(&CUSTODY_EVENTS, &custody_events);
 
+            // Clear UnitCustodyIndex — transfer is no longer pending
+            env.storage()
+                .persistent()
+                .remove(&DataKey::UnitCustodyIndex(unit_id));
+
             record_status_change(
                 &env,
                 unit_id,
@@ -1542,6 +1560,11 @@ impl HealthChainContract {
         env.storage()
             .persistent()
             .set(&CUSTODY_EVENTS, &custody_events);
+
+        // Clear UnitCustodyIndex — transfer is no longer pending
+        env.storage()
+            .persistent()
+            .remove(&DataKey::UnitCustodyIndex(unit_id));
 
         // Append to custody trail (paginated)
         append_to_custody_trail(&env, unit_id, event_id.clone());
@@ -1647,6 +1670,11 @@ impl HealthChainContract {
         env.storage()
             .persistent()
             .set(&CUSTODY_EVENTS, &custody_events);
+
+        // Clear UnitCustodyIndex — transfer is no longer pending
+        env.storage()
+            .persistent()
+            .remove(&DataKey::UnitCustodyIndex(unit_id));
 
         let old_status = unit.status;
 
@@ -1927,22 +1955,29 @@ impl HealthChainContract {
 
     /// Query blood units by status
     pub fn query_by_status(env: Env, status: BloodStatus, max_results: u32) -> Vec<BloodUnit> {
-        let mut units: Map<u64, BloodUnit> = env
+        // Use the StatusUnits secondary index — O(k) where k = units with this status.
+        let key = DataKey::StatusUnits(status);
+        let ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(Vec::new(&env));
+
+        let units: Map<u64, BloodUnit> = env
             .storage()
             .persistent()
             .get(&BLOOD_UNITS)
             .unwrap_or(Map::new(&env));
 
         let mut results = vec![&env];
-        let mut count = 0u32;
+        let limit = if max_results == 0 { u32::MAX } else { max_results };
 
-        for (_, unit) in units.iter() {
-            if unit.status == status {
+        for id in ids.iter() {
+            if results.len() >= limit {
+                break;
+            }
+            if let Some(unit) = units.get(id) {
                 results.push_back(unit);
-                count += 1;
-                if max_results > 0 && count >= max_results {
-                    break;
-                }
             }
         }
 
@@ -1951,22 +1986,29 @@ impl HealthChainContract {
 
     /// Query blood units by hospital
     pub fn query_by_hospital(env: Env, hospital: Address, max_results: u32) -> Vec<BloodUnit> {
-        let mut units: Map<u64, BloodUnit> = env
+        // Use the HospitalUnits secondary index — O(k) where k = units for this hospital.
+        let key = DataKey::HospitalUnits(hospital);
+        let ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(Vec::new(&env));
+
+        let units: Map<u64, BloodUnit> = env
             .storage()
             .persistent()
             .get(&BLOOD_UNITS)
             .unwrap_or(Map::new(&env));
 
         let mut results = vec![&env];
-        let mut count = 0u32;
+        let limit = if max_results == 0 { u32::MAX } else { max_results };
 
-        for (_, unit) in units.iter() {
-            if unit.recipient_hospital == Some(hospital.clone()) {
+        for id in ids.iter() {
+            if results.len() >= limit {
+                break;
+            }
+            if let Some(unit) = units.get(id) {
                 results.push_back(unit);
-                count += 1;
-                if max_results > 0 && count >= max_results {
-                    break;
-                }
             }
         }
 
@@ -1986,6 +2028,37 @@ pub(crate) fn index_bank_unit(env: &Env, bank_id: &Address, unit_id: u64) {
         .unwrap_or(Vec::new(env));
     ids.push_back(unit_id);
     env.storage().persistent().set(&key, &ids);
+}
+
+/// Append `unit_id` to the HospitalUnits index for `hospital_id`.
+/// Call when a unit is allocated to a hospital.
+pub(crate) fn index_hospital_unit(env: &Env, hospital_id: &Address, unit_id: u64) {
+    let key = DataKey::HospitalUnits(hospital_id.clone());
+    let mut ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env));
+    ids.push_back(unit_id);
+    env.storage().persistent().set(&key, &ids);
+}
+
+/// Remove `unit_id` from the HospitalUnits index for `hospital_id`.
+/// Call when an allocation is cancelled and the unit returns to inventory.
+pub(crate) fn deindex_hospital_unit(env: &Env, hospital_id: &Address, unit_id: u64) {
+    let key = DataKey::HospitalUnits(hospital_id.clone());
+    let ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env));
+    let mut filtered = Vec::new(env);
+    for id in ids.iter() {
+        if id != unit_id {
+            filtered.push_back(id);
+        }
+    }
+    env.storage().persistent().set(&key, &filtered);
 }
 
 /// Append `unit_id` to the DonorUnits index for `(bank_id, donor_id)` and the
