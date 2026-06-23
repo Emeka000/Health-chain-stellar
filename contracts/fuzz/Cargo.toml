@@ -29,3 +29,17 @@ path = "fuzz_targets/fuzz_custody_transfer.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_payments"
+path = "fuzz_targets/fuzz_payments.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_disputes"
+path = "fuzz_targets/fuzz_disputes.rs"
+test = false
+doc = false
+bench = false
