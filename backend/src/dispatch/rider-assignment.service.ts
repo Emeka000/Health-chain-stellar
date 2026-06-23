@@ -280,16 +280,16 @@ export class RiderAssignmentService {
         const origin =
           rider.latitude !== null && rider.longitude !== null
             ? `${rider.latitude},${rider.longitude}`
-            : rider.name;
+            : (rider.name ?? 'unknown');
         const travelTimeSeconds = await this.mapsService.getTravelTimeSeconds(
-          origin,
+          origin ?? '',
           pickupPoint,
         );
         return {
           rider,
           travelTimeSeconds,
-          activeDeliveries: rider.activeDeliveries,
-          averageRating: rider.averageRating,
+          activeDeliveries: rider.activeDeliveries ?? 0,
+          averageRating: rider.averageRating ?? rider.rating ?? 0,
         };
       }),
     );

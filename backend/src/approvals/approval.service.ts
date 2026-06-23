@@ -54,10 +54,10 @@ export class ApprovalService {
       requiredApprovals: params.requiredApprovals,
       metadata: params.metadata,
       expiresAt,
-      finalPayload: params.finalPayload ? JSON.stringify(params.finalPayload) : null,
-    });
+      finalPayload: (params.finalPayload ? JSON.stringify(params.finalPayload) : null) as any,
+    } as any);
 
-    const saved = await this.requestRepository.save(request) as ApprovalRequestEntity;
+    const saved = await this.requestRepository.save(request) as unknown as ApprovalRequestEntity;
 
     await this.userActivityService.logActivity({
       userId: params.requesterId,
@@ -105,7 +105,7 @@ export class ApprovalService {
       }
     }
 
-    const saved = await this.requestRepository.save(request) as ApprovalRequestEntity;
+    const saved = await this.requestRepository.save(request) as unknown as ApprovalRequestEntity;
 
     if (saved.status === ApprovalStatus.APPROVED) {
       this.eventEmitter.emit('approval.approved', saved);

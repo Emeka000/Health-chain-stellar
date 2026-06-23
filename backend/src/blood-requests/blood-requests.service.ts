@@ -232,7 +232,7 @@ export class BloodRequestsService {
         }),
       ],
     } as any);
-    return this.bloodRequestRepo.save(parent) as Promise<BloodRequestEntity>;
+    return this.bloodRequestRepo.save(parent) as unknown as Promise<BloodRequestEntity>;
   }
 
   private async enqueue(saved: BloodRequestEntity): Promise<void> {

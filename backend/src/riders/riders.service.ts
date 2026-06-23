@@ -38,11 +38,16 @@ const ALLOWED_STATUS_TRANSITIONS: Record<RiderStatus, RiderStatus[]> = {
 
 export interface RiderRecord {
   id: string;
-  name: string;
+  name?: string;
   phoneNumber?: string;
   status: RiderStatus;
-  latitude?: number;
-  longitude?: number;
+  latitude?: number | null;
+  longitude?: number | null;
+  activeDeliveries?: number;
+  averageRating?: number;
+  rating?: number;
+  completedDeliveries?: number;
+  [key: string]: any;
 }
 
 @Injectable()

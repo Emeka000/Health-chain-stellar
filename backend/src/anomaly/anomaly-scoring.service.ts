@@ -3,16 +3,16 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
 
-import { BloodRequestEntity, Urgency } from '../../blood-requests/entities/blood-request.entity';
-import { OrderEntity } from '../../orders/entities/order.entity';
-import { OrderStatus } from '../../orders/enums/order-status.enum';
-import { PolicyCenterService } from '../../policy-center/policy-center.service';
-import { AnomalyIncidentEntity } from '../entities/anomaly-incident.entity';
+import { BloodRequestEntity, Urgency } from '../blood-requests/entities/blood-request.entity';
+import { OrderEntity } from '../orders/entities/order.entity';
+import { OrderStatus } from '../orders/enums/order-status.enum';
+import { PolicyCenterService } from '../policy-center/policy-center.service';
+import { AnomalyIncidentEntity } from './entities/anomaly-incident.entity';
 import {
   AnomalyType,
   AnomalySeverity,
   AnomalyStatus,
-} from '../enums/anomaly-type.enum';
+} from './enums/anomaly-type.enum';
 
 @Injectable()
 export class AnomalyScoringService {
@@ -208,7 +208,7 @@ export class AnomalyScoringService {
         hospitalId: data.hospitalId ?? null,
         status: AnomalyStatus.OPEN,
         createdAt: MoreThan(today),
-      },
+      } as any,
     });
 
     if (existing) {
@@ -217,7 +217,7 @@ export class AnomalyScoringService {
         metadata: data.metadata ?? null,
         severity: data.severity,
         policyVersionRef: data.policyVersionRef ?? null,
-      });
+      } as any);
       return;
     }
 

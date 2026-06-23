@@ -3,9 +3,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { SorobanService } from '../soroban/soroban.service';
-import { CustodyHandoffEntity } from '../entities/custody-handoff.entity';
-import { CustodyHandoffStatus } from '../enums/custody.enum';
-import { ConfirmHandoffDto, RecordHandoffDto } from '../dto/custody.dto';
+import { CustodyHandoffEntity } from './entities/custody-handoff.entity';
+import { CustodyHandoffStatus } from './enums/custody.enum';
+import { ConfirmHandoffDto, RecordHandoffDto } from './dto/custody.dto';
 
 @Injectable()
 export class CustodyService {

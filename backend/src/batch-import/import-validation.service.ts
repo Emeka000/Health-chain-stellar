@@ -2,10 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
-import { OrganizationEntity } from '../../organizations/entities/organization.entity';
-import { BloodType } from '../../blood-units/enums/blood-type.enum';
-import { VehicleType } from '../../riders/enums/vehicle-type.enum';
-import { OrganizationType } from '../../organizations/enums/organization-type.enum';
+import { OrganizationEntity } from '../organizations/entities/organization.entity';
+import { BloodType } from '../blood-units/enums/blood-type.enum';
+import { VehicleType } from '../riders/enums/vehicle-type.enum';
+import { OrganizationType } from '../organizations/enums/organization-type.enum';
 
 const VALID_BLOOD_TYPES = new Set<string>(Object.values(BloodType));
 const VALID_VEHICLE_TYPES = new Set<string>(Object.values(VehicleType));

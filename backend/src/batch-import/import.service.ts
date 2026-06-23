@@ -6,23 +6,23 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
-import { InventoryEntity } from '../../inventory/entities/inventory.entity';
-import { OrganizationEntity } from '../../organizations/entities/organization.entity';
-import { OrganizationVerificationStatus } from '../../organizations/enums/organization-verification-status.enum';
-import { RiderEntity } from '../../riders/entities/rider.entity';
-import { RiderStatus } from '../../riders/enums/rider-status.enum';
-import { ActivityType } from '../../user-activity/enums/activity-type.enum';
-import { UserActivityService } from '../../user-activity/user-activity.service';
-import { ImportBatchEntity } from '../entities/import-batch.entity';
-import { ImportStagingRowEntity } from '../entities/import-staging-row.entity';
+import { InventoryEntity } from '../inventory/entities/inventory.entity';
+import { OrganizationEntity } from '../organizations/entities/organization.entity';
+import { OrganizationVerificationStatus } from '../organizations/enums/organization-verification-status.enum';
+import { RiderEntity } from '../riders/entities/rider.entity';
+import { RiderStatus } from '../riders/enums/rider-status.enum';
+import { ActivityType } from '../user-activity/enums/activity-type.enum';
+import { UserActivityService } from '../user-activity/user-activity.service';
+import { ImportBatchEntity } from './entities/import-batch.entity';
+import { ImportStagingRowEntity } from './entities/import-staging-row.entity';
 import {
   ImportBatchStatus,
   ImportEntityType,
   ImportRowStatus,
-} from '../enums/import.enum';
-import { ImportValidationService } from '../import-validation.service';
-import { FileMetadataService } from '../../file-metadata/file-metadata.service';
-import { FileOwnerType } from '../../file-metadata/entities/file-metadata.entity';
+} from './enums/import.enum';
+import { ImportValidationService } from './import-validation.service';
+import { FileMetadataService } from '../file-metadata/file-metadata.service';
+import { FileOwnerType } from '../file-metadata/entities/file-metadata.entity';
 
 @Injectable()
 export class ImportService {
@@ -123,7 +123,7 @@ export class ImportService {
       batchId,
       status: ImportRowStatus.VALID,
     };
-    let rows = await this.rowRepo.find({ where });
+    let rows = await this.rowRepo.find({ where: where as any });
 
     if (rowIds?.length) {
       rows = rows.filter((r) => rowIds.includes(r.id));
@@ -204,8 +204,8 @@ export class ImportService {
           cancelledDeliveries: 0,
           failedDeliveries: 0,
           rating: 0,
-        }),
-      );
+        } as any),
+      ) as unknown as RiderEntity;
       return rider.id;
     }
 

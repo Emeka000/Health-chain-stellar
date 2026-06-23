@@ -7,8 +7,8 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { Logger } from '@nestjs/common';
 import { Server } from 'socket.io';
 
-import { EscalationTriggeredEvent } from '../../events/escalation-triggered.event';
-import { EscalationAcknowledgedEvent } from '../../events/escalation-acknowledged.event';
+import { EscalationTriggeredEvent } from '../events/escalation-triggered.event';
+import { EscalationAcknowledgedEvent } from '../events/escalation-acknowledged.event';
 
 @WebSocketGateway({
   namespace: '/escalations',

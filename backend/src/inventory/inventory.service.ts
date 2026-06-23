@@ -229,7 +229,7 @@ export class InventoryService {
   }
 
   async getStockAggregation() {
-    return this.stockRepo.find();
+    return this.stockRepo.findAndCount({} as any, 0, 10000).then(([data]) => data);
   }
 
   async getInventoryStats(hospitalId?: string) {
