@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { DeliveryProofEntity } from './entities/delivery-proof.entity';
 import { DeliveryProofService } from './delivery-proof.service';
 import { DeliveryProofController } from './delivery-proof.controller';
+import { UploadValidationService } from './upload-validation.service';
 
 import { ConfigModule } from '@nestjs/config';
 import { SorobanModule } from '../soroban/soroban.module';
@@ -19,7 +20,7 @@ import { FileMetadataModule } from '../file-metadata/file-metadata.module';
     FileMetadataModule,
   ],
   controllers: [DeliveryProofController],
-  providers: [DeliveryProofService],
+  providers: [DeliveryProofService, UploadValidationService],
   exports: [DeliveryProofService],
 })
 export class DeliveryProofModule {}

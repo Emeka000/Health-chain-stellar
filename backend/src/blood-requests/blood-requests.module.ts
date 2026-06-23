@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { AuthModule } from '../auth/auth.module';
 import { BlockchainModule } from '../blockchain/blockchain.module';
 import { CompensationModule } from '../common/compensation/compensation.module';
 import { InventoryModule } from '../inventory/inventory.module';
@@ -29,6 +30,10 @@ import { BloodRequestChainService } from './services/blood-request-chain.service
 import { BloodRequestEmailService } from './services/blood-request-email.service';
 import { SagaCoordinatorService } from './services/saga-coordinator.service';
 import { BloodRequestSagaEntity } from './entities/blood-request-saga.entity';
+import { RequestStatusHistoryEntity } from './entities/request-status-history.entity';
+import { OrderSplittingController } from './controllers/order-splitting.controller';
+import { OrderSplittingService } from './services/order-splitting.service';
+import { FulfillmentLegEntity } from './entities/fulfillment-leg.entity';
 
 @Module({
   imports: [
@@ -37,6 +42,8 @@ import { BloodRequestSagaEntity } from './entities/blood-request-saga.entity';
       BloodRequestItemEntity,
       BloodRequestReservationEntity,
       BloodRequestSagaEntity,
+      FulfillmentLegEntity,
+      RequestStatusHistoryEntity,
       InventoryStockEntity,
       OrganizationEntity,
     ]),
@@ -57,13 +64,14 @@ import { BloodRequestSagaEntity } from './entities/blood-request-saga.entity';
       }),
       inject: [ConfigService],
     }),
+    AuthModule,
     InventoryModule,
     BlockchainModule,
     NotificationsModule,
     CompensationModule,
     MapsModule,
   ],
-  controllers: [BloodRequestsController, RequestQueryController],
+  controllers: [BloodRequestsController, RequestQueryController, OrderSplittingController],
   providers: [
     BloodRequestsService,
     BloodRequestChainService,
@@ -75,6 +83,7 @@ import { BloodRequestSagaEntity } from './entities/blood-request-saga.entity';
     BloodRequestReservationService,
     TriageScoringService,
     SagaCoordinatorService,
+    OrderSplittingService,
   ],
   exports: [
     BloodRequestsService,

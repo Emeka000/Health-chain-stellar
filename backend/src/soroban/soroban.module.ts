@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { OrderEntity } from '../orders/entities/order.entity';
+import { RedisModule } from '../redis/redis.module';
 
 import { BlockchainEvent } from './entities/blockchain-event.entity';
 import { BloodUnitTrail } from './entities/blood-unit-trail.entity';
@@ -13,6 +14,7 @@ import { BlockchainAdminController } from './blockchain-admin.controller';
 
 @Module({
   imports: [
+    RedisModule,
     TypeOrmModule.forFeature([
       BlockchainEvent,
       BloodUnitTrail,

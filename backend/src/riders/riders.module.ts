@@ -12,8 +12,10 @@ import { RiderEntity } from './entities/rider.entity';
 import { RidersController } from './riders.controller';
 import { RidersService } from './riders.service';
 import { AssignmentController } from './controllers/assignment.controller';
+import { RiderSearchController } from './controllers/rider-search.controller';
 import { ReputationAwareAssignmentService } from './services/reputation-aware-assignment.service';
 import { RiderAvailabilityService } from './services/rider-availability.service';
+import { RiderSearchService } from './services/rider-search.service';
 
 @Module({
   imports: [
@@ -27,9 +29,10 @@ import { RiderAvailabilityService } from './services/rider-availability.service'
     ReputationModule,
     PolicyCenterModule,
   ],
-  controllers: [RidersController, AssignmentController],
+  controllers: [RidersController, AssignmentController, RiderSearchController],
   providers: [
     RidersService,
+    RiderSearchService,
     ReputationAwareAssignmentService,
     RiderAvailabilityService,
   ],

@@ -2,8 +2,10 @@ import { Module } from '@nestjs/common';
 import { MulterModule } from '@nestjs/platform-express';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { AuthModule } from '../auth/auth.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrderEntity } from '../orders/entities/order.entity';
+import { OrganizationEntity } from '../organizations/entities/organization.entity';
 import { BlockchainEvent } from '../soroban/entities/blockchain-event.entity';
 import { BloodUnitTrail } from '../soroban/entities/blood-unit-trail.entity';
 import { SorobanModule } from '../soroban/soroban.module';
@@ -42,8 +44,10 @@ import { BloodUnitBatchService } from './batch/blood-unit-batch.service';
       UnitDispositionRecord,
       QuarantineCase,
       TransferRecord,
+      OrganizationEntity,
     ]),
 
+    AuthModule,
     SorobanModule,
     NotificationsModule,
     DonorEligibilityModule,

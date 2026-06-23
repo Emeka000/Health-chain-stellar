@@ -7,6 +7,7 @@ import { BloodRequestEntity } from '../blood-requests/entities/blood-request.ent
 import { BloodRequestReservationEntity } from '../blood-requests/entities/blood-request-reservation.entity';
 import { DonationEntity } from '../donations/entities/donation.entity';
 import { BloodUnit } from '../blood-units/entities/blood-unit.entity';
+import { OrganizationEntity } from '../organizations/entities/organization.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrderEntity } from '../orders/entities/order.entity';
 import { UsersModule } from '../users/users.module';
@@ -30,6 +31,7 @@ import { InventoryService } from './inventory.service';
 import { DonorOutreachProcessor } from './processors/donor-outreach.processor';
 import { InventoryAlertService } from './services/inventory-alert.service';
 import { RestockingCampaignService } from './services/restocking-campaign.service';
+import { ExpirationForecastingService } from './expiration-forecasting.service';
 
 @Module({
   imports: [
@@ -45,6 +47,7 @@ import { RestockingCampaignService } from './services/restocking-campaign.servic
       RestockingCampaignEntity,
       ReservationAuditEntity,
       BloodUnit,
+      OrganizationEntity,
     ]),
     BullModule.registerQueue({ name: 'donor-outreach' }),
     ScheduleModule.forRoot(),
@@ -67,6 +70,7 @@ import { RestockingCampaignService } from './services/restocking-campaign.servic
     DonorOutreachProcessor,
     InventoryAlertService,
     RestockingCampaignService,
+    ExpirationForecastingService,
   ],
   exports: [
     InventoryService,

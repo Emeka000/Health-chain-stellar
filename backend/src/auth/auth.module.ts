@@ -59,9 +59,10 @@ import { SessionRiskService } from './session-risk.service';
     IdempotencyModule,
     UserActivityModule,
   ],
-  controllers: [AuthController, PermissionsController],
+  controllers: [AuthController, PermissionsController, MfaController],
   providers: [
     AuthService,
+    JwtKeyService,
     MfaService,
     PasswordResetService,
     JwtStrategy,
@@ -74,6 +75,7 @@ import { SessionRiskService } from './session-risk.service';
   ],
   exports: [
     AuthService,
+    JwtKeyService,
     MfaService,
     PasswordResetService,
     JwtStrategy,

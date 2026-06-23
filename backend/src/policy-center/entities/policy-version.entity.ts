@@ -41,10 +41,10 @@ export class PolicyVersionEntity {
   @Column({ name: 'effective_to', type: 'timestamptz', nullable: true })
   effectiveTo: Date | null;
 
-  @Column({ name: 'created_by', nullable: true })
+  @Column({ name: 'created_by', type: 'varchar', nullable: true })
   createdBy: string | null;
 
-  @Column({ name: 'activated_by', nullable: true })
+  @Column({ name: 'activated_by', type: 'varchar', nullable: true })
   activatedBy: string | null;
 
   @Column({ name: 'activated_at', type: 'timestamptz', nullable: true })
