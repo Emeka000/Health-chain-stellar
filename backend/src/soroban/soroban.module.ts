@@ -10,9 +10,11 @@ import { ReconciliationLogEntity } from './entities/reconciliation-log.entity';
 import { SorobanIndexerService } from './soroban-indexer.service';
 import { SorobanService } from './soroban.service';
 import { ContractEventIndexerModule } from '../contract-event-indexer/contract-event-indexer.module';
+import { RedisModule } from '../redis/redis.module';
 
 @Module({
   imports: [
+    RedisModule,
     TypeOrmModule.forFeature([
       BlockchainEvent,
       BloodUnitTrail,

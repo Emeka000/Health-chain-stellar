@@ -22,6 +22,7 @@ mod inventory_client {
     use soroban_sdk::{contractclient, Address, Env};
 
     #[contractclient(name = "InventoryContractClient")]
+    #[allow(dead_code)]
     pub trait InventoryContractInterface {
         fn release_reservation(env: Env, caller: Address, reservation_id: u64);
     }

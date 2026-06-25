@@ -824,6 +824,12 @@ impl IdentityContract {
         }
 
         env.storage().persistent().set(&badges_key, &new_badges);
+
+        env.events().publish(
+            (symbol_short!("badge"), symbol_short!("revoked")),
+            (org_id, badge_type),
+        );
+
         Ok(())
     }
 

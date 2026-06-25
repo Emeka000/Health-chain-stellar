@@ -37,6 +37,9 @@ pub fn emit_status_updated(
     env.events().publish(
         (Symbol::new(env, "status_updated"), request_id),
         (old_status, new_status, updated_by.clone()),
+    );
+}
+
 pub fn emit_request_cancelled(env: &Env, request_id: u64, actor: &Address, timestamp: u64) {
     env.events().publish(
         (Symbol::new(env, "request_cancelled"), symbol_short!("v1")),
