@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { AuthModule } from '../auth/auth.module';
 import { BlockchainModule } from '../blockchain/blockchain.module';
 import { CompensationModule } from '../common/compensation/compensation.module';
 import { EscalationModule } from '../escalation/escalation.module';
@@ -60,6 +61,7 @@ import { TriageScoringService } from './services/triage-scoring.service';
       }),
       inject: [ConfigService],
     }),
+    AuthModule,
     InventoryModule,
     BlockchainModule,
     NotificationsModule,

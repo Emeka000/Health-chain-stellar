@@ -142,7 +142,6 @@ const PAYMENT_COUNTER: soroban_sdk::Symbol = symbol_short!("PAY_CTR");
 const PLEDGE_COUNTER: soroban_sdk::Symbol = symbol_short!("PLG_CTR");
 const ADMIN_KEY: soroban_sdk::Symbol = symbol_short!("ADMIN");
 const PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("PAUSED");
-const REWARD_TOKEN_KEY: soroban_sdk::Symbol = symbol_short!("RWD_TOK");
 /// Instance-level aggregate stats.
 const STATS_KEY: soroban_sdk::Symbol = symbol_short!("STATS");
 /// Instance storage key for the requests contract address (optional).
@@ -878,10 +877,8 @@ impl PaymentContract {
     ) -> Result<(), Error> {
         caller.require_auth();
         Self::require_not_paused(&env)?;
+        Self::require_admin(&env, &caller)?;
         let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
-        if caller != payment.payer && !Self::is_admin(&env, &caller) {
-            return Err(Error::Unauthorized);
-        }
         let old_status = payment.status;
         payment.status = status;
         payment.updated_at = env.ledger().timestamp();
