@@ -1264,6 +1264,11 @@ impl HealthChainContract {
 
         let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
 
+        // Verify caller is the current custodian of this specific unit
+        if unit.bank_id != bank_id {
+            return Err(Error::NotCurrentCustodian);
+        }
+
         // Check status - can only cancel if Reserved
         if unit.status != BloodStatus::Reserved {
             return Err(Error::InvalidStatus);
@@ -1463,6 +1468,11 @@ impl HealthChainContract {
         let mut custody_event = custody_events
             .get(event_id.clone())
             .ok_or(Error::UnitNotFound)?;
+
+        // Verify the event's designated recipient is a registered hospital
+        if !Self::is_hospital(env.clone(), custody_event.to_custodian.clone()) {
+            return Err(Error::UnauthorizedHospital);
+        }
 
         // INVARIANT: Only the designated recipient (to_custodian) can confirm the transfer
         // This ensures units can only be received by the intended hospital
@@ -2834,6 +2844,12 @@ impl HealthChainContract {
         evidence_ref_chunks: Vec<String>,
     ) -> Result<u64, Error> {
         raised_by.require_auth();
+
+        // evidence_ref_chunks reconstruction against evidence_digest is off-chain only;
+        // enforce a valid SHA-256 digest size to reject trivially invalid submissions.
+        if evidence_digest.len() != 32 {
+            return Err(Error::InvalidFeePayload);
+        }
 
         let mut payments: Map<u64, Payment> = env
             .storage()
