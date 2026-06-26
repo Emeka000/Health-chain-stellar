@@ -1,3 +1,4 @@
+use soroban_sdk::symbol_short;
 //! Test for issue #845: Expired blood units should not be reservable
 
 #[cfg(test)]
@@ -22,7 +23,7 @@ mod expiry_tests {
 
         // Register a blood unit
         let serial = SorobanString::from_str(&env, "EXPIRY-TEST-001");
-        let blood_type = soroban_sdk::Symbol::new(&env, "OPos");
+        let blood_type = soroban_sdk::symbol_short!("OPos");
         let unit_id = client
             .register_blood(&bank, &serial, &blood_type, &450, &None)
             .unwrap();
@@ -64,7 +65,7 @@ mod expiry_tests {
         client.authorize_bank(&admin, &bank, &true);
 
         let serial = SorobanString::from_str(&env, "FRESH-001");
-        let blood_type = soroban_sdk::Symbol::new(&env, "ABPos");
+        let blood_type = soroban_sdk::symbol_short!("ABPos");
         let unit_id = client
             .register_blood(&bank, &serial, &blood_type, &500, &None)
             .unwrap();
