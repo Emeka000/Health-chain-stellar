@@ -1110,3 +1110,18 @@ fn fee_structure_calculate_net_errors_on_overflow() {
         Err(PaymentError::Overflow)
     );
 }
+
+#[test]
+fn test_fee_arithmetic_overflow_boundary() {
+    let env = Env::default();
+    let fee = FeeStructure {
+        policy_id: Symbol::new(&env, "p"),
+        service_fee: i128::MAX - 10,
+        network_fee: 15,
+        performance_bonus: 0,
+        fixed_fee: 0,
+    };
+    assert_eq!(fee.total(), None);
+    assert_eq!(fee.calculate_net_amount(1_000), Err(PaymentError::Overflow));
+}
+

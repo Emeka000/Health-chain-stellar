@@ -737,6 +737,22 @@ fn test_vesting_only_admin_can_create() {
     assert!(result.is_err(), "Non-admin must not create vesting");
 }
 
+#[test]
+fn test_vesting_rejects_cliff_gte_duration() {
+    let (env, cid, admin) = setup_with_admin();
+    let client = PaymentContractClient::new(&env, &cid);
+    let donor = Address::generate(&env);
+
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    // cliff_secs = 500, duration_secs = 500 (equal)
+    let result = client.try_create_vesting(&admin, &donor, &1_000i128, &500u64, &500u64);
+    assert_eq!(result, Err(Ok(Error::InvalidVestingSchedule)));
+
+    // cliff_secs = 600, duration_secs = 500 (cliff > duration)
+    let result = client.try_create_vesting(&admin, &donor, &1_000i128, &600u64, &500u64);
+    assert_eq!(result, Err(Ok(Error::InvalidVestingSchedule)));
+}
+
 // ── process_expired_disputes (#595) ─────────────────────────────────────────────────
 
 #[test]

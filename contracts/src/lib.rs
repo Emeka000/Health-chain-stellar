@@ -6734,6 +6734,38 @@ mod test {
     }
 
     #[test]
+    #[should_panic(expected = "Error(Contract, #9)")]
+    fn test_confirm_transfer_rejects_unregistered_to_custodian() {
+        let env = Env::default();
+        let (contract_id, _, hospital, client) = setup_contract_with_hospital(&env);
+
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        let initiated_at = 1_000_000u64;
+        let (_, event_id) = setup_in_transit_unit(&env, &client, &bank, &hospital, initiated_at);
+
+        let unregistered_hospital = Address::generate(&env);
+
+        // Tamper the custody event in storage to set `to_custodian` to unregistered address
+        env.as_contract(&contract_id, || {
+            let mut custody_events: Map<String, CustodyEvent> = env
+                .storage()
+                .persistent()
+                .get(&CUSTODY_EVENTS)
+                .unwrap();
+            let mut event = custody_events.get(event_id.clone()).unwrap();
+            event.to_custodian = unregistered_hospital.clone();
+            custody_events.set(event_id.clone(), event);
+            env.storage().persistent().set(&CUSTODY_EVENTS, &custody_events);
+        });
+
+        // Try to confirm with the unregistered hospital. It should panic with UnauthorizedHospital (error code #9)
+        client.confirm_transfer(&unregistered_hospital, &event_id);
+    }
+
+    #[test]
     fn test_get_units_by_bank_empty() {
         let env = Env::default();
         let (_, _, client) = setup_contract_with_admin(&env);
