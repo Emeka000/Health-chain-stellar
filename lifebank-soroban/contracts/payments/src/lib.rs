@@ -135,6 +135,8 @@ pub enum Error {
     PaymentNotLocked = 515,
     /// Dispute timeout has not yet elapsed.
     DisputeNotExpired = 516,
+    /// Arithmetic overflow detected in running totals.
+    Overflow = 518,
 }
 
 // ── Storage keys ───────────────────────────────────────────────────────────────
@@ -367,7 +369,7 @@ fn store_stats(env: &Env, stats: &PaymentStats) {
     env.storage().instance().set(&STATS_KEY, stats);
 }
 
-fn update_stats_on_transition(env: &Env, amount: i128, old: PaymentStatus, new: PaymentStatus) {
+fn update_stats_on_transition(env: &Env, amount: i128, old: PaymentStatus, new: PaymentStatus) -> Result<(), Error> {
     let mut stats = load_stats(env);
     match old {
         PaymentStatus::Locked => {
@@ -386,20 +388,21 @@ fn update_stats_on_transition(env: &Env, amount: i128, old: PaymentStatus, new: 
     }
     match new {
         PaymentStatus::Locked => {
-            stats.total_locked += amount;
+            stats.total_locked = stats.total_locked.checked_add(amount).ok_or(Error::Overflow)?;
             stats.count_locked += 1;
         }
         PaymentStatus::Released => {
-            stats.total_released += amount;
+            stats.total_released = stats.total_released.checked_add(amount).ok_or(Error::Overflow)?;
             stats.count_released += 1;
         }
         PaymentStatus::Refunded => {
-            stats.total_refunded += amount;
+            stats.total_refunded = stats.total_refunded.checked_add(amount).ok_or(Error::Overflow)?;
             stats.count_refunded += 1;
         }
         _ => {}
     }
     store_stats(env, &stats);
+    Ok(())
 }
 
 // ── Request-contract cross-contract interface (minimal) ────────────────────────
@@ -763,7 +766,7 @@ impl PaymentContract {
         index_by_status(&env, PaymentStatus::Locked, id);
         index_by_request(&env, request_id, id);
         timeline_append(&env, request_id, id);
-        update_stats_on_transition(&env, amount, PaymentStatus::Pending, PaymentStatus::Locked);
+        update_stats_on_transition(&env, amount, PaymentStatus::Pending, PaymentStatus::Locked)?;
 
         PaymentEscrowed { payment_id: id }.publish(&env);
 
@@ -819,7 +822,7 @@ impl PaymentContract {
 
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, PaymentStatus::Released, payment_id);
-        update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Released);
+        update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Released)?;
         remove_from_request_index(&env, payment.request_id);
 
         // Clean up confirmation flags
@@ -876,7 +879,7 @@ impl PaymentContract {
 
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, PaymentStatus::Released, payment_id);
-        update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Released);
+        update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Released)?;
         remove_from_request_index(&env, payment.request_id);
 
         // Clean up confirmation flags
@@ -916,7 +919,7 @@ impl PaymentContract {
 
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, PaymentStatus::Refunded, payment_id);
-        update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Refunded);
+        update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Refunded)?;
         remove_from_request_index(&env, payment.request_id);
 
         PaymentRefunded { payment_id, payer: payment.payer.clone(), amount: payment.amount }.publish(&env);
@@ -939,7 +942,7 @@ impl PaymentContract {
         store_payment(&env, &payment);
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, status, payment_id);
-        update_stats_on_transition(&env, payment.amount, old_status, status);
+        update_stats_on_transition(&env, payment.amount, old_status, status)?;
         if matches!(status, PaymentStatus::Released | PaymentStatus::Refunded | PaymentStatus::Cancelled) {
             remove_from_request_index(&env, payment.request_id);
         }
@@ -974,7 +977,7 @@ impl PaymentContract {
         store_payment(&env, &payment);
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, PaymentStatus::Disputed, payment_id);
-        update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Disputed);
+        update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Disputed)?;
         PaymentDisputed { payment_id, reason_code: dispute_reason_to_code(reason), case_id }.publish(&env);
         Ok(())
     }
@@ -1315,7 +1318,7 @@ impl PaymentContract {
             store_payment(&env, &payment);
             remove_from_status_index(&env, old_status, pid);
             index_by_status(&env, PaymentStatus::Refunded, pid);
-            update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Refunded);
+            update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Refunded)?;
             remove_from_request_index(&env, payment.request_id);
 
             if let Some(ref rc) = req_contract {

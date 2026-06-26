@@ -4004,7 +4004,7 @@ impl HealthChainContract {
             (symbol_short!("org"), symbol_short!("state")),
             ActorStateChangeEvent {
                 entity_id: org_id.clone(),
-                old_state: LifecycleState::Active,
+                old_state,
                 new_state: LifecycleState::Inactive,
                 changed_by: admin.clone(),
                 reason: Some(reason.clone()),
