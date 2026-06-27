@@ -543,6 +543,11 @@ impl TemperatureContract {
         env.storage().persistent().set(&streak_key, &0u32);
         env.storage().persistent().set(&compromised_key, &false);
 
+        env.events().publish(
+            (symbol_short!("temp"), symbol_short!("reset")),
+            unit_id,
+        );
+
         Ok(())
     }
 

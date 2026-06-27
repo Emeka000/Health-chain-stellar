@@ -21,6 +21,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { PermissionsGuard } from './guards/permissions.guard';
 import { JwtKeyService } from './jwt-key.service';
 import { JwtStrategy } from './jwt.strategy';
+import { MfaController } from './mfa/mfa.controller';
 import { MfaService } from './mfa/mfa.service';
 import { PasswordResetService } from './password-reset.service';
 import { PermissionsController } from './permissions.controller';
@@ -61,7 +62,7 @@ import type { JwtModuleOptions } from '@nestjs/jwt';
     IdempotencyModule,
     UserActivityModule,
   ],
-  controllers: [AuthController, PermissionsController],
+  controllers: [AuthController, PermissionsController, MfaController],
   providers: [
     AuthService,
     MfaService,

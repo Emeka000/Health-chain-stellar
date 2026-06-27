@@ -12,6 +12,9 @@ import { InventoryModule } from '../inventory/inventory.module';
 import { MapsModule } from '../maps/maps.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrganizationEntity } from '../organizations/entities/organization.entity';
+import { DispatchRecord } from '../dispatch/entities/dispatch-record.entity';
+import { RiderEntity } from '../riders/entities/rider.entity';
+import { OrderEntity } from '../orders/entities/order.entity';
 
 import { BloodRequestsController } from './blood-requests.controller';
 import { BloodRequestsService } from './blood-requests.service';
@@ -21,6 +24,7 @@ import { BloodRequestItemEntity } from './entities/blood-request-item.entity';
 import { BloodRequestReservationEntity } from './entities/blood-request-reservation.entity';
 import { BloodRequestSagaEntity } from './entities/blood-request-saga.entity';
 import { BloodRequestEntity } from './entities/blood-request.entity';
+import { FulfillmentLegEntity } from './entities/fulfillment-leg.entity';
 import { RequestStatusHistoryEntity } from './entities/request-status-history.entity';
 import { BLOOD_REQUEST_QUEUE } from './enums/request-urgency.enum';
 import { SlaBreachListener } from './listeners/sla-breach.listener';
@@ -32,6 +36,7 @@ import { BloodRequestReservationService } from './services/blood-request-reserva
 import { RequestQueryService } from './services/request-query.service';
 import { SagaCoordinatorService } from './services/saga-coordinator.service';
 import { TriageScoringService } from './services/triage-scoring.service';
+import { OrderSplittingService } from './services/order-splitting.service';
 
 @Module({
   imports: [
@@ -41,8 +46,12 @@ import { TriageScoringService } from './services/triage-scoring.service';
       BloodRequestReservationEntity,
       BloodRequestSagaEntity,
       RequestStatusHistoryEntity,
+      FulfillmentLegEntity,
       InventoryStockEntity,
       OrganizationEntity,
+      DispatchRecord,
+      RiderEntity,
+      OrderEntity,
     ]),
     BullModule.registerQueueAsync({
       name: BLOOD_REQUEST_QUEUE,

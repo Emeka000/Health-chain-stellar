@@ -25,6 +25,12 @@ import { WorkingHoursDto } from './dto/working-hours.dto';
 import { RiderEntity } from './entities/rider.entity';
 import { RiderStatus } from './enums/rider-status.enum';
 
+/** Public record shape returned by getAvailableRiders — maps to RiderEntity */
+export type RiderRecord = RiderEntity & {
+  averageRating: number;
+  activeDeliveries: number;
+};
+
 function haversineKm(
   lat1: number,
   lon1: number,
@@ -231,13 +237,18 @@ export class RidersService {
     };
   }
 
-  async getAvailableRiders() {
+  async getAvailableRiders(): Promise<{ message: string; data: RiderRecord[] }> {
     const riders = await this.riderRepository.find({
       where: { status: RiderStatus.AVAILABLE, isVerified: true },
     });
+    const data: RiderRecord[] = riders.map((r) => ({
+      ...r,
+      averageRating: r.rating,
+      activeDeliveries: r.completedDeliveries,
+    }));
     return {
       message: 'Available riders retrieved successfully',
-      data: riders,
+      data,
     };
   }
 

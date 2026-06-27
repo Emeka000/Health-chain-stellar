@@ -1,3 +1,4 @@
+use soroban_sdk::symbol_short;
 //! Fuzz tests for inventory contract (issue #844)
 //!
 //! These property-based tests validate that the inventory contract handles
@@ -61,7 +62,7 @@ proptest! {
         
         // Register a blood unit
         let serial = SorobanString::from_str(&env, "TEST-001");
-        let blood_type = soroban_sdk::Symbol::new(&env, "APos");
+        let blood_type = soroban_sdk::symbol_short!("APos");
         let unit_id = client.register_blood(&bank, &serial, &blood_type, &quantity, &None).unwrap();
         
         // Reserve with fuzzed duration - should not panic
@@ -137,7 +138,7 @@ proptest! {
         let mut all_unit_ids = SorobanVec::new(&env);
         for i in 0..batch_size.min(10) {
             let serial = SorobanString::from_str(&env, &format!("BATCH-{:03}", i));
-            let blood_type = soroban_sdk::Symbol::new(&env, "OPos");
+            let blood_type = soroban_sdk::symbol_short!("OPos");
             let unit_id = client.register_blood(&bank, &serial, &blood_type, &450, &None).unwrap();
             all_unit_ids.push_back(unit_id);
         }
@@ -180,7 +181,7 @@ proptest! {
         
         // Register a blood unit
         let serial = SorobanString::from_str(&env, "EXPIRY-TEST");
-        let blood_type = soroban_sdk::Symbol::new(&env, "ABPos");
+        let blood_type = soroban_sdk::symbol_short!("ABPos");
         let unit_id = client.register_blood(&bank, &serial, &blood_type, &quantity, &None).unwrap();
         
         // Fast-forward time past expiration (42 days = shelf life)
@@ -218,7 +219,7 @@ mod unit_tests {
         client.authorize_bank(&admin, &bank, &true);
         
         let serial = SorobanString::from_str(&env, "ZERO-DUR");
-        let blood_type = soroban_sdk::Symbol::new(&env, "OPos");
+        let blood_type = soroban_sdk::symbol_short!("OPos");
         let unit_id = client.register_blood(&bank, &serial, &blood_type, &450, &None).unwrap();
         
         let mut unit_ids = SorobanVec::new(&env);
@@ -245,7 +246,7 @@ mod unit_tests {
         
         // Empty string serial number
         let serial = SorobanString::from_str(&env, "");
-        let blood_type = soroban_sdk::Symbol::new(&env, "APos");
+        let blood_type = soroban_sdk::symbol_short!("APos");
         
         let result = client.try_register_blood(&bank, &serial, &blood_type, &450, &None);
         

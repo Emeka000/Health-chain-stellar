@@ -1110,6 +1110,11 @@ impl HealthChainContract {
 
         let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
 
+        // Re-validate hospital status immediately before the storage write (fix #946 TOCTOU)
+        if !Self::is_hospital(env.clone(), hospital.clone()) {
+            return Err(Error::UnauthorizedHospital);
+        }
+
         // --- NEW: REQUIREMENT #67 GUARD ---
         if unit.status == BloodStatus::Expired {
             return Err(Error::UnitExpired);
@@ -4004,7 +4009,7 @@ impl HealthChainContract {
             (symbol_short!("org"), symbol_short!("state")),
             ActorStateChangeEvent {
                 entity_id: org_id.clone(),
-                old_state: LifecycleState::Active,
+                old_state,
                 new_state: LifecycleState::Inactive,
                 changed_by: admin.clone(),
                 reason: Some(reason.clone()),
@@ -4164,7 +4169,7 @@ mod test {
         let rogue_hospital = Address::generate(&env);
         let current_time = env.ledger().timestamp();
         let required_by = current_time + (2 * 86400);
-        let delivery = String::from_slice(&env, "Ward 7B - ICU");
+        let delivery = String::from_str(&env, "Ward 7B - ICU");
 
         env.mock_all_auths();
         client.create_request(

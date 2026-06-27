@@ -552,38 +552,44 @@ impl IdentityContract {
     }
 
     /// Return up to `limit` top-rated verified organizations of the given type.
-    /// Uses a simple insertion-sort over all verified orgs.
+    /// Enforces a hard cap of 50 results; sort is O(n * take) bounded by CAP².
     pub fn get_top_rated_organizations(
         env: Env,
         org_type: OrgType,
         limit: u32,
     ) -> Vec<Organization> {
-        let all = Self::get_verified_organizations(env.clone(), org_type, 100);
+        const CAP: u32 = 50;
+        let take = limit.min(CAP);
+        let all = Self::get_verified_organizations(env.clone(), org_type, CAP);
+        let n = all.len();
 
-        // Insertion sort descending by rating
-        let mut sorted: Vec<Organization> = Vec::new(&env);
-        for i in 0..all.len() {
-            let org = all.get(i).unwrap();
-            let mut inserted = false;
-            let mut new_sorted: Vec<Organization> = Vec::new(&env);
-            for j in 0..sorted.len() {
-                let s = sorted.get(j).unwrap();
-                if !inserted && org.rating > s.rating {
-                    new_sorted.push_back(org.clone());
-                    inserted = true;
+        // Track which indices have been selected already
+        let mut selected: Vec<u32> = Vec::new(&env);
+        let mut results: Vec<Organization> = Vec::new(&env);
+
+        for _ in 0..take {
+            let mut best_rating = u32::MAX;
+            let mut best_idx = n; // sentinel = not found
+            // Find the highest-rated not-yet-selected entry
+            for i in 0..n {
+                let mut skip = false;
+                for k in 0..selected.len() {
+                    if selected.get(k).unwrap() == i {
+                        skip = true;
+                        break;
+                    }
                 }
-                new_sorted.push_back(s);
+                if skip { continue; }
+                let r = all.get(i).unwrap().rating;
+                // We want maximum; re-use best_rating as "highest so far"
+                if best_idx == n || r > best_rating {
+                    best_rating = r;
+                    best_idx = i;
+                }
             }
-            if !inserted {
-                new_sorted.push_back(org);
-            }
-            sorted = new_sorted;
-        }
-
-        let take = limit.min(sorted.len());
-        let mut results = Vec::new(&env);
-        for i in 0..take {
-            results.push_back(sorted.get(i).unwrap());
+            if best_idx == n { break; } // no more candidates
+            selected.push_back(best_idx);
+            results.push_back(all.get(best_idx).unwrap());
         }
         results
     }
