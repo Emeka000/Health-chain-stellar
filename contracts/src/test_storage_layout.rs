@@ -443,6 +443,7 @@ fn test_storage_symbol_keys_match_compatibility_contract() {
 #[test]
 fn test_storage_layout_fingerprint_regression_guard() {
     let env = Env::default();
+    // This test acts as a regression guard for storage layout compatibility.
     let mut unique = soroban_sdk::Map::<Symbol, bool>::new(&env);
     unique.set(BLOOD_UNITS, true);
     unique.set(NEXT_ID, true);
@@ -827,14 +828,14 @@ fn test_storage_layout_fingerprint_regression_guard() {
     unique.set(HOSPITALS, true);
     unique.set(ADMIN, true);
     unique.set(REQUESTS, true);
-    unique.set(NEXT_REQUEST_ID, true);
-    unique.set(REQUEST_KEYS, true);
     unique.set(PAYMENTS, true);
     unique.set(NEXT_PAYMENT_ID, true);
     unique.set(DISPUTES, true);
     unique.set(NEXT_DISPUTE_ID, true);
     unique.set(CUSTODY_EVENTS, true);
     unique.set(HISTORY, true);
+    unique.set(NEXT_REQUEST_ID, true);
+    unique.set(REQUEST_KEYS, true);
 
     assert_eq!(
         unique.len(),

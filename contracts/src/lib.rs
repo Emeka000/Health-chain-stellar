@@ -478,49 +478,26 @@ pub struct DisputeAutoRefundedEvent {
 }
 
 /// Storage key literals (compile-time guarded for `symbol_short!` compatibility).
-const BLOOD_UNITS_KEY: &str = "UNITS";
-const NEXT_ID_KEY: &str = "NEXT_ID";
-const BLOOD_BANKS_KEY: &str = "BANKS";
-const HOSPITALS_KEY: &str = "HOSPS";
-const ADMIN_KEY: &str = "ADMIN";
-const REQUESTS_KEY: &str = "REQUESTS";
-const NEXT_REQUEST_ID_KEY: &str = "NEXT_REQ";
-const REQUEST_KEYS_KEY: &str = "REQ_KEYS";
-const BLOOD_REQUESTS_KEY: &str = "REQS";
-const PAYMENTS_KEY: &str = "PAY_RECS";
-const NEXT_PAYMENT_ID_KEY: &str = "NPAY_ID";
-const DISPUTES_KEY: &str = "DISP_REC";
-const NEXT_DISPUTE_ID_KEY: &str = "NDIS_ID";
-const CUSTODY_EVENTS_KEY: &str = "CUSTODY";
-const HISTORY_KEY: &str = "HISTORY";
-const DISPUTE_METADATA_KEY: &str = "DISP_META";
-const DISPUTE_TIMEOUT_KEY: &str = "DSP_TO";
-const PAYMENT_STATS_KEY: &str = "PAY_STATS";
-const MULTISIG_CONFIG_KEY: &str = "MSIG_CFG";
-const PENDING_APPROVALS_KEY: &str = "PEND_APR";
-const ESCROW_ACCOUNTS_KEY: &str = "ESC_ACCS";
-
-const _: () = assert!(BLOOD_UNITS_KEY.len() <= 9);
-const _: () = assert!(NEXT_ID_KEY.len() <= 9);
-const _: () = assert!(BLOOD_BANKS_KEY.len() <= 9);
-const _: () = assert!(HOSPITALS_KEY.len() <= 9);
-const _: () = assert!(ADMIN_KEY.len() <= 9);
-const _: () = assert!(REQUESTS_KEY.len() <= 9);
-const _: () = assert!(NEXT_REQUEST_ID_KEY.len() <= 9);
-const _: () = assert!(REQUEST_KEYS_KEY.len() <= 9);
-const _: () = assert!(BLOOD_REQUESTS_KEY.len() <= 9);
-const _: () = assert!(PAYMENTS_KEY.len() <= 9);
-const _: () = assert!(NEXT_PAYMENT_ID_KEY.len() <= 9);
-const _: () = assert!(DISPUTES_KEY.len() <= 9);
-const _: () = assert!(NEXT_DISPUTE_ID_KEY.len() <= 9);
-const _: () = assert!(CUSTODY_EVENTS_KEY.len() <= 9);
-const _: () = assert!(HISTORY_KEY.len() <= 9);
-const _: () = assert!(DISPUTE_METADATA_KEY.len() <= 9);
-const _: () = assert!(DISPUTE_TIMEOUT_KEY.len() <= 9);
-const _: () = assert!(PAYMENT_STATS_KEY.len() <= 9);
-const _: () = assert!(MULTISIG_CONFIG_KEY.len() <= 9);
-const _: () = assert!(PENDING_APPROVALS_KEY.len() <= 9);
-const _: () = assert!(ESCROW_ACCOUNTS_KEY.len() <= 9);
+const _: () = assert!("UNITS".len() <= 9);
+const _: () = assert!("NEXT_ID".len() <= 9);
+const _: () = assert!("BANKS".len() <= 9);
+const _: () = assert!("HOSPS".len() <= 9);
+const _: () = assert!("ADMIN".len() <= 9);
+const _: () = assert!("REQUESTS".len() <= 9);
+const _: () = assert!("NEXT_REQ".len() <= 9);
+const _: () = assert!("REQ_KEYS".len() <= 9);
+const _: () = assert!("PAY_RECS".len() <= 9);
+const _: () = assert!("NPAY_ID".len() <= 9);
+const _: () = assert!("DISP_REC".len() <= 9);
+const _: () = assert!("NDIS_ID".len() <= 9);
+const _: () = assert!("CUSTODY".len() <= 9);
+const _: () = assert!("HISTORY".len() <= 9);
+const _: () = assert!("DISP_META".len() <= 9);
+const _: () = assert!("DSP_TO".len() <= 9);
+const _: () = assert!("PAY_STATS".len() <= 9);
+const _: () = assert!("MSIG_CFG".len() <= 9);
+const _: () = assert!("PEND_APR".len() <= 9);
+const _: () = assert!("ESC_ACCS".len() <= 9);
 
 /// Storage keys (single source of truth)
 pub(crate) const BLOOD_UNITS: Symbol = symbol_short!("UNITS");
@@ -531,7 +508,6 @@ pub(crate) const ADMIN: Symbol = symbol_short!("ADMIN");
 pub(crate) const REQUESTS: Symbol = symbol_short!("REQUESTS");
 pub(crate) const NEXT_REQUEST_ID: Symbol = symbol_short!("NEXT_REQ");
 pub(crate) const REQUEST_KEYS: Symbol = symbol_short!("REQ_KEYS");
-pub(crate) const BLOOD_REQUESTS: Symbol = symbol_short!("REQS");
 pub(crate) const PAYMENTS: Symbol = symbol_short!("PAY_RECS");
 pub(crate) const NEXT_PAYMENT_ID: Symbol = symbol_short!("NPAY_ID");
 pub(crate) const DISPUTES: Symbol = symbol_short!("DISP_REC");
@@ -544,6 +520,7 @@ pub(crate) const PAYMENT_STATS: Symbol = symbol_short!("PAY_STATS");
 pub(crate) const MULTISIG_CONFIG: Symbol = symbol_short!("MSIG_CFG");
 pub(crate) const PENDING_APPROVALS: Symbol = symbol_short!("PEND_APR");
 pub(crate) const ESCROW_ACCOUNTS: Symbol = symbol_short!("ESC_ACCS");
+
 /// Storage key enumeration for composite keys
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
