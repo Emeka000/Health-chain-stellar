@@ -13,6 +13,7 @@ import { PolicyCenterModule } from '../policy-center/policy-center.module';
 import { ApprovalModule } from '../approvals/approval.module';
 import { FileMetadataModule } from '../file-metadata/file-metadata.module';
 import { AuthModule } from '../auth/auth.module';
+import { OrganizationEntity } from '../organizations/entities/organization.entity';
 
 
 import { BloodInventoryQueryService } from './blood-inventory-query.service';
@@ -50,6 +51,7 @@ import { BloodUnitBatchService } from './batch/blood-unit-batch.service';
       UnitDispositionRecord,
       QuarantineCase,
       TransferRecord,
+      OrganizationEntity,
     ]),
 
     SorobanModule,
