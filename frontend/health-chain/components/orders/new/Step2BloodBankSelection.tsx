@@ -1,7 +1,16 @@
 import React from "react";
+import dynamic from "next/dynamic";
 import { BloodBankAvailability, BloodType, StockLevel } from "@/lib/types/orders";
-import { BloodBankMap } from "./BloodBankMap";
 import { AlertCircle, Clock, MapPin, RefreshCw } from "lucide-react";
+import type { BloodBankMapProps } from "./BloodBankMap";
+
+const BloodBankMap = dynamic<BloodBankMapProps>(
+  () => import("./BloodBankMap").then((m) => ({ default: m.BloodBankMap })),
+  {
+    ssr: false,
+    loading: () => <div className="w-full h-[300px] rounded-xl bg-gray-100 animate-pulse" />,
+  },
+);
 
 interface Step2Props {
   bloodType: BloodType;

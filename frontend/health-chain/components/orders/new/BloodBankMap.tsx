@@ -3,7 +3,7 @@
 import React, { useEffect, useRef } from "react";
 import { BloodBankAvailability, BloodType, StockLevel } from "@/lib/types/orders";
 
-interface BloodBankMapProps {
+export interface BloodBankMapProps {
   bloodBanks: BloodBankAvailability[];
   hospitalLat: number;
   hospitalLng: number;

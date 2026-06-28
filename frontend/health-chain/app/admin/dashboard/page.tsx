@@ -1,10 +1,18 @@
 "use client";
 import React from "react";
+import dynamic from "next/dynamic";
 import { KPICards } from "@/components/dashboard/KPICards";
-import { LiveOpsMap } from "@/components/dashboard/LiveOpsMap";
 import { InventoryHeatmap } from "@/components/dashboard/InventoryHeatmap";
 import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
 import { useDashboardData } from "@/lib/hooks/useDashboardData";
+
+const LiveOpsMap = dynamic(
+  () => import("@/components/dashboard/LiveOpsMap").then((m) => ({ default: m.LiveOpsMap })),
+  {
+    ssr: false,
+    loading: () => <div className="w-full h-full bg-gray-100 animate-pulse" />,
+  },
+);
 
 export default function AdminDashboardPage() {
   const { data, isConnected } = useDashboardData();
