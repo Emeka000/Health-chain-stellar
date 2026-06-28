@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { PolicyCenterModule } from '../policy-center/policy-center.module';
@@ -25,7 +24,6 @@ import { RiderSearchService } from './services/rider-search.service';
       AssignmentDecisionEntity,
       ReputationEntity,
     ]),
-    ScheduleModule.forRoot(),
     ReputationModule,
     PolicyCenterModule,
   ],

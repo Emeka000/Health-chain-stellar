@@ -1,6 +1,5 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
-import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { BloodRequestEntity } from '../blood-requests/entities/blood-request.entity';
@@ -52,7 +51,6 @@ import { RestockingCampaignService } from './services/restocking-campaign.servic
       BloodUnit,
     ]),
     BullModule.registerQueue({ name: 'donor-outreach' }),
-    ScheduleModule.forRoot(),
     NotificationsModule,
     UsersModule,
   ],
