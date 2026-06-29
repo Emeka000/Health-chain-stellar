@@ -9,6 +9,7 @@ use soroban_sdk::{
 /// Persistent storage TTL constants (ledgers; one ledger ≈ 5 s on mainnet).
 const TTL_THRESHOLD: u32 = 518_400; // ~30 days
 const TTL_EXTEND_TO: u32 = 1_036_800; // ~60 days
+const CONTRACT_VERSION: u32 = 1;
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -243,6 +244,11 @@ impl IdentityContract {
         IdentityInitialized { admin }.publish(&env);
 
         Ok(())
+    }
+
+    /// Get contract version
+    pub fn version(_env: Env) -> u32 {
+        CONTRACT_VERSION
     }
 
     /// Pause all state-mutating functions. Admin only.

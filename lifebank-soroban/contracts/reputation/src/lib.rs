@@ -46,6 +46,7 @@ const DEFAULT_MAX_RATING: i64 = 5;
 const DEFAULT_MIN_INTERACTIONS: u32 = 3;
 const DEFAULT_BADGE_MIN_SCORE: i64 = 80_00;
 const DEFAULT_BADGE_MIN_INTERACTIONS: u32 = 10;
+const CONTRACT_VERSION: u32 = 1;
 
 /// Violation types for penalties
 #[contracttype]
@@ -233,6 +234,10 @@ impl ReputationContract {
         ReputationInitialized { admin }.publish(&env);
 
         Ok(())
+    }
+
+    pub fn version(_env: Env) -> u32 {
+        CONTRACT_VERSION
     }
 
     /// Pause all state-mutating functions. Admin only.

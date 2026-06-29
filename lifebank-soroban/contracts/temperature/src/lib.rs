@@ -42,6 +42,7 @@ pub struct ExcursionReported {
 }
 
 const PAGE_SIZE: u32 = 20;
+const CONTRACT_VERSION: u32 = 1;
 /// TTL constants for persistent oracle approval entries (in ledgers; ~5 s each).
 /// Entries are bumped whenever their remaining TTL falls below the threshold.
 const ORACLE_BUMP_THRESHOLD: u32 = 518_400; // ~30 days
@@ -72,6 +73,10 @@ impl TemperatureContract {
 
         storage::set_admin(&env, &admin);
         Ok(())
+    }
+
+    pub fn version(_env: Env) -> u32 {
+        CONTRACT_VERSION
     }
 
     /// Propose a threshold change with time-lock governance

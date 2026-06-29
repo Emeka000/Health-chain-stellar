@@ -27,6 +27,8 @@ use soroban_sdk::{contract, contractevent, contractimpl, contracttype, Address, 
 /// allocation and free the reserved units and escrowed payment.
 const WORKFLOW_TIMEOUT_SECS: u64 = 6 * 60 * 60;
 
+const CONTRACT_VERSION: u32 = 1;
+
 // ── Minimal interface types mirroring the domain contracts ────────────────────
 // These allow the coordinator to inspect cross-contract return values without
 // importing compiled WASMs. The domain contracts must keep these in sync.
@@ -304,6 +306,11 @@ impl CoordinatorContract {
             .set(&DataKey::PaymentContract, &payment_contract);
         CoordInitialized { admin }.publish(&env);
         Ok(())
+    }
+
+    /// Get contract version
+    pub fn version(_env: Env) -> u32 {
+        CONTRACT_VERSION
     }
 
     /// Pause all state-mutating functions. Admin only.
