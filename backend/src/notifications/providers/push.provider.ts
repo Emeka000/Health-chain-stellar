@@ -60,4 +60,8 @@ export class PushProvider {
       throw error;
     }
   }
+
+  isHealthy(): boolean {
+    return this.initialized;
+  }
 }
