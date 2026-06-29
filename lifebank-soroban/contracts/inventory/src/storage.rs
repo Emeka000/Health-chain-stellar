@@ -4,6 +4,11 @@ use soroban_sdk::{Address, Env, String, Vec};
 pub const SECONDS_PER_DAY: u64 = 86400;
 pub const BLOOD_SHELF_LIFE_DAYS: u64 = 35;
 
+/// Persistent storage TTL constants (ledgers; one ledger ≈ 5 s on mainnet).
+/// Entries whose remaining TTL falls below TTL_THRESHOLD are extended to TTL_EXTEND_TO.
+pub const TTL_THRESHOLD: u32 = 518_400; // ~30 days
+pub const TTL_EXTEND_TO: u32 = 1_036_800; // ~60 days
+
 /// Maximum history entries per storage page. Keeps each page small so
 /// a single read never loads the entire history of a high-traffic unit.
 const HISTORY_PAGE_SIZE: u32 = 50;
@@ -27,14 +32,12 @@ pub fn is_authorized_bank(env: &Env, bank: &Address) -> bool {
 }
 
 pub fn set_authorized_bank(env: &Env, bank: &Address, authorized: bool) {
+    let key = DataKey::AuthorizedBank(bank.clone());
     if authorized {
-        env.storage()
-            .persistent()
-            .set(&DataKey::AuthorizedBank(bank.clone()), &true);
+        env.storage().persistent().set(&key, &true);
+        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
     } else {
-        env.storage()
-            .persistent()
-            .remove(&DataKey::AuthorizedBank(bank.clone()));
+        env.storage().persistent().remove(&key);
     }
 }
 
@@ -53,7 +56,9 @@ pub fn increment_blood_unit_id(env: &Env) -> u64 {
 // ── Blood unit CRUD ────────────────────────────────────────────────────────────
 
 pub fn set_blood_unit(env: &Env, blood_unit: &BloodUnit) {
-    env.storage().persistent().set(&DataKey::BloodUnit(blood_unit.id), blood_unit);
+    let key = DataKey::BloodUnit(blood_unit.id);
+    env.storage().persistent().set(&key, blood_unit);
+    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn get_blood_unit(env: &Env, id: u64) -> Option<BloodUnit> {
@@ -71,6 +76,7 @@ pub fn add_to_blood_type_index(env: &Env, blood_unit: &BloodUnit) {
     let mut units: Vec<u64> = env.storage().persistent().get(&key).unwrap_or(Vec::new(env));
     units.push_back(blood_unit.id);
     env.storage().persistent().set(&key, &units);
+    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn add_to_bank_index(env: &Env, blood_unit: &BloodUnit) {
@@ -78,6 +84,7 @@ pub fn add_to_bank_index(env: &Env, blood_unit: &BloodUnit) {
     let mut units: Vec<u64> = env.storage().persistent().get(&key).unwrap_or(Vec::new(env));
     units.push_back(blood_unit.id);
     env.storage().persistent().set(&key, &units);
+    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn add_to_status_index(env: &Env, blood_unit: &BloodUnit) {
@@ -85,6 +92,7 @@ pub fn add_to_status_index(env: &Env, blood_unit: &BloodUnit) {
     let mut units: Vec<u64> = env.storage().persistent().get(&key).unwrap_or(Vec::new(env));
     units.push_back(blood_unit.id);
     env.storage().persistent().set(&key, &units);
+    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 /// Remove a single ID from a status index bucket.
@@ -100,6 +108,7 @@ pub fn remove_from_status_index(env: &Env, blood_unit_id: u64, old_status: Blood
         }
     }
     env.storage().persistent().set(&key, &updated);
+    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn add_to_donor_index(env: &Env, blood_unit: &BloodUnit) {
@@ -108,6 +117,7 @@ pub fn add_to_donor_index(env: &Env, blood_unit: &BloodUnit) {
         let mut units: Vec<u64> = env.storage().persistent().get(&key).unwrap_or(Vec::new(env));
         units.push_back(blood_unit.id);
         env.storage().persistent().set(&key, &units);
+        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 }
 
@@ -158,19 +168,23 @@ pub fn record_status_change(
         // Current page is full — start a new one
         let next_page = current_page + 1;
         env.storage().persistent().set(&page_key, &next_page);
+        env.storage().persistent().extend_ttl(&page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
         let new_page_key = DataKey::StatusHistoryPage(blood_unit_id, next_page);
         let mut new_page: Vec<StatusChangeHistory> = Vec::new(env);
         new_page.push_back(entry);
         env.storage().persistent().set(&new_page_key, &new_page);
+        env.storage().persistent().extend_ttl(&new_page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
     } else {
         page.push_back(entry);
         env.storage().persistent().set(&page_data_key, &page);
+        env.storage().persistent().extend_ttl(&page_data_key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     // Increment change count
     let count_key = DataKey::BloodUnitStatusChangeCount(blood_unit_id);
     let count = get_blood_unit_status_change_count(env, blood_unit_id);
     env.storage().persistent().set(&count_key, &(count + 1));
+    env.storage().persistent().extend_ttl(&count_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 /// Return all history entries for a unit by iterating pages.

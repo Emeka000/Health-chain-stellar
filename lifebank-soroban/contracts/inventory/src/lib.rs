@@ -95,7 +95,9 @@ impl InventoryContract {
         if admin != stored_admin {
             return Err(ContractError::Unauthorized);
         }
-        env.storage().persistent().set(&DataKey::Role(grantee), &role);
+        let role_key = DataKey::Role(grantee);
+        env.storage().persistent().set(&role_key, &role);
+        env.storage().persistent().extend_ttl(&role_key, storage::TTL_THRESHOLD, storage::TTL_EXTEND_TO);
         Ok(())
     }
 
@@ -282,6 +284,7 @@ impl InventoryContract {
 
         // Persist serial number → unit_id so duplicate registrations are rejected
         env.storage().persistent().set(&serial_key, &blood_unit_id);
+        env.storage().persistent().extend_ttl(&serial_key, storage::TTL_THRESHOLD, storage::TTL_EXTEND_TO);
 
         // Update indexes for efficient querying
         storage::add_to_blood_type_index(&env, &blood_unit);

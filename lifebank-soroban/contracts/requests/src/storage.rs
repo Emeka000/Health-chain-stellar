@@ -2,6 +2,10 @@ use crate::error::ContractError;
 use crate::types::{BloodRequest, ContractMetadata, DataKey};
 use soroban_sdk::{Address, Env, String};
 
+/// Persistent storage TTL constants (ledgers; one ledger ≈ 5 s on mainnet).
+const TTL_THRESHOLD: u32 = 518_400; // ~30 days
+const TTL_EXTEND_TO: u32 = 1_036_800; // ~60 days
+
 pub fn is_initialized(env: &Env) -> bool {
     env.storage()
         .instance()
@@ -66,9 +70,9 @@ pub fn increment_request_counter(env: &Env) -> u64 {
 /// Instance storage has a fixed size budget; using persistent storage
 /// prevents instance bloat as the number of authorized hospitals grows.
 pub fn authorize_hospital(env: &Env, hospital: &Address) {
-    env.storage()
-        .persistent()
-        .set(&DataKey::AuthorizedHospital(hospital.clone()), &true);
+    let key = DataKey::AuthorizedHospital(hospital.clone());
+    env.storage().persistent().set(&key, &true);
+    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn revoke_hospital(env: &Env, hospital: &Address) {
@@ -123,9 +127,9 @@ pub fn is_rider_authorized(env: &Env, rider: &Address) -> bool {
 }
 
 pub fn set_request(env: &Env, request: &BloodRequest) {
-    env.storage()
-        .persistent()
-        .set(&DataKey::Request(request.id), request);
+    let key = DataKey::Request(request.id);
+    env.storage().persistent().set(&key, request);
+    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn get_request(env: &Env, request_id: u64) -> Option<BloodRequest> {

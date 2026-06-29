@@ -213,9 +213,9 @@ fn set_pledge_counter(env: &Env, val: u64) {
 }
 
 fn store_payment(env: &Env, payment: &Payment) {
-    env.storage()
-        .persistent()
-        .set(&payment_key(payment.id), payment);
+    let key = payment_key(payment.id);
+    env.storage().persistent().set(&key, payment);
+    env.storage().persistent().extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
 }
 
 fn load_payment(env: &Env, id: u64) -> Option<Payment> {
@@ -223,9 +223,9 @@ fn load_payment(env: &Env, id: u64) -> Option<Payment> {
 }
 
 fn store_pledge(env: &Env, pledge: &DonationPledge) {
-    env.storage()
-        .persistent()
-        .set(&pledge_key(pledge.id), pledge);
+    let key = pledge_key(pledge.id);
+    env.storage().persistent().set(&key, pledge);
+    env.storage().persistent().extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
 }
 
 fn load_pledge(env: &Env, id: u64) -> Option<DonationPledge> {
@@ -237,9 +237,9 @@ fn vesting_key(donor: &Address) -> (Address, &'static str) {
 }
 
 fn store_vesting(env: &Env, schedule: &VestingSchedule) {
-    env.storage()
-        .persistent()
-        .set(&vesting_key(&schedule.donor), schedule);
+    let key = vesting_key(&schedule.donor);
+    env.storage().persistent().set(&key, schedule);
+    env.storage().persistent().extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
 }
 
 fn load_vesting(env: &Env, donor: &Address) -> Option<VestingSchedule> {
