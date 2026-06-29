@@ -41,27 +41,25 @@ for contract in coordinator identity inventory payments requests temperature mat
     echo ""
 done
 
-# Update contracts.json with deployed IDs
-echo "💾 Updating contracts.json with deployed IDs..."
+# Save contract IDs to testnet-specific file
+echo "💾 Saving contract IDs to .contract-ids.testnet.json..."
 
-{
-  # Start with testnet object
-  jq --arg network "testnet" '.testnet = {}' contracts.json > contracts.json.tmp
+OUTPUT_FILE=".contract-ids.testnet.json"
 
-  # Add each contract ID
-  for contract in "${!CONTRACT_IDS[@]}"; do
+# Initialize the JSON file
+echo "{}" > "${OUTPUT_FILE}"
+
+# Add each contract ID
+for contract in "${!CONTRACT_IDS[@]}"; do
     jq --arg contract "$contract" --arg id "${CONTRACT_IDS[$contract]}" \
-      '.testnet[$contract] = $id' contracts.json.tmp > contracts.json.tmp2
-    mv contracts.json.tmp2 contracts.json.tmp
-  done
-
-  mv contracts.json.tmp contracts.json
-}
+      '.[$contract] = $id' "${OUTPUT_FILE}" > "${OUTPUT_FILE}.tmp"
+    mv "${OUTPUT_FILE}.tmp" "${OUTPUT_FILE}"
+done
 
 echo ""
 echo "✅ Deployment complete!"
 echo ""
-echo "📝 Contract IDs saved to .contract-ids.json"
+echo "📝 Contract IDs saved to ${OUTPUT_FILE}"
 
 # ── Regenerate TypeScript bindings (issue #846) ────────────────────────────────
 echo ""
