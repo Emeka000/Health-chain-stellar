@@ -31,8 +31,8 @@ mod tests {
         let org_id = client.register_organization(
             &org_owner,
             &OrgType::BloodBank,
-            &String::from_slice(&env, "Blood Bank Alpha"),
-            &String::from_slice(&env, "LIC-001"),
+            &String::from_str(&env, "Blood Bank Alpha"),
+            &String::from_str(&env, "LIC-001"),
             &[0u8; 32].into(),
             &soroban_sdk::Vec::new(&env),
         );
@@ -55,8 +55,8 @@ mod tests {
         let org_id = client.register_organization(
             &org_owner,
             &OrgType::Hospital,
-            &String::from_slice(&env, "Hospital Beta"),
-            &String::from_slice(&env, "LIC-002"),
+            &String::from_str(&env, "Hospital Beta"),
+            &String::from_str(&env, "LIC-002"),
             &[0u8; 32].into(),
             &soroban_sdk::Vec::new(&env),
         );
@@ -81,8 +81,8 @@ mod tests {
         let org_id = client.register_organization(
             &org_owner,
             &OrgType::BloodBank,
-            &String::from_slice(&env, "Blood Bank Gamma"),
-            &String::from_slice(&env, "LIC-003"),
+            &String::from_str(&env, "Blood Bank Gamma"),
+            &String::from_str(&env, "LIC-003"),
             &[0u8; 32].into(),
             &soroban_sdk::Vec::new(&env),
         );
@@ -91,7 +91,7 @@ mod tests {
         client.verify_organization(&admin, &org_id);
 
         // Unverify
-        let reason = String::from_slice(&env, "Compliance violation");
+        let reason = String::from_str(&env, "Compliance violation");
         let metadata = client.unverify_organization(&admin, &org_id, &reason);
 
         assert!(!metadata.verified);
@@ -109,8 +109,8 @@ mod tests {
         let org_id = client.register_organization(
             &org_owner,
             &OrgType::Hospital,
-            &String::from_slice(&env, "Hospital Delta"),
-            &String::from_slice(&env, "LIC-004"),
+            &String::from_str(&env, "Hospital Delta"),
+            &String::from_str(&env, "LIC-004"),
             &[0u8; 32].into(),
             &soroban_sdk::Vec::new(&env),
         );
@@ -132,8 +132,8 @@ mod tests {
         let org_id = client.register_organization(
             &org_owner,
             &OrgType::BloodBank,
-            &String::from_slice(&env, "Blood Bank Epsilon"),
-            &String::from_slice(&env, "LIC-005"),
+            &String::from_str(&env, "Blood Bank Epsilon"),
+            &String::from_str(&env, "LIC-005"),
             &[0u8; 32].into(),
             &soroban_sdk::Vec::new(&env),
         );
@@ -146,7 +146,7 @@ mod tests {
         assert!(client.is_organization_verified(&org_id));
 
         // After revocation
-        client.unverify_organization(&admin, &org_id, &String::from_slice(&env, "Test"));
+        client.unverify_organization(&admin, &org_id, &String::from_str(&env, "Test"));
         assert!(!client.is_organization_verified(&org_id));
     }
 
@@ -159,8 +159,8 @@ mod tests {
         let org_id = client.register_organization(
             &org_owner,
             &OrgType::Hospital,
-            &String::from_slice(&env, "Hospital Zeta"),
-            &String::from_slice(&env, "LIC-006"),
+            &String::from_str(&env, "Hospital Zeta"),
+            &String::from_str(&env, "LIC-006"),
             &[0u8; 32].into(),
             &soroban_sdk::Vec::new(&env),
         );
@@ -187,8 +187,8 @@ mod tests {
             let org_id = client.register_organization(
                 &org_owner,
                 &OrgType::BloodBank,
-                &String::from_slice(&env, &format!("Bank {}", i)),
-                &String::from_slice(&env, &format!("LIC-{:03}", 100 + i)),
+                &String::from_str(&env, &format!("Bank {}", i)),
+                &String::from_str(&env, &format!("LIC-{:03}", 100 + i)),
                 &[0u8; 32].into(),
                 &soroban_sdk::Vec::new(&env),
             );
@@ -218,8 +218,8 @@ mod tests {
             let org_id = client.register_organization(
                 &org_owner,
                 &OrgType::Hospital,
-                &String::from_slice(&env, &format!("Hospital {}", i)),
-                &String::from_slice(&env, &format!("LIC-{:03}", 200 + i)),
+                &String::from_str(&env, &format!("Hospital {}", i)),
+                &String::from_str(&env, &format!("LIC-{:03}", 200 + i)),
                 &[0u8; 32].into(),
                 &soroban_sdk::Vec::new(&env),
             );
@@ -228,7 +228,7 @@ mod tests {
         }
 
         // Batch revoke
-        let reason = String::from_slice(&env, "Batch revocation test");
+        let reason = String::from_str(&env, "Batch revocation test");
         let revoked_count = client.batch_revoke_organizations(&admin, &org_ids, &reason);
         assert_eq!(revoked_count, 3);
 
@@ -248,8 +248,8 @@ mod tests {
         let org_id = client.register_organization(
             &org_owner,
             &OrgType::BloodBank,
-            &String::from_slice(&env, "Blood Bank Eta"),
-            &String::from_slice(&env, "LIC-007"),
+            &String::from_str(&env, "Blood Bank Eta"),
+            &String::from_str(&env, "LIC-007"),
             &[0u8; 32].into(),
             &soroban_sdk::Vec::new(&env),
         );
@@ -262,7 +262,7 @@ mod tests {
         assert!(events.len() > 0);
 
         let first_event = events.get(0).unwrap();
-        assert_eq!(first_event.event_type, String::from_slice(&env, "verified"));
+        assert_eq!(first_event.event_type, String::from_str(&env, "verified"));
     }
 
     #[test]
@@ -274,8 +274,8 @@ mod tests {
         let org_id = client.register_organization(
             &org_owner,
             &OrgType::Hospital,
-            &String::from_slice(&env, "Hospital Theta"),
-            &String::from_slice(&env, "LIC-008"),
+            &String::from_str(&env, "Hospital Theta"),
+            &String::from_str(&env, "LIC-008"),
             &[0u8; 32].into(),
             &soroban_sdk::Vec::new(&env),
         );

@@ -17,6 +17,15 @@ pub use types::{
 use soroban_sdk::{contract, contractclient, contractimpl, Address, Env, Vec};
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/// Maximum number of candidate blood units to consider in a single match.
+/// Protects against O(n²) sorting and unbounded gas costs when inventory is large.
+/// Threshold chosen to stay within per-transaction compute limits with safety margin.
+const MAX_MATCH_CANDIDATES: usize = 500;
+
+// ---------------------------------------------------------------------------
 // Cross-contract client interfaces
 // ---------------------------------------------------------------------------
 
@@ -175,10 +184,16 @@ impl MatchingContract {
                 .unwrap_or(Vec::new(&env));
 
             for j in 0..unit_ids.len() {
+                if candidates.len() >= MAX_MATCH_CANDIDATES {
+                    break;
+                }
                 let uid = unit_ids.get(j).unwrap();
                 if let Ok(Ok(unit)) = inv_client.try_get_blood_unit(&uid) {
                     candidates.push_back(unit);
                 }
+            }
+            if candidates.len() >= MAX_MATCH_CANDIDATES {
+                break;
             }
         }
 
