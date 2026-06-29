@@ -43,18 +43,6 @@ pub fn emit_request_created(env: &Env, request: &BloodRequest) {
     .publish(env);
 }
 
-pub fn emit_status_updated(
-    env: &Env,
-    request_id: u64,
-    old_status: RequestStatus,
-    new_status: RequestStatus,
-    updated_by: &Address,
-) {
-    env.events().publish(
-        (Symbol::new(env, "status_updated"), request_id),
-        (old_status, new_status, updated_by.clone()),
-    );
-}
 
 pub fn emit_request_cancelled(env: &Env, request_id: u64, actor: &Address, timestamp: u64) {
     RequestCancelled {

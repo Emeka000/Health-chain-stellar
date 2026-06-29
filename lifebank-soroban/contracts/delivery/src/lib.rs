@@ -1,4 +1,5 @@
 #![no_std]
+#![deny(deprecated)]
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, Env,

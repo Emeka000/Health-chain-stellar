@@ -1,4 +1,5 @@
 #![no_std]
+#![deny(deprecated)]
 
 mod error;
 mod events;

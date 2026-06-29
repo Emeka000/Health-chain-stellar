@@ -1,4 +1,5 @@
 #![no_std]
+#![deny(deprecated)]
 
 /// Cross-contract coordinator for the HealthDonor workflow.
 ///
