@@ -73,7 +73,7 @@ trap 'on_deploy_error' ERR
 on_deploy_error() {
     local exit_code=$?
     echo ""
-    echo "❌ Deployment failed!"
+    echo "❌ Deployment or verification failed!"
     echo ""
     echo "Partially deployed contracts ($DEPLOYED_COUNT of ${#CONTRACTS_TO_DEPLOY[@]}):"
     for contract in "${CONTRACTS_TO_DEPLOY[@]:0:$DEPLOYED_COUNT}"; do
@@ -88,6 +88,35 @@ on_deploy_error() {
     echo "  done"
     echo ""
     exit $exit_code
+}
+
+verify_contract_deployed() {
+    local contract=$1
+    local contract_id=$2
+    local max_retries=5
+    local attempt=0
+
+    echo "  Verifying ${contract} is live on-chain..."
+
+    while [[ $attempt -lt $max_retries ]]; do
+        if soroban contract invoke \
+            --id "$contract_id" \
+            --source ${IDENTITY} \
+            --network ${NETWORK} \
+            -- version > /dev/null 2>&1; then
+            echo "    ✓ ${contract} verified on-chain"
+            return 0
+        fi
+
+        ((attempt++))
+        if [[ $attempt -lt $max_retries ]]; then
+            echo "    ⟳ Retrying... (attempt $attempt/$max_retries)"
+            sleep 2
+        fi
+    done
+
+    echo "    ✗ ${contract} verification failed after $max_retries attempts"
+    return 1
 }
 
 # Deploy each contract
@@ -107,6 +136,12 @@ for contract in "${CONTRACTS_TO_DEPLOY[@]}"; do
     jq --arg contract "$contract" --arg id "$CONTRACT_ID" \
         '.deployments[$contract] = $id' "${CONTRACT_IDS_FILE}" > "${CONTRACT_IDS_FILE}.tmp"
     mv "${CONTRACT_IDS_FILE}.tmp" "${CONTRACT_IDS_FILE}"
+
+    # Verify the contract is actually reachable on-chain
+    if ! verify_contract_deployed "$contract" "$CONTRACT_ID"; then
+        echo "❌ Contract verification failed — aborting deployment"
+        exit 1
+    fi
 
     ((DEPLOYED_COUNT++))
     echo ""
