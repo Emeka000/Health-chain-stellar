@@ -9,6 +9,7 @@ import {
   UseGuards,
   ValidationPipe,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
@@ -24,6 +25,8 @@ import {
   InitiateFeeCorrectionDto,
 } from './dto/fee-correction.dto';
 
+@ApiTags('Fee Corrections')
+@ApiBearerAuth()
 @Controller('fee-corrections')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class FeeCorrectionController {
@@ -38,6 +41,8 @@ export class FeeCorrectionController {
    * Idempotent: re-submitting with the same idempotencyKey returns the
    * existing run without creating a duplicate.
    */
+  @ApiOperation({ summary: 'Post' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post()
   @RequirePermissions(Permission.MANAGE_FEE_POLICIES)
   async initiate(
@@ -54,6 +59,8 @@ export class FeeCorrectionController {
    * Execution is asynchronous — the response returns immediately with
    * the run in RUNNING status.
    */
+  @ApiOperation({ summary: 'Post :id execute' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post(':id/execute')
   @RequirePermissions(Permission.MANAGE_FEE_POLICIES)
   async execute(
@@ -67,6 +74,8 @@ export class FeeCorrectionController {
   /**
    * List all correction runs with optional status filter and pagination.
    */
+  @ApiOperation({ summary: 'Get' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get()
   @RequirePermissions(Permission.MANAGE_FEE_POLICIES)
   async listRuns(
@@ -80,6 +89,8 @@ export class FeeCorrectionController {
   /**
    * Get a single correction run by ID.
    */
+  @ApiOperation({ summary: 'Get :id' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id')
   @RequirePermissions(Permission.MANAGE_FEE_POLICIES)
   async getRun(@Param('id', ParseUUIDPipe) id: string) {
@@ -89,6 +100,8 @@ export class FeeCorrectionController {
   /**
    * List adjustment entries for a run, order, or status.
    */
+  @ApiOperation({ summary: 'Get entries' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('entries')
   @RequirePermissions(Permission.MANAGE_FEE_POLICIES)
   async listEntries(
@@ -102,6 +115,8 @@ export class FeeCorrectionController {
    * Get the full fee adjustment history for a specific order.
    * Useful for auditing and reconciliation views.
    */
+  @ApiOperation({ summary: 'Get orders :orderId fee history' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('orders/:orderId/fee-history')
   @RequirePermissions(Permission.VIEW_FEE_POLICIES)
   async getOrderFeeHistory(@Param('orderId', ParseUUIDPipe) orderId: string) {
@@ -112,6 +127,8 @@ export class FeeCorrectionController {
    * Verify that re-running the correction with the same inputs produces
    * the same audit hashes (reproducibility check).
    */
+  @ApiOperation({ summary: 'Get :id verify reproducibility' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id/verify-reproducibility')
   @RequirePermissions(Permission.MANAGE_FEE_POLICIES)
   async verifyReproducibility(@Param('id', ParseUUIDPipe) id: string) {

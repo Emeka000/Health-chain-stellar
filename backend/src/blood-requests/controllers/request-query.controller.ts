@@ -1,4 +1,5 @@
 import { Controller, Get, Query, Res, Header, UseGuards, HttpStatus, Param } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { Response } from 'express';
 
@@ -10,18 +11,24 @@ import { PermissionsGuard } from '../../auth/guards/permissions.guard';
 import { QueryRequestsDto } from '../dto/query-requests.dto';
 import { RequestQueryService } from '../services/request-query.service';
 
+@ApiTags('Blood Requests')
+@ApiBearerAuth()
 @Controller('blood-requests/query')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class RequestQueryController {
   constructor(private readonly queryService: RequestQueryService) {}
 
   @RequirePermissions(Permission.VIEW_BLOOD_REQUESTS)
+  @ApiOperation({ summary: 'Get' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get()
   queryRequests(@Query() queryDto: QueryRequestsDto) {
     return this.queryService.queryRequests(queryDto);
   }
 
   @RequirePermissions(Permission.VIEW_BLOOD_REQUESTS)
+  @ApiOperation({ summary: 'Get statistics' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('statistics')
   getRequestStatistics(
     @Query('hospitalId') hospitalId?: string,
@@ -36,6 +43,8 @@ export class RequestQueryController {
   }
 
   @RequirePermissions(Permission.VIEW_BLOOD_REQUESTS)
+  @ApiOperation({ summary: 'Get sla compliance' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('sla-compliance')
   getSLAComplianceReport(
     @Query('hospitalId') hospitalId?: string,
@@ -50,6 +59,8 @@ export class RequestQueryController {
   }
 
   @RequirePermissions(Permission.VIEW_BLOOD_REQUESTS)
+  @ApiOperation({ summary: 'Get export csv' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('export/csv')
   async exportToCSV(
     @Query() queryDto: QueryRequestsDto,
@@ -74,6 +85,8 @@ export class RequestQueryController {
   }
 
   @RequirePermissions(Permission.VIEW_BLOOD_REQUESTS)
+  @ApiOperation({ summary: 'Get export pdf' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('export/pdf')
   async exportToPDF(
     @Query() queryDto: QueryRequestsDto,
@@ -98,6 +111,8 @@ export class RequestQueryController {
   }
 
   @RequirePermissions(Permission.VIEW_BLOOD_REQUESTS)
+  @ApiOperation({ summary: 'Get export status :id' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('export/status/:id')
   async getExportStatus(@Param('id') id: string, @User() user: any) {
     // This would typically call a report service directly

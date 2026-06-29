@@ -15,6 +15,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { FulfillmentLegStatus } from '../entities/fulfillment-leg.entity';
 
+@ApiTags('Blood Requests')
+@ApiBearerAuth()
 @Controller('api/v1/orders/split')
 @UseGuards(JwtAuthGuard)
 export class OrderSplittingController {
@@ -24,6 +26,8 @@ export class OrderSplittingController {
     private readonly bloodRequestRepository: Repository<BloodRequestEntity>,
   ) {}
 
+  @ApiOperation({ summary: 'Post' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post()
   async createSplitOrder(@Body() dto: CreateSplitOrderDto) {
     const parentRequest = await this.bloodRequestRepository.findOne({
@@ -40,16 +44,22 @@ export class OrderSplittingController {
     );
   }
 
+  @ApiOperation({ summary: 'Get :parentRequestId progress' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':parentRequestId/progress')
   async getOrderProgress(@Param('parentRequestId') parentRequestId: string) {
     return this.orderSplittingService.getParentOrderProgress(parentRequestId);
   }
 
+  @ApiOperation({ summary: 'Get :parentRequestId legs' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':parentRequestId/legs')
   async getFulfillmentLegs(@Param('parentRequestId') parentRequestId: string) {
     return this.orderSplittingService.getFulfillmentLegs(parentRequestId);
   }
 
+  @ApiOperation({ summary: 'Patch legs :legId status' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch('legs/:legId/status')
   async updateLegStatus(
     @Param('legId') legId: string,
@@ -66,6 +76,8 @@ export class OrderSplittingController {
     });
   }
 
+  @ApiOperation({ summary: 'Post legs :legId fail' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('legs/:legId/fail')
   async markLegAsFailed(
     @Param('legId') legId: string,

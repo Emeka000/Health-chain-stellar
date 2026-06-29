@@ -7,6 +7,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { RequirePermissions } from '../../auth/decorators/require-permissions.decorator';
 import { Permission } from '../../auth/enums/permission.enum';
@@ -24,6 +25,8 @@ import {
   ApiLegacyAdapter,
 } from '../../common/versioning/api-compatibility.decorator';
 
+@ApiTags('Blood Matching')
+@ApiBearerAuth()
 @Controller('blood-matching')
 export class BloodMatchingController {
   constructor(
@@ -32,6 +35,8 @@ export class BloodMatchingController {
   ) {}
 
   @RequirePermissions(Permission.VIEW_BLOOD_REQUESTS)
+  @ApiOperation({ summary: 'Post match' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('match')
   @HttpCode(HttpStatus.OK)
   findMatches(@Body() request: MatchingRequest): Promise<MatchingResponse> {
@@ -39,6 +44,8 @@ export class BloodMatchingController {
   }
 
   @RequirePermissions(Permission.VIEW_BLOOD_REQUESTS)
+  @ApiOperation({ summary: 'Post match multiple' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('match-multiple')
   @HttpCode(HttpStatus.OK)
   findMatchesForMultipleRequests(
@@ -48,12 +55,16 @@ export class BloodMatchingController {
   }
 
   @RequirePermissions(Permission.VIEW_BLOOD_REQUESTS)
+  @ApiOperation({ summary: 'Get compatibility' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('compatibility')
   getCompatibilityMatrix() {
     return this.matchingService.getCompatibilityMatrix();
   }
 
   @RequirePermissions(Permission.VIEW_BLOOD_REQUESTS)
+  @ApiOperation({ summary: 'Get compatible types' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('compatible-types')
   @ApiCompatibility(ApiCompatibilityClass.DEPRECATED)
   @ApiDeprecation({
@@ -68,6 +79,8 @@ export class BloodMatchingController {
   }
 
   @RequirePermissions(Permission.VIEW_BLOOD_REQUESTS)
+  @ApiOperation({ summary: 'Get donatable types' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('donatable-types')
   @ApiCompatibility(ApiCompatibilityClass.DEPRECATED)
   @ApiDeprecation({
@@ -82,6 +95,8 @@ export class BloodMatchingController {
   }
 
   @RequirePermissions(Permission.VIEW_BLOOD_REQUESTS)
+  @ApiOperation({ summary: 'Get calculate score' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('calculate-score')
   calculateMatchingScore(
     @Query('bloodType') bloodType: string,
@@ -99,6 +114,8 @@ export class BloodMatchingController {
 
   /** Admin preview: check compatibility with explanation for a given donor/recipient/component */
   @RequirePermissions(Permission.VIEW_BLOOD_REQUESTS)
+  @ApiOperation({ summary: 'Post preview' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('preview')
   @HttpCode(HttpStatus.OK)
   @ApiCompatibility(ApiCompatibilityClass.STRICT)
@@ -108,6 +125,8 @@ export class BloodMatchingController {
 
   /** Return all compatible donors for a recipient + component */
   @RequirePermissions(Permission.VIEW_BLOOD_REQUESTS)
+  @ApiOperation({ summary: 'Get compatible donors' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('compatible-donors')
   @ApiCompatibility(ApiCompatibilityClass.ADDITIVE)
   @ApiDeprecation({

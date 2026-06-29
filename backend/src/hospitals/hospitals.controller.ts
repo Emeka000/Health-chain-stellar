@@ -26,6 +26,8 @@ import { OverrideReason } from './enums/override-reason.enum';
 import { HospitalIntakeWindowService } from './services/hospital-intake-window.service';
 import { HospitalsService } from './hospitals.service';
 
+@ApiTags('Hospitals')
+@ApiBearerAuth()
 @Controller('hospitals')
 export class HospitalsController {
   constructor(
@@ -36,12 +38,16 @@ export class HospitalsController {
   // ── Core CRUD ─────────────────────────────────────────────────────────────
 
   @RequirePermissions(Permission.VIEW_HOSPITALS)
+  @ApiOperation({ summary: 'Get' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get()
   findAll() {
     return this.hospitalsService.findAll();
   }
 
   @RequirePermissions(Permission.VIEW_HOSPITALS)
+  @ApiOperation({ summary: 'Get nearby' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('nearby')
   getNearby(
     @Query('latitude') latitude: string,
@@ -56,24 +62,32 @@ export class HospitalsController {
   }
 
   @RequirePermissions(Permission.VIEW_HOSPITALS)
+  @ApiOperation({ summary: 'Get :id' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.hospitalsService.findOne(id);
   }
 
   @RequirePermissions(Permission.CREATE_HOSPITAL)
+  @ApiOperation({ summary: 'Post' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post()
   create(@Body() dto: CreateHospitalDto) {
     return this.hospitalsService.create(dto);
   }
 
   @RequirePermissions(Permission.UPDATE_HOSPITAL)
+  @ApiOperation({ summary: 'Patch :id' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateHospitalDto) {
     return this.hospitalsService.update(id, dto);
   }
 
   @RequirePermissions(Permission.DELETE_HOSPITAL)
+  @ApiOperation({ summary: 'Delete :id' })
+  @ApiResponse({ status: 200, description: 'Resource deleted successfully' })
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param('id') id: string) {
@@ -83,6 +97,8 @@ export class HospitalsController {
   // ── Capacity config ───────────────────────────────────────────────────────
 
   @RequirePermissions(Permission.UPDATE_HOSPITAL)
+  @ApiOperation({ summary: 'Post :id capacity config' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post(':id/capacity-config')
   upsertCapacityConfig(
     @Param('id') id: string,
@@ -92,6 +108,8 @@ export class HospitalsController {
   }
 
   @RequirePermissions(Permission.VIEW_HOSPITALS)
+  @ApiOperation({ summary: 'Get :id capacity config' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id/capacity-config')
   getCapacityConfig(@Param('id') id: string) {
     return this.hospitalsService.getCapacityConfig(id);
@@ -100,6 +118,8 @@ export class HospitalsController {
   // ── Intake window checks ──────────────────────────────────────────────────
 
   @RequirePermissions(Permission.VIEW_HOSPITALS)
+  @ApiOperation({ summary: 'Post intake check' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('intake-check')
   checkIntakeWindow(@Body() dto: IntakeWindowCheckDto) {
     return this.intakeWindowService.checkIntakeWindow(
@@ -112,6 +132,8 @@ export class HospitalsController {
   // ── Emergency overrides ───────────────────────────────────────────────────
 
   @RequirePermissions(Permission.MANAGE_HOSPITAL_OVERRIDES)
+  @ApiOperation({ summary: 'Post override' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('override')
   async requestOverride(
     @Body() dto: RequestEmergencyOverrideDto,
@@ -149,6 +171,8 @@ export class HospitalsController {
   }
 
   @RequirePermissions(Permission.VIEW_HOSPITAL_OVERRIDES)
+  @ApiOperation({ summary: 'Get :id overrides' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id/overrides')
   getOverrideAuditLog(@Param('id') id: string, @Query('limit') limit?: string) {
     return this.intakeWindowService.getOverrideAuditLog(

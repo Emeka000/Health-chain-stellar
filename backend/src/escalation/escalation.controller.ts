@@ -12,10 +12,14 @@ import { EscalationService } from './escalation.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @UseGuards(JwtAuthGuard)
+@ApiTags('Escalations')
+@ApiBearerAuth()
 @Controller('api/v1/escalations')
 export class EscalationController {
   constructor(private readonly escalationService: EscalationService) {}
 
+  @ApiOperation({ summary: 'Get open' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('open')
   getOpen(@Request() req: any) {
     return this.escalationService.findOpen({
@@ -25,6 +29,8 @@ export class EscalationController {
     });
   }
 
+  @ApiOperation({ summary: 'Get request :requestId' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('request/:requestId')
   getByRequest(@Param('requestId') requestId: string, @Request() req: any) {
     return this.escalationService.findByRequest(requestId, {
@@ -34,6 +40,8 @@ export class EscalationController {
     });
   }
 
+  @ApiOperation({ summary: 'Post :id acknowledge' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post(':id/acknowledge')
   acknowledge(@Param('id') id: string, @Request() req: any) {
     return this.escalationService.acknowledge(id, {
@@ -43,6 +51,8 @@ export class EscalationController {
     });
   }
 
+  @ApiOperation({ summary: 'Get timeline' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('timeline')
   getTimeline(
     @Query('requestId') requestId?: string,
@@ -60,6 +70,8 @@ export class EscalationController {
     });
   }
 
+  @ApiOperation({ summary: 'Post :id links' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post(':id/links')
   addLinks(
     @Param('id') id: string,

@@ -21,16 +21,22 @@ import { CompleteCorrectiveActionDto } from './dto/complete-corrective-action.dt
 import { VerifyCorrectiveActionDto } from './dto/verify-corrective-action.dto';
 import { IncidentReviewsService } from './incident-reviews.service';
 
+@ApiTags('Incident Reviews')
+@ApiBearerAuth()
 @Controller('incident-reviews')
 export class IncidentReviewsController {
   constructor(private readonly service: IncidentReviewsService) { }
 
+  @ApiOperation({ summary: 'Post' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post()
   @RequirePermissions(Permission.CREATE_INCIDENT_REVIEW)
   create(@Body() dto: CreateIncidentReviewDto, @Request() req: any) {
     return this.service.create(dto, req.user?.id ?? req.user?.sub ?? 'unknown');
   }
 
+  @ApiOperation({ summary: 'Get' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get()
   @RequirePermissions(Permission.VIEW_INCIDENT_REVIEWS)
   findAll(
@@ -45,6 +51,8 @@ export class IncidentReviewsController {
     });
   }
 
+  @ApiOperation({ summary: 'Get stats' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('stats')
   @RequirePermissions(Permission.VIEW_INCIDENT_REVIEWS)
   getStats(
@@ -67,6 +75,8 @@ export class IncidentReviewsController {
     });
   }
 
+  @ApiOperation({ summary: 'Get dashboard open risk' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('dashboard/open-risk')
   @RequirePermissions(Permission.VIEW_INCIDENT_REVIEWS)
   getOpenRiskDashboard(@Request() req: any) {
@@ -77,6 +87,8 @@ export class IncidentReviewsController {
     });
   }
 
+  @ApiOperation({ summary: 'Get dashboard action completion rates' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('dashboard/action-completion-rates')
   @RequirePermissions(Permission.VIEW_INCIDENT_REVIEWS)
   getActionCompletionRates(
@@ -95,6 +107,8 @@ export class IncidentReviewsController {
     });
   }
 
+  @ApiOperation({ summary: 'Get :id' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id')
   @RequirePermissions(Permission.VIEW_INCIDENT_REVIEWS)
   findOne(@Param('id') id: string, @Request() req: any) {
@@ -105,18 +119,24 @@ export class IncidentReviewsController {
     });
   }
 
+  @ApiOperation({ summary: 'Get :id corrective actions' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id/corrective-actions')
   @RequirePermissions(Permission.VIEW_INCIDENT_REVIEWS)
   getCorrectiveActions(@Param('id') id: string) {
     return this.service.getCorrectiveActions(id);
   }
 
+  @ApiOperation({ summary: 'Get :id evidence links' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id/evidence-links')
   @RequirePermissions(Permission.VIEW_INCIDENT_REVIEWS)
   getEvidenceLinks(@Param('id') id: string) {
     return this.service.getEvidenceLinks(id);
   }
 
+  @ApiOperation({ summary: 'Post :id corrective actions' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post(':id/corrective-actions')
   @RequirePermissions(Permission.MANAGE_INCIDENT_REVIEWS)
   addCorrectiveAction(
@@ -131,6 +151,8 @@ export class IncidentReviewsController {
     });
   }
 
+  @ApiOperation({ summary: 'Patch corrective actions :actionId complete' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch('corrective-actions/:actionId/complete')
   @RequirePermissions(Permission.MANAGE_INCIDENT_REVIEWS)
   completeCorrectiveAction(
@@ -145,6 +167,8 @@ export class IncidentReviewsController {
     );
   }
 
+  @ApiOperation({ summary: 'Patch corrective actions :actionId verify' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch('corrective-actions/:actionId/verify')
   @RequirePermissions(Permission.MANAGE_INCIDENT_REVIEWS)
   verifyCorrectiveAction(
@@ -159,6 +183,8 @@ export class IncidentReviewsController {
     );
   }
 
+  @ApiOperation({ summary: 'Post :id validate closure' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post(':id/validate-closure')
   @RequirePermissions(Permission.MANAGE_INCIDENT_REVIEWS)
   validateClosure(@Param('id') id: string, @Request() req: any) {
@@ -173,6 +199,8 @@ export class IncidentReviewsController {
     );
   }
 
+  @ApiOperation({ summary: 'Patch :id' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id')
   @RequirePermissions(Permission.MANAGE_INCIDENT_REVIEWS)
   update(@Param('id') id: string, @Body() dto: UpdateIncidentReviewDto, @Request() req: any) {
