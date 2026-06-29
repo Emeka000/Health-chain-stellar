@@ -12,10 +12,10 @@ echo "🚀 Deploying Lifebank contracts to ${NETWORK}..."
 [[ "$DRY_RUN" == "--dry-run" ]] && echo "ℹ️  DRY RUN MODE — will validate without deploying"
 echo ""
 
-# Check if soroban CLI is installed
-if ! command -v soroban &> /dev/null; then
-    echo "❌ Error: soroban CLI not found. Please install it first."
-    echo "   cargo install --locked soroban-cli"
+# Check if stellar CLI is installed
+if ! command -v stellar &> /dev/null; then
+    echo "❌ Error: stellar CLI not found. Please install it first."
+    echo "   cargo install --locked stellar-cli"
     exit 1
 fi
 
@@ -123,7 +123,7 @@ verify_contract_deployed() {
 for contract in "${CONTRACTS_TO_DEPLOY[@]}"; do
     echo "Deploying ${contract} contract..."
 
-    CONTRACT_ID=$(soroban contract deploy \
+    CONTRACT_ID=$(stellar contract deploy \
         --wasm target/wasm32-unknown-unknown/release/${contract}_contract.wasm \
         --source ${IDENTITY} \
         --network ${NETWORK})
@@ -154,19 +154,17 @@ mv "${CONTRACT_IDS_FILE}.tmp" "${CONTRACT_IDS_FILE}"
 # ── Update contracts.json ────────────────────────────────────────────────────────
 echo "💾 Updating contracts.json with deployed IDs..."
 
-{
-  # Start with testnet object
-  jq --arg network "testnet" '.testnet = {}' contracts.json > contracts.json.tmp
+OUTPUT_FILE=".contract-ids.testnet.json"
 
-  # Add each contract ID
-  for contract in "${!CONTRACT_IDS[@]}"; do
+# Initialize the JSON file
+echo "{}" > "${OUTPUT_FILE}"
+
+# Add each contract ID
+for contract in "${!CONTRACT_IDS[@]}"; do
     jq --arg contract "$contract" --arg id "${CONTRACT_IDS[$contract]}" \
-      '.testnet[$contract] = $id' contracts.json.tmp > contracts.json.tmp2
-    mv contracts.json.tmp2 contracts.json.tmp
-  done
-
-  mv contracts.json.tmp contracts.json
-}
+      '.[$contract] = $id' "${OUTPUT_FILE}" > "${OUTPUT_FILE}.tmp"
+    mv "${OUTPUT_FILE}.tmp" "${OUTPUT_FILE}"
+done
 
 echo ""
 echo "✅ Deployment complete!"

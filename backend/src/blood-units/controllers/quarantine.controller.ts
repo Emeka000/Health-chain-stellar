@@ -24,11 +24,15 @@ import {
 } from '../dto/quarantine.dto';
 import { QuarantineService } from '../services/quarantine.service';
 
+@ApiTags('Blood Units')
+@ApiBearerAuth()
 @Controller('blood-units/quarantine')
 export class QuarantineController {
   constructor(private readonly quarantineService: QuarantineService) {}
 
   @RequirePermissions(Permission.UPDATE_BLOOD_STATUS)
+  @ApiOperation({ summary: 'Post cases' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('cases')
   async createCase(
     @Body() dto: CreateQuarantineCaseDto,
@@ -38,18 +42,24 @@ export class QuarantineController {
   }
 
   @RequirePermissions(Permission.VIEW_BLOOD_STATUS_HISTORY)
+  @ApiOperation({ summary: 'Get cases' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('cases')
   async listCases(@Query() query: QueryQuarantineCasesDto) {
     return this.quarantineService.listCases(query);
   }
 
   @RequirePermissions(Permission.VIEW_BLOOD_STATUS_HISTORY)
+  @ApiOperation({ summary: 'Get cases :caseId recommendation' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('cases/:caseId/recommendation')
   async getRecommendation(@Param('caseId', ParseUUIDPipe) caseId: string) {
     return this.quarantineService.getRecommendedDisposition(caseId);
   }
 
   @RequirePermissions(Permission.UPDATE_BLOOD_STATUS)
+  @ApiOperation({ summary: 'Patch cases :caseId assign reviewer' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch('cases/:caseId/assign-reviewer')
   async assignReviewer(
     @Param('caseId', ParseUUIDPipe) caseId: string,
@@ -59,6 +69,8 @@ export class QuarantineController {
   }
 
   @RequirePermissions(Permission.UPDATE_BLOOD_STATUS)
+  @ApiOperation({ summary: 'Patch cases :caseId review' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch('cases/:caseId/review')
   async updateReview(
     @Param('caseId', ParseUUIDPipe) caseId: string,
@@ -69,6 +81,8 @@ export class QuarantineController {
   }
 
   @RequirePermissions(Permission.UPDATE_BLOOD_STATUS)
+  @ApiOperation({ summary: 'Patch cases :caseId finalize' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch('cases/:caseId/finalize')
   async finalizeCase(
     @Param('caseId', ParseUUIDPipe) caseId: string,

@@ -27,6 +27,7 @@ import { BloodRequestEntity } from './entities/blood-request.entity';
 import { FulfillmentLegEntity } from './entities/fulfillment-leg.entity';
 import { RequestStatusHistoryEntity } from './entities/request-status-history.entity';
 import { BLOOD_REQUEST_QUEUE } from './enums/request-urgency.enum';
+import { BloodRequestQueueEventsListener } from './listeners/blood-request-queue-events.listener';
 import { SlaBreachListener } from './listeners/sla-breach.listener';
 import { BloodRequestProcessor } from './processors/blood-request.processor';
 import { BloodBankAvailabilityService } from './services/blood-bank-availability.service';
@@ -89,6 +90,7 @@ import { OrderSplittingService } from './services/order-splitting.service';
     BloodRequestEmailService,
     BloodRequestProcessor,
     SlaBreachListener,
+    BloodRequestQueueEventsListener,
     RequestQueryService,
     BloodBankAvailabilityService,
     BloodRequestReservationService,

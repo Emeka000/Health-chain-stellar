@@ -4,12 +4,39 @@ Thank you for your interest in contributing to HealthDonor Protocol! This guide 
 
 ## Getting Started
 
-### Prerequisites
+### System Dependencies
 
-- **Node.js** >= 18.x
-- **npm** >= 9.x
-- **Rust** and **Cargo** (for Soroban smart contracts)
-- **Docker** and **Docker Compose** (for Postgres and Redis)
+Install these tools before running the project locally:
+
+| Dependency | Version | Purpose |
+|---|---|---|
+| **Node.js** | >= 18.x | Backend and frontend runtime |
+| **npm** | >= 9.x | Package manager |
+| **Docker** + **Docker Compose** | latest | PostgreSQL and Redis |
+| **Rust** + **Cargo** | stable (via [rustup](https://rustup.rs)) | Soroban smart contracts |
+| **Stellar CLI** (`stellar`) | >= 21.x | Deploy and invoke Soroban contracts |
+| **wasm32-unknown-unknown** target | — | Cross-compile Rust contracts to WASM |
+
+Install the Rust WASM target after installing Rust:
+
+```bash
+rustup target add wasm32-unknown-unknown
+```
+
+Install the Stellar CLI:
+
+```bash
+cargo install --locked stellar-cli
+```
+
+### Expected Service Ports
+
+| Service | Port |
+|---|---|
+| Next.js frontend | `:3000` |
+| NestJS backend | `:3001` |
+| PostgreSQL | `:5432` |
+| Redis | `:6379` |
 
 ### Local Development Setup
 
@@ -20,39 +47,72 @@ Thank you for your interest in contributing to HealthDonor Protocol! This guide 
    cd Health-chain-stellar
    ```
 
-2. **Start infrastructure services:**
+2. **Start infrastructure services (PostgreSQL + Redis):**
 
    ```bash
    docker-compose up -d
    ```
 
-   This starts Postgres and Redis.
+   Verify the containers are running:
+
+   ```bash
+   docker-compose ps
+   ```
 
 3. **Set up the backend:**
 
    ```bash
    cd backend
    cp .env.example .env
-   # Edit .env with your configuration
+   ```
+
+   Open `backend/.env` and configure at minimum:
+
+   ```env
+   DATABASE_NAME=health_chain
+   DATABASE_USERNAME=postgres
+   DATABASE_PASSWORD=         # match your docker-compose config
+   JWT_SECRET=change-me-in-dev
+   JWT_REFRESH_SECRET=change-me-in-dev
+   ```
+
+   Then install dependencies and run database migrations:
+
+   ```bash
    npm install
    npm run migration:run
-   npm run start:dev
+   npm run start:dev          # starts on http://localhost:3001
    ```
+
+   The Swagger UI is available at `http://localhost:3001/docs` once the server is running.
 
 4. **Set up the frontend:**
 
    ```bash
-   cd frontend
+   cd frontend/health-chain
    npm install
-   npm run dev
+   npm run dev                # starts on http://localhost:3000
    ```
 
-5. **Build smart contracts (optional):**
+5. **Build and deploy smart contracts to testnet (optional):**
 
    ```bash
+   # Build the main registry contract
    cd contracts
-   cargo build
+   cargo build --target wasm32-unknown-unknown --release
+
+   # Build the lifebank-soroban suite
+   cd ../lifebank-soroban
+   bash scripts/build-all.sh
+
+   # Set up a Stellar identity for deployment
+   bash scripts/setup-identity.sh
+
+   # Deploy all contracts to testnet
+   bash scripts/deploy-testnet.sh
    ```
+
+   After deployment, copy the printed contract IDs into `backend/.env` under the `*_CONTRACT_ID` variables.
 
 ## Project Structure
 

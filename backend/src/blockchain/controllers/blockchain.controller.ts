@@ -34,6 +34,8 @@ import type {
   SorobanTxResult,
 } from '../types/soroban-tx.types';
 
+@ApiTags('Blockchain')
+@ApiBearerAuth()
 @Controller('blockchain')
 export class BlockchainController {
   private readonly logger = new Logger(BlockchainController.name);
@@ -57,6 +59,8 @@ export class BlockchainController {
    * @returns Job ID for status tracking
    * @throws 400 if idempotency key already exists (duplicate submission)
    */
+  @ApiOperation({ summary: 'Post submit transaction' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('submit-transaction')
   @HttpCode(HttpStatus.ACCEPTED)
   async submitTransaction(
@@ -118,6 +122,8 @@ export class BlockchainController {
     }
   }
 
+  @ApiOperation({ summary: 'Post webhook callback' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('webhook/callback')
   @HttpCode(HttpStatus.OK)
   async processCallback(
@@ -178,6 +184,8 @@ export class BlockchainController {
    * @returns Queue metrics
    * @throws 403 if not authenticated as admin
    */
+  @ApiOperation({ summary: 'Get queue status' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('queue/status')
   @UseGuards(AdminGuard)
   @RequireAdminScope(AdminScope.READ_METRICS)
@@ -194,6 +202,8 @@ export class BlockchainController {
    * @param jobId - Job ID to check
    * @returns Job status or null if not found
    */
+  @ApiOperation({ summary: 'Get job :jobId' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('job/:jobId')
   @HttpCode(HttpStatus.OK)
   async getJobStatus(
@@ -211,6 +221,8 @@ export class BlockchainController {
    * @returns Detailed metrics object
    * @throws 403 if not authenticated as admin
    */
+  @ApiOperation({ summary: 'Get metrics' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('metrics')
   @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.OK)
@@ -228,6 +240,8 @@ export class BlockchainController {
    * @returns Plain-text Prometheus metrics
    * @throws 403 if not authenticated as admin
    */
+  @ApiOperation({ summary: 'Get metrics prometheus' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('metrics/prometheus')
   @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.OK)
@@ -306,6 +320,8 @@ export class BlockchainController {
    * @returns Replay summary with counts and per-job errors
    * @throws 403 if not authenticated as admin
    */
+  @ApiOperation({ summary: 'Post admin retry failed' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('admin/retry-failed')
   @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.OK)
@@ -370,6 +386,8 @@ export class BlockchainController {
    *
    * @throws 403 if not authenticated as admin
    */
+  @ApiOperation({ summary: 'Get admin replay audits' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('admin/replay-audits')
   @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.OK)
@@ -388,6 +406,8 @@ export class BlockchainController {
    *
    * @throws 403 if not authenticated as admin
    */
+  @ApiOperation({ summary: 'Get admin health' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('admin/health')
   @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.OK)

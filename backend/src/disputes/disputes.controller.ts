@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 import { User } from '../auth/decorators/user.decorator';
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
@@ -9,16 +10,22 @@ import { DisputesService } from './disputes.service';
 import { AddNoteDto, AssignDisputeDto, OpenDisputeDto, ResolveDisputeDto } from './dto/dispute.dto';
 import { DisputeSeverity, DisputeStatus } from './enums/dispute.enum';
 
+@ApiTags('Disputes')
+@ApiBearerAuth()
 @Controller('disputes')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class DisputesController {
   constructor(private readonly service: DisputesService) {}
 
+  @ApiOperation({ summary: 'Post' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post()
   open(@Body() dto: OpenDisputeDto, @User('id') userId: string) {
     return this.service.open(dto, userId);
   }
 
+  @ApiOperation({ summary: 'Get' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get()
   @RequirePermissions(Permission.DISPUTE_RESOLVE)
   list(
@@ -32,6 +39,8 @@ export class DisputesController {
   }
 
   @RequirePermissions(Permission.EXPORT_DISPUTES)
+  @ApiOperation({ summary: 'Get export' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('export')
   async export(
     @Res() res: Response,
@@ -42,6 +51,8 @@ export class DisputesController {
     return this.service.streamCsvExport(res, { status, from, to });
   }
 
+  @ApiOperation({ summary: 'Get :id' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id')
   @RequirePermissions(Permission.DISPUTE_RESOLVE)
   get(@Param('id') id: string) {
@@ -50,6 +61,8 @@ export class DisputesController {
 
   @Auditable({ action: 'dispute.assigned', resourceType: 'Dispute' })
   @UseInterceptors(AuditLogInterceptor)
+  @ApiOperation({ summary: 'Patch :id assign' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id/assign')
   @RequirePermissions(Permission.DISPUTE_RESOLVE)
   assign(@Param('id') id: string, @Body() dto: AssignDisputeDto) {
@@ -58,24 +71,32 @@ export class DisputesController {
 
   @Auditable({ action: 'dispute.resolved', resourceType: 'Dispute' })
   @UseInterceptors(AuditLogInterceptor)
+  @ApiOperation({ summary: 'Patch :id resolve' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id/resolve')
   @RequirePermissions(Permission.DISPUTE_RESOLVE)
   resolve(@Param('id') id: string, @Body() dto: ResolveDisputeDto) {
     return this.service.resolve(id, dto);
   }
 
+  @ApiOperation({ summary: 'Post :id notes' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post(':id/notes')
   @RequirePermissions(Permission.DISPUTE_RESOLVE)
   addNote(@Param('id') id: string, @Body() dto: AddNoteDto, @User('id') userId: string) {
     return this.service.addNote(id, dto.content, userId);
   }
 
+  @ApiOperation({ summary: 'Get :id notes' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id/notes')
   @RequirePermissions(Permission.DISPUTE_RESOLVE)
   getNotes(@Param('id') id: string) {
     return this.service.getNotes(id);
   }
 
+  @ApiOperation({ summary: 'Post :id evidence' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post(':id/evidence')
   @RequirePermissions(Permission.DISPUTE_RESOLVE)
   addEvidence(@Param('id') id: string, @Body() body: { type: string; url: string }) {

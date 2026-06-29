@@ -6,6 +6,7 @@ import {
   Param,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
@@ -34,11 +35,15 @@ class RecordDispositionDto {
   coldChainVerified?: boolean;
 }
 
+@ApiTags('Blood Units')
+@ApiBearerAuth()
 @Controller('api/v1/dispositions')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class DispositionController {
   constructor(private readonly dispositionService: DispositionService) {}
 
+  @ApiOperation({ summary: 'Post evaluate' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('evaluate')
   @Roles(UserRole.OPERATIONS_STAFF, UserRole.BLOOD_BANK_ADMIN)
   async evaluateFailedDelivery(@Body() dto: EvaluateDispositionDto) {
@@ -50,6 +55,8 @@ export class DispositionController {
     );
   }
 
+  @ApiOperation({ summary: 'Post record' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('record')
   @Roles(UserRole.OPERATIONS_STAFF, UserRole.BLOOD_BANK_ADMIN)
   async recordDisposition(
@@ -68,6 +75,8 @@ export class DispositionController {
     );
   }
 
+  @ApiOperation({ summary: 'Get history :bloodUnitId' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('history/:bloodUnitId')
   @Roles(
     UserRole.OPERATIONS_STAFF,

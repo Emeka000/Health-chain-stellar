@@ -78,6 +78,14 @@ interface ContractClientOptions {
   secretKey: string;
 }
 
+// Stellar StrKey addresses are 56-char base32 strings prefixed by a type byte:
+// 'C' for contract IDs, 'S' for secret (signing) keys. Placeholder values left
+// in .env (e.g. '', 'your-soroban-secret-key') never match this shape, so a
+// shape check is enough to flag an unusable config without depending on the
+// Stellar SDK's StrKey decoder.
+const STELLAR_CONTRACT_ID_PATTERN = /^C[A-Z2-7]{55}$/;
+const STELLAR_SECRET_KEY_PATTERN = /^S[A-Z2-7]{55}$/;
+
 @Injectable()
 export class SorobanService implements OnModuleInit {
   private readonly logger = new Logger(SorobanService.name);
@@ -125,6 +133,20 @@ export class SorobanService implements OnModuleInit {
     const network = this.configService.get<string>('SOROBAN_NETWORK', 'testnet');
     const networkPassphrase =
       network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET;
+
+    if (secretKey && !STELLAR_SECRET_KEY_PATTERN.test(secretKey)) {
+      this.logger.warn(
+        'SOROBAN_SECRET_KEY is set but is not a valid Stellar secret key ' +
+          "(expected 'S' prefix + 56 chars). Blockchain write operations will fail at runtime.",
+      );
+    }
+    const legacyContractId = this.configService.get<string>('SOROBAN_CONTRACT_ID', '');
+    if (legacyContractId && !STELLAR_CONTRACT_ID_PATTERN.test(legacyContractId)) {
+      this.logger.warn(
+        'SOROBAN_CONTRACT_ID is set but is not a valid Stellar contract address ' +
+          "(expected 'C' prefix + 56 chars). Blockchain write operations will fail at runtime.",
+      );
+    }
 
     const sharedOptions: ContractClientOptions = {
       networkPassphrase,

@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import {
   AcknowledgeDeviationDto,
@@ -8,10 +9,14 @@ import {
 import { RouteDeviationService } from './route-deviation.service';
 import { DeviationSeverity } from './entities/route-deviation-incident.entity';
 
+@ApiTags('Route Deviation')
+@ApiBearerAuth()
 @Controller('api/v1/route-deviation')
 export class RouteDeviationController {
   constructor(private readonly service: RouteDeviationService) { }
 
+  @ApiOperation({ summary: 'Create a planned route for an order' })
+  @ApiResponse({ status: 201, description: 'Planned route created' })
   @Post('planned-routes')
   createPlannedRoute(@Body() dto: CreatePlannedRouteDto) {
     return this.service.createPlannedRoute(dto);
