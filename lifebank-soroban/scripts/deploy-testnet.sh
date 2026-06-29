@@ -9,10 +9,10 @@ IDENTITY=${STELLAR_IDENTITY:-default}  # Override via STELLAR_IDENTITY env var; 
 echo "🚀 Deploying Lifebank contracts to ${NETWORK}..."
 echo ""
 
-# Check if soroban CLI is installed
-if ! command -v soroban &> /dev/null; then
-    echo "❌ Error: soroban CLI not found. Please install it first."
-    echo "   cargo install --locked soroban-cli"
+# Check if stellar CLI is installed
+if ! command -v stellar &> /dev/null; then
+    echo "❌ Error: stellar CLI not found. Please install it first."
+    echo "   cargo install --locked stellar-cli"
     exit 1
 fi
 
@@ -30,7 +30,7 @@ declare -A CONTRACT_IDS
 for contract in coordinator identity inventory payments requests temperature matching reputation delivery analytics; do
     echo "Deploying ${contract} contract..."
 
-    CONTRACT_ID=$(soroban contract deploy \
+    CONTRACT_ID=$(stellar contract deploy \
         --wasm target/wasm32-unknown-unknown/release/${contract}_contract.wasm \
         --source ${IDENTITY} \
         --network ${NETWORK})
@@ -41,27 +41,34 @@ for contract in coordinator identity inventory payments requests temperature mat
     echo ""
 done
 
-# Update contracts.json with deployed IDs
-echo "💾 Updating contracts.json with deployed IDs..."
+# Save contract IDs to testnet-specific file
+echo "💾 Saving contract IDs to .contract-ids.testnet.json..."
 
-{
-  # Start with testnet object
-  jq --arg network "testnet" '.testnet = {}' contracts.json > contracts.json.tmp
+OUTPUT_FILE=".contract-ids.testnet.json"
 
-  # Add each contract ID
-  for contract in "${!CONTRACT_IDS[@]}"; do
+# Initialize the JSON file
+echo "{}" > "${OUTPUT_FILE}"
+
+# Add each contract ID
+for contract in "${!CONTRACT_IDS[@]}"; do
     jq --arg contract "$contract" --arg id "${CONTRACT_IDS[$contract]}" \
-      '.testnet[$contract] = $id' contracts.json.tmp > contracts.json.tmp2
-    mv contracts.json.tmp2 contracts.json.tmp
-  done
-
-  mv contracts.json.tmp contracts.json
-}
+      '.[$contract] = $id' "${OUTPUT_FILE}" > "${OUTPUT_FILE}.tmp"
+    mv "${OUTPUT_FILE}.tmp" "${OUTPUT_FILE}"
+done
 
 echo ""
 echo "✅ Deployment complete!"
 echo ""
-echo "📝 Contract IDs saved to .contract-ids.json"
+echo "📝 Contract IDs saved to ${OUTPUT_FILE}"
+
+echo ""
+echo "🔧 Next step: Initialize contracts"
+echo "   Before using the contracts, you must run the initialization script:"
+echo ""
+echo "   STELLAR_IDENTITY=${IDENTITY} STELLAR_NETWORK=${NETWORK} ./scripts/initialize-contracts.sh"
+echo ""
+echo "   This initializes each contract with the admin address and dependency references."
+echo ""
 
 # ── Regenerate TypeScript bindings (issue #846) ────────────────────────────────
 echo ""
