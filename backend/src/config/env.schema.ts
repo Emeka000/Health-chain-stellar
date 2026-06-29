@@ -127,15 +127,59 @@ export class EnvironmentVariables {
   @IsNotEmpty({ message: 'MAPS_API_KEY is required' })
   MAPS_API_KEY: string;
 
-  // ─── Soroban Blockchain ───────────────────────────────────────────────────
+  // ─── Soroban Blockchain ───────────────────────────────────────────────
 
   @IsUrl({}, { message: 'SOROBAN_RPC_URL must be a valid URL' })
   @IsNotEmpty({ message: 'SOROBAN_RPC_URL is required' })
   SOROBAN_RPC_URL: string;
 
+  // ─── Per-contract addresses (all 10 deployed contracts) ─────────────────
+
+  @IsOptional()
   @IsString()
-  @IsNotEmpty({ message: 'SOROBAN_CONTRACT_ID is required' })
-  SOROBAN_CONTRACT_ID: string;
+  SOROBAN_COORDINATOR_CONTRACT_ID: string = '';
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_IDENTITY_CONTRACT_ID: string = '';
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_INVENTORY_CONTRACT_ID: string = '';
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_PAYMENTS_CONTRACT_ID: string = '';
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_REQUESTS_CONTRACT_ID: string = '';
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_TEMPERATURE_CONTRACT_ID: string = '';
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_MATCHING_CONTRACT_ID: string = '';
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_REPUTATION_CONTRACT_ID: string = '';
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_DELIVERY_CONTRACT_ID: string = '';
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_ANALYTICS_CONTRACT_ID: string = '';
+
+  // ─── Legacy contract ID (kept for backward compatibility) ──────────────
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_CONTRACT_ID: string = '';
 
   @IsString()
   @IsNotEmpty({ message: 'SOROBAN_SECRET_KEY is required' })
