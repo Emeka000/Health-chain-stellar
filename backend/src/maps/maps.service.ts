@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { Redis } from 'ioredis';
 
 import { REDIS_CLIENT } from '../redis/redis.constants';
+import { isMapsApiKeyConfigured } from './utils/maps-api-key.util';
 
 @Injectable()
 export class MapsService {
@@ -13,7 +14,15 @@ export class MapsService {
   constructor(
     private readonly configService: ConfigService,
     @Optional() @Inject(REDIS_CLIENT) private readonly redis?: Redis,
-  ) {}
+  ) {
+    const apiKey = this.configService.get<string>('GOOGLE_MAPS_API_KEY');
+    if (!isMapsApiKeyConfigured(apiKey)) {
+      this.logger.warn(
+        'GOOGLE_MAPS_API_KEY is missing or a placeholder value. Maps features ' +
+          '(directions, geocoding, place search) are DEGRADED and will fail or fall back at runtime.',
+      );
+    }
+  }
 
   private buildDistanceCacheKey(origin: string, destination: string): string {
     return `maps:distance-matrix:${encodeURIComponent(origin)}:${encodeURIComponent(destination)}`;
