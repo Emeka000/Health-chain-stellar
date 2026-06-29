@@ -27,29 +27,39 @@ import { AuditLogInterceptor } from '../common/audit/audit-log.interceptor';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UsersService } from './users.service';
 
+@ApiTags('Users')
+@ApiBearerAuth()
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @RequirePermissions(Permission.VIEW_USERS)
+  @ApiOperation({ summary: 'Get' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get()
   findAll() {
     return this.usersService.findAll();
   }
 
   @RequirePermissions(Permission.VIEW_USERS)
+  @ApiOperation({ summary: 'Get profile' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('profile')
   getProfile(@Request() req: any) {
     return this.usersService.getProfile(req.user?.id);
   }
 
   @RequirePermissions(Permission.VIEW_USERS)
+  @ApiOperation({ summary: 'Get :id' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.usersService.findOne(id);
   }
 
   @RequirePermissions(Permission.MANAGE_USERS)
+  @ApiOperation({ summary: 'Patch profile' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch('profile')
   updateProfile(
     @Body() updateProfileDto: UpdateProfileDto,
@@ -65,6 +75,8 @@ export class UsersController {
   @RequirePermissions(Permission.MANAGE_USERS)
   @Auditable({ action: 'user.updated', resourceType: 'User' })
   @UseInterceptors(AuditLogInterceptor)
+  @ApiOperation({ summary: 'Patch :id' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id')
   update(
     @Param('id') id: string,
@@ -79,6 +91,8 @@ export class UsersController {
   }
 
   @RequirePermissions(Permission.MANAGE_USERS)
+  @ApiOperation({ summary: 'Post profile avatar' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('profile/avatar')
   @UseInterceptors(
     FileInterceptor('file', {
@@ -102,6 +116,8 @@ export class UsersController {
   }
 
   @RequirePermissions(Permission.MANAGE_USERS)
+  @ApiOperation({ summary: 'Delete profile avatar' })
+  @ApiResponse({ status: 200, description: 'Resource deleted successfully' })
   @Delete('profile/avatar')
   @HttpCode(HttpStatus.OK)
   deleteAvatar(@Request() req: any) {
@@ -112,6 +128,8 @@ export class UsersController {
   }
 
   @RequirePermissions(Permission.VIEW_USERS)
+  @ApiOperation({ summary: 'Get profile activities' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('profile/activities')
   getProfileActivities(
     @Request() req: any,
@@ -126,6 +144,8 @@ export class UsersController {
   }
 
   @RequirePermissions(Permission.DELETE_USER)
+  @ApiOperation({ summary: 'Delete :id' })
+  @ApiResponse({ status: 200, description: 'Resource deleted successfully' })
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param('id') id: string) {

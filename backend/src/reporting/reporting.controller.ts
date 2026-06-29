@@ -22,6 +22,8 @@ import { ReportingService } from './reporting.service';
 import { ReportViewRefreshService, MaterializedViewName } from './report-view-refresh.service';
 import { ReportingQueryDto, ReportSummaryQueryDto } from './dto/reporting-query.dto';
 
+@ApiTags('Reporting')
+@ApiBearerAuth()
 @Controller('reporting')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class ReportingController {
@@ -34,6 +36,8 @@ export class ReportingController {
    * Multi-domain search with pagination.
    * Supports page/pageSize (preferred) or legacy limit/offset.
    */
+  @ApiOperation({ summary: 'Get search' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('search')
   @RequirePermissions(Permission.READ_ANALYTICS)
   async search(
@@ -48,6 +52,8 @@ export class ReportingController {
    * Served from materialized views when fresh; falls back to live queries.
    * Staleness metadata is always included in the response.
    */
+  @ApiOperation({ summary: 'Get summary' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('summary')
   @RequirePermissions(Permission.READ_ANALYTICS)
   async getSummary(
@@ -61,6 +67,8 @@ export class ReportingController {
    * Pre-aggregated daily order summary from materialized view.
    * Supports optional date range and pagination.
    */
+  @ApiOperation({ summary: 'Get orders daily summary' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('orders/daily-summary')
   @RequirePermissions(Permission.READ_ANALYTICS)
   async getOrderDailySummary(
@@ -75,6 +83,8 @@ export class ReportingController {
   /**
    * Blood unit inventory snapshot from materialized view.
    */
+  @ApiOperation({ summary: 'Get units inventory' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('units/inventory')
   @RequirePermissions(Permission.READ_ANALYTICS)
   async getBloodUnitInventory(
@@ -88,6 +98,8 @@ export class ReportingController {
    * Returns freshness metadata for all materialized views.
    * Consumers use this to decide whether to request a refresh.
    */
+  @ApiOperation({ summary: 'Get views freshness' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('views/freshness')
   @RequirePermissions(Permission.READ_ANALYTICS)
   async getViewFreshness() {
@@ -98,6 +110,8 @@ export class ReportingController {
    * Trigger a manual refresh of a specific materialized view.
    * Requires ADMIN_ACCESS permission.
    */
+  @ApiOperation({ summary: 'Post views :viewName refresh' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('views/:viewName/refresh')
   @RequirePermissions(Permission.ADMIN_ACCESS)
   async refreshView(@Param('viewName') viewName: string) {
@@ -108,6 +122,8 @@ export class ReportingController {
    * Trigger refresh of all materialized views.
    * Requires ADMIN_ACCESS permission.
    */
+  @ApiOperation({ summary: 'Post views refresh all' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('views/refresh-all')
   @RequirePermissions(Permission.ADMIN_ACCESS)
   async refreshAllViews() {
@@ -118,6 +134,8 @@ export class ReportingController {
    * Excel export endpoint.
    * Capped at 10 000 rows per domain.
    */
+  @ApiOperation({ summary: 'Get export' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('export')
   @RequirePermissions(Permission.READ_ANALYTICS)
   async export(

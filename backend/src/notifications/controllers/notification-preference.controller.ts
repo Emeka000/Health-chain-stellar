@@ -7,6 +7,7 @@ import {
   Param,
   ForbiddenException,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { NotificationPreferenceService } from '../services/notification-preference.service';
@@ -26,6 +27,8 @@ class SetPreferenceDto {
   emergencyBypassTier?: EmergencyTier;
 }
 
+@ApiTags('Notifications')
+@ApiBearerAuth()
 @Controller('api/v1/notification-preferences')
 @UseGuards(JwtAuthGuard)
 export class NotificationPreferenceController {
@@ -34,11 +37,15 @@ export class NotificationPreferenceController {
     private readonly securityEventLogger: SecurityEventLoggerService,
   ) {}
 
+  @ApiOperation({ summary: 'Get' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get()
   async getMyPreferences(@CurrentUser() user: any) {
     return this.preferenceService.getUserPreferences(user.id);
   }
 
+  @ApiOperation({ summary: 'Post' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post()
   async setPreference(
     @Body() dto: SetPreferenceDto,
@@ -55,11 +62,15 @@ export class NotificationPreferenceController {
     );
   }
 
+  @ApiOperation({ summary: 'Get delivery logs' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('delivery-logs')
   async getMyDeliveryLogs(@CurrentUser() user: any) {
     return this.preferenceService.getDeliveryLogs(user.id);
   }
 
+  @ApiOperation({ summary: 'Get delivery logs :userId' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('delivery-logs/:userId')
   async getUserDeliveryLogs(@Param('userId') userId: string, @CurrentUser() user: any) {
     const role = String(user?.role ?? '').toLowerCase();

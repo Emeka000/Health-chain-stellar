@@ -38,6 +38,8 @@ interface AuthenticatedRequest {
   };
 }
 
+@ApiTags('Orders')
+@ApiBearerAuth()
 @Controller('orders')
 export class OrdersController {
   constructor(
@@ -51,12 +53,16 @@ export class OrdersController {
    * Returns all orders with inconsistent or invalid materialized state (Issue #617).
    */
   @RequirePermissions(Permission.ADMIN_ACCESS)
+  @ApiOperation({ summary: 'Get state audit' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('state-audit')
   auditOrderStates() {
     return this.auditService.auditAll();
   }
 
   @RequirePermissions(Permission.VIEW_ORDER)
+  @ApiOperation({ summary: 'Get' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get()
   async findAllWithFilters(
     @Query(
@@ -101,6 +107,8 @@ export class OrdersController {
   }
 
   @RequirePermissions(Permission.VIEW_ORDER)
+  @ApiOperation({ summary: 'Get :id' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id')
   findOne(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
     return this.ordersService.findOne(id, {
@@ -116,12 +124,16 @@ export class OrdersController {
    * Each row contains: order_id, event_type, payload, actor_id, timestamp.
    */
   @RequirePermissions(Permission.VIEW_ORDER)
+  @ApiOperation({ summary: 'Get :id sla' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id/sla')
   getOrderSla(@Param('id') id: string) {
     return this.slaService.getOrderMetrics(id);
   }
 
   @RequirePermissions(Permission.VIEW_ORDER)
+  @ApiOperation({ summary: 'Get :id history' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id/history')
   getOrderHistory(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
     return this.ordersService.getOrderHistory(id, {
@@ -132,6 +144,8 @@ export class OrdersController {
   }
 
   @RequirePermissions(Permission.VIEW_ORDER)
+  @ApiOperation({ summary: 'Get :id track' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id/track')
   trackOrder(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
     return this.ordersService.trackOrder(id, {
@@ -142,6 +156,8 @@ export class OrdersController {
   }
 
   @RequirePermissions(Permission.VIEW_ORDER)
+  @ApiOperation({ summary: 'Post :id preview fees' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post(':id/preview-fees')
   previewOrderFees(
     @Param('id') id: string,
@@ -157,6 +173,8 @@ export class OrdersController {
   }
 
   @RequirePermissions(Permission.CREATE_ORDER)
+  @ApiOperation({ summary: 'Post' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post()
   create(
     @Body() createOrderDto: CreateOrderDto,
@@ -168,6 +186,8 @@ export class OrdersController {
   }
 
   @RequirePermissions(Permission.UPDATE_ORDER)
+  @ApiOperation({ summary: 'Patch :id' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id')
   update(
     @Param('id') id: string,
@@ -182,6 +202,8 @@ export class OrdersController {
   }
 
   @RequirePermissions(Permission.UPDATE_ORDER)
+  @ApiOperation({ summary: 'Patch :id status' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id/status')
   updateStatus(
     @Param('id') id: string,
@@ -204,6 +226,8 @@ export class OrdersController {
   }
 
   @RequirePermissions(Permission.MANAGE_RIDERS)
+  @ApiOperation({ summary: 'Patch :id assign rider' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id/assign-rider')
   assignRider(
     @Param('id') id: string,
@@ -219,6 +243,8 @@ export class OrdersController {
   }
 
   @RequirePermissions(Permission.DELETE_ORDER)
+  @ApiOperation({ summary: 'Delete :id' })
+  @ApiResponse({ status: 200, description: 'Resource deleted successfully' })
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
@@ -231,6 +257,8 @@ export class OrdersController {
   }
 
   @RequirePermissions(Permission.UPDATE_ORDER)
+  @ApiOperation({ summary: 'Patch :id raise dispute' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id/raise-dispute')
   @HttpCode(HttpStatus.OK)
   raiseDispute(
@@ -250,6 +278,8 @@ export class OrdersController {
   @RequirePermissions(Permission.UPDATE_ORDER)
   @Auditable({ action: 'order.resolve-dispute', resourceType: 'Order' })
   @UseInterceptors(AuditLogInterceptor)
+  @ApiOperation({ summary: 'Patch :id resolve dispute' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id/resolve-dispute')
   @HttpCode(HttpStatus.OK)
   resolveDispute(

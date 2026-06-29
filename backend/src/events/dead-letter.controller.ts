@@ -15,6 +15,8 @@ import {
 } from './canonical-event.envelope';
 import { CanonicalEventEmitterService } from './canonical-event-emitter.service';
 
+@ApiTags('Events')
+@ApiBearerAuth()
 @Controller('api/v1/dead-letter')
 export class DeadLetterController {
     constructor(
@@ -25,6 +27,8 @@ export class DeadLetterController {
     /**
      * Query dead-letter events
      */
+    @ApiOperation({ summary: 'Get' })
+    @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
     @Get()
     async queryDeadLetters(
         @Query('eventTypes') eventTypes?: string,
@@ -57,6 +61,8 @@ export class DeadLetterController {
     /**
      * Get dead-letter statistics
      */
+    @ApiOperation({ summary: 'Get statistics' })
+    @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
     @Get('statistics')
     async getStatistics(
         @Query('startTime') startTime?: string,
@@ -71,6 +77,8 @@ export class DeadLetterController {
     /**
      * Get a specific dead-letter event
      */
+    @ApiOperation({ summary: 'Get :id' })
+    @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
     @Get(':id')
     async getDeadLetter(@Param('id') id: string) {
         const events = await this.deadLetterService.queryDeadLetters({
@@ -82,6 +90,8 @@ export class DeadLetterController {
     /**
      * Replay dead-letter events
      */
+    @ApiOperation({ summary: 'Post replay' })
+    @ApiResponse({ status: 201, description: 'Resource created successfully' })
     @Post('replay')
     async replayDeadLetters(@Body() request: ReplayRequest) {
         return this.deadLetterService.replayDeadLetters(
@@ -96,6 +106,8 @@ export class DeadLetterController {
     /**
      * Purge old dead-letter events
      */
+    @ApiOperation({ summary: 'Delete purge' })
+    @ApiResponse({ status: 200, description: 'Resource deleted successfully' })
     @Delete('purge')
     async purgeOldEvents(@Query('olderThanDays') olderThanDays: string) {
         const days = parseInt(olderThanDays, 10) || 30;

@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
@@ -11,6 +12,8 @@ import { GetAvailabilityRequestDto, GetAvailabilityResponseDto } from './dto/get
 import { BloodBankAvailabilityService } from './services/blood-bank-availability.service';
 
 @UseGuards(RoleAwareThrottlerGuard)
+@ApiTags('Blood Requests')
+@ApiBearerAuth()
 @Controller('blood-requests')
 export class BloodRequestsController {
   constructor(
@@ -19,6 +22,8 @@ export class BloodRequestsController {
   ) {}
 
   @RequirePermissions(Permission.CREATE_ORDER)
+  @ApiOperation({ summary: 'Post' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post()
   create(
     @Body() dto: CreateBloodRequestDto,
@@ -32,6 +37,8 @@ export class BloodRequestsController {
    * Find nearby blood banks with requested blood type/component
    * Returns ranked list by confidence score (stock, ETA, reliability)
    */
+  @ApiOperation({ summary: 'Get availability' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('availability')
   async getAvailability(
     @Query() query: GetAvailabilityRequestDto,
