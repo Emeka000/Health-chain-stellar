@@ -50,21 +50,47 @@ All critical actions are enforced by smart contracts, reducing fraud and manual 
 
 ## Getting Started
 
-### Local Development Setup
+### Prerequisites
 
-For contributors, we provide a Docker Compose stack for easy local development:
+| Dependency | Version | Purpose |
+|---|---|---|
+| Node.js | >= 18.x | Backend and frontend runtime |
+| Docker + Docker Compose | latest | PostgreSQL (:5432) and Redis (:6379) |
+| Rust + Cargo | stable | Soroban smart contracts |
+| Stellar CLI (`stellar`) | >= 21.x | Deploy and invoke contracts |
+
+### Quick Start
 
 ```bash
-# Start Postgres + Redis
+# 1. Start PostgreSQL and Redis
 docker-compose up -d
 
-# Setup backend
+# 2. Set up the backend
 cd backend
+cp .env.example .env   # edit DATABASE_PASSWORD, JWT_SECRET at minimum
 npm install
-npm run start:dev
+npm run migration:run
+npm run start:dev      # http://localhost:3001 — Swagger UI at /docs
 ```
 
-See [DOCKER_SETUP.md](./DOCKER_SETUP.md) for detailed instructions and optional development tools.
+```bash
+# 3. Set up the frontend (separate terminal)
+cd frontend/health-chain
+npm install
+npm run dev            # http://localhost:3000
+```
+
+For contract deployment, full environment variable reference, and contributor guidelines see **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
+
+### Service Ports
+
+| Service | Port |
+|---|---|
+| Next.js frontend | `:3000` |
+| NestJS backend | `:3001` |
+| Swagger UI | `:3001/docs` |
+| PostgreSQL | `:5432` |
+| Redis | `:6379` |
 
 ## Project Structure
 
@@ -73,3 +99,5 @@ See [DOCKER_SETUP.md](./DOCKER_SETUP.md) for detailed instructions and optional 
 | `backend/` | [Backend README](./backend/README.md) |
 | `contracts/` | [Contracts README](./contracts/README.md) |
 | `lifebank-soroban/` | [Lifebank Soroban README](./lifebank-soroban/README.md) |
+| `docs/contracts/` | [Contract Reference Docs](./docs/contracts/) |
+| `docs/architecture.md` | [Architecture Diagram](./docs/architecture.md) |
