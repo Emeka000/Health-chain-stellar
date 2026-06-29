@@ -346,12 +346,13 @@ impl PendingApproval {
 }
 
 impl FeeStructure {
-    /// Calculates total fees, returning None if any intermediate sum overflows i128.
-    pub fn total(&self) -> Option<i128> {
+    /// Calculates total fees, returning Err if any intermediate sum overflows i128.
+    pub fn total(&self) -> Result<i128, PaymentError> {
         self.service_fee
-            .checked_add(self.network_fee)?
-            .checked_add(self.performance_bonus)?
-            .checked_add(self.fixed_fee)
+            .checked_add(self.network_fee)
+            .and_then(|v| v.checked_add(self.performance_bonus))
+            .and_then(|v| v.checked_add(self.fixed_fee))
+            .ok_or(PaymentError::Overflow)
     }
 
     /// Validates fee structure
@@ -368,7 +369,7 @@ impl FeeStructure {
 
     /// Calculates net amount after deducting fees
     pub fn calculate_net_amount(&self, gross_amount: i128) -> Result<i128, PaymentError> {
-        let total_fees = self.total().ok_or(PaymentError::Overflow)?;
+        let total_fees = self.total()?;
         if total_fees > gross_amount {
             return Err(PaymentError::FeesExceedAmount);
         }
