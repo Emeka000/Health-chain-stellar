@@ -9,10 +9,10 @@ IDENTITY=${STELLAR_IDENTITY:-default}  # Override via STELLAR_IDENTITY env var; 
 echo "🚀 Deploying Lifebank contracts to ${NETWORK}..."
 echo ""
 
-# Check if soroban CLI is installed
-if ! command -v soroban &> /dev/null; then
-    echo "❌ Error: soroban CLI not found. Please install it first."
-    echo "   cargo install --locked soroban-cli"
+# Check if stellar CLI is installed
+if ! command -v stellar &> /dev/null; then
+    echo "❌ Error: stellar CLI not found. Please install it first."
+    echo "   cargo install --locked stellar-cli"
     exit 1
 fi
 
@@ -30,7 +30,7 @@ declare -A CONTRACT_IDS
 for contract in coordinator identity inventory payments requests temperature matching reputation delivery analytics; do
     echo "Deploying ${contract} contract..."
 
-    CONTRACT_ID=$(soroban contract deploy \
+    CONTRACT_ID=$(stellar contract deploy \
         --wasm target/wasm32-unknown-unknown/release/${contract}_contract.wasm \
         --source ${IDENTITY} \
         --network ${NETWORK})
