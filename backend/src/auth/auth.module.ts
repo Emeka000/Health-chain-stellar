@@ -32,6 +32,14 @@ import { SessionRiskService } from './session-risk.service';
 
 import type { JwtModuleOptions } from '@nestjs/jwt';
 
+/**
+ * AuthModule dependency audit (Issue #1011):
+ * - Imports: UserActivityModule (audit logging)
+ * - Imported by: BloodUnitsModule, BloodRequestsModule, and others
+ * - Risk: Circular dependency if UserActivityModule imports BloodUnitsModule, BloodRequestsModule, or AuthModule
+ * - Status: No circular dependency detected. UserActivityModule is standalone.
+ * - PermissionsService can safely be imported by feature modules.
+ */
 @Module({
   imports: [
     PassportModule.register({ defaultStrategy: 'jwt' }),
