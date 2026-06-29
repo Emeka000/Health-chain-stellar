@@ -1,5 +1,6 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { BloodRequestEntity } from '../blood-requests/entities/blood-request.entity';
@@ -30,6 +31,7 @@ import { InventoryForecastingService } from './inventory-forecasting.service';
 import { InventoryController } from './inventory.controller';
 import { InventoryRepository } from './repositories/inventory.repository';
 import { InventoryService } from './inventory.service';
+import { DonorOutreachQueueEventsListener } from './listeners/donor-outreach-queue-events.listener';
 import { DonorOutreachProcessor } from './processors/donor-outreach.processor';
 import { InventoryAlertService } from './services/inventory-alert.service';
 import { RestockingCampaignService } from './services/restocking-campaign.service';
@@ -50,7 +52,23 @@ import { RestockingCampaignService } from './services/restocking-campaign.servic
       OrganizationEntity,
       BloodUnit,
     ]),
-    BullModule.registerQueue({ name: 'donor-outreach' }),
+    BullModule.registerQueueAsync({
+      name: 'donor-outreach',
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => ({
+        connection: {
+          host: configService.get<string>('REDIS_HOST', 'localhost'),
+          port: configService.get<number>('REDIS_PORT', 6379),
+        },
+        defaultJobOptions: {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 5000 },
+          removeOnComplete: true,
+          removeOnFail: false,
+        },
+      }),
+      inject: [ConfigService],
+    }),
     NotificationsModule,
     UsersModule,
   ],
@@ -70,6 +88,7 @@ import { RestockingCampaignService } from './services/restocking-campaign.servic
     InventoryEventListener,
     ExpirationForecastingService,
     DonorOutreachProcessor,
+    DonorOutreachQueueEventsListener,
     InventoryAlertService,
     RestockingCampaignService,
   ],

@@ -22,6 +22,6 @@ import { AnomalyIncidentEntity } from './entities/anomaly-incident.entity';
   ],
   controllers: [AnomalyController],
   providers: [AnomalyService, AnomalyScoringService, AnomalyDriftService],
-  exports: [AnomalyService, AnomalyDriftService],
+  exports: [AnomalyService, AnomalyScoringService, AnomalyDriftService],
 })
 export class AnomalyModule {}
