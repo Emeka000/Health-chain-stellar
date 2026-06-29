@@ -315,6 +315,10 @@ pub enum DataKey {
 
     /// Deduplication index: serial number (donation bag ID) -> blood unit ID
     Serial(String),
+
+    /// Address of the authoritative HealthChainContract (BloodUnitRegistry)
+    /// for cross-contract state synchronisation.
+    RegistryContractId,
 }
 
 /// Reservation record for blood units locked for a specific requester

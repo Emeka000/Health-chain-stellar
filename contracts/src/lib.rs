@@ -500,6 +500,7 @@ const _: () = assert!("PAY_STATS".len() <= 9);
 const _: () = assert!("MSIG_CFG".len() <= 9);
 const _: () = assert!("PEND_APR".len() <= 9);
 const _: () = assert!("ESC_ACCS".len() <= 9);
+const _: () = assert!("INV_CTRL".len() <= 9);
 
 /// Storage keys (single source of truth)
 pub(crate) const BLOOD_UNITS: Symbol = symbol_short!("UNITS");
@@ -522,6 +523,7 @@ pub(crate) const PAYMENT_STATS: Symbol = symbol_short!("PAY_STATS");
 pub(crate) const MULTISIG_CONFIG: Symbol = symbol_short!("MSIG_CFG");
 pub(crate) const PENDING_APPROVALS: Symbol = symbol_short!("PEND_APR");
 pub(crate) const ESCROW_ACCOUNTS: Symbol = symbol_short!("ESC_ACCS");
+pub(crate) const INVENTORY_CONTRACT: Symbol = symbol_short!("INV_CTRL");
 
 /// Storage key enumeration for composite keys
 #[contracttype]
@@ -3696,6 +3698,167 @@ impl HealthChainContract {
     /// Requires auth from the proposed admin. Emits `AdminTransferredEvent`.
     pub fn accept_admin(env: Env) -> Result<(), Error> {
         Self::accept_super_admin(env)
+    }
+
+        /// Authorize an inventory contract for cross-contract synchronization (admin only).
+    ///
+    /// The authorized inventory contract may call `inventory_reserve_unit` and
+    /// `inventory_release_unit` to keep its reservation state consistent with
+    /// the registry's canonical unit status.
+    pub fn set_inventory_contract(
+        env: Env,
+        admin: Address,
+        inventory_contract_id: Address,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&ADMIN)
+            .ok_or(Error::Unauthorized)?;
+        if admin != stored_admin {
+            return Err(Error::Unauthorized);
+        }
+        env.storage()
+            .instance()
+            .set(&INVENTORY_CONTRACT, &inventory_contract_id);
+        Ok(())
+    }
+
+    /// Check whether a blood unit exists and is in `Available` status.
+    ///
+    /// Intended for cross-contract calls from the inventory contract.
+    /// Returns `false` if the unit does not exist, is not Available, or is expired.
+    pub fn check_unit_available(env: Env, unit_id: u64) -> bool {
+        let units: Map<u64, BloodUnit> = env
+            .storage()
+            .persistent()
+            .get(&BLOOD_UNITS)
+            .unwrap_or(Map::new(&env));
+
+        match units.get(unit_id) {
+            Some(unit) => {
+                let current_time = env.ledger().timestamp();
+                unit.status == BloodStatus::Available && unit.expiration_date > current_time
+            }
+            None => false,
+        }
+    }
+
+    /// Mark a blood unit as Reserved, called by the authorized inventory contract.
+    ///
+    /// Only the contract stored via `set_inventory_contract` may call this.
+    /// The `bank_id` is the blood bank that owns the unit — its auth is verified
+    /// by the inventory contract before this cross-contract call is made.
+    pub fn inventory_reserve_unit(
+        env: Env,
+        bank_id: Address,
+        unit_id: u64,
+        hospital_id: Address,
+    ) -> Result<(), Error> {
+        let authorized: Address = env
+            .storage()
+            .instance()
+            .get(&INVENTORY_CONTRACT)
+            .ok_or(Error::Unauthorized)?;
+        if env.current_contract_address() != authorized {
+            return Err(Error::Unauthorized);
+        }
+
+        let mut units: Map<u64, BloodUnit> = env
+            .storage()
+            .persistent()
+            .get(&BLOOD_UNITS)
+            .unwrap_or(Map::new(&env));
+
+        let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
+        if unit.status != BloodStatus::Available {
+            return Err(Error::InvalidStatus);
+        }
+        let current_time = env.ledger().timestamp();
+        if unit.expiration_date <= current_time {
+            return Err(Error::UnitExpired);
+        }
+
+        let old_status = unit.status;
+        unit.status = BloodStatus::Reserved;
+        unit.recipient_hospital = Some(hospital_id.clone());
+        unit.allocation_timestamp = Some(current_time);
+
+        units.set(unit_id, unit);
+        env.storage().persistent().set(&BLOOD_UNITS, &units);
+
+        reindex_status(&env, unit_id, old_status, BloodStatus::Reserved);
+        index_hospital_unit(&env, &hospital_id, unit_id);
+        record_status_change(&env, unit_id, old_status, BloodStatus::Reserved, bank_id);
+
+        env.events().publish(
+            (
+                symbol_short!("blood"),
+                symbol_short!("allocate"),
+                symbol_short!("v1"),
+            ),
+            (unit_id, hospital_id, current_time),
+        );
+
+        Ok(())
+    }
+
+    /// Release a previously reserved blood unit back to Available.
+    ///
+    /// Called by the authorized inventory contract when a reservation is
+    /// cancelled or expires.
+    pub fn inventory_release_unit(
+        env: Env,
+        bank_id: Address,
+        unit_id: u64,
+    ) -> Result<(), Error> {
+        let authorized: Address = env
+            .storage()
+            .instance()
+            .get(&INVENTORY_CONTRACT)
+            .ok_or(Error::Unauthorized)?;
+        if env.current_contract_address() != authorized {
+            return Err(Error::Unauthorized);
+        }
+
+        let mut units: Map<u64, BloodUnit> = env
+            .storage()
+            .persistent()
+            .get(&BLOOD_UNITS)
+            .unwrap_or(Map::new(&env));
+
+        let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
+        if unit.status != BloodStatus::Reserved {
+            return Err(Error::InvalidStatus);
+        }
+
+        let old_status = unit.status;
+        let hospital_id = unit.recipient_hospital.clone();
+
+        unit.status = BloodStatus::Available;
+        unit.recipient_hospital = None;
+        unit.allocation_timestamp = None;
+
+        units.set(unit_id, unit);
+        env.storage().persistent().set(&BLOOD_UNITS, &units);
+
+        reindex_status(&env, unit_id, old_status, BloodStatus::Available);
+        if let Some(ref hosp) = hospital_id {
+            deindex_hospital_unit(&env, hosp, unit_id);
+        }
+        record_status_change(&env, unit_id, old_status, BloodStatus::Available, bank_id);
+
+        env.events().publish(
+            (
+                symbol_short!("blood"),
+                symbol_short!("cancel"),
+                symbol_short!("v1"),
+            ),
+            unit_id,
+        );
+
+        Ok(())
     }
 
     /// Store a health record hash

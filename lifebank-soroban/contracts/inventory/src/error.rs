@@ -47,4 +47,8 @@ pub enum ContractError {
     // Role-based access control (170-179)
     InvalidRole = 170,
     InsufficientRolePermission = 171,
+
+    // Cross-contract synchronisation (180-189)
+    RegistryNotConfigured = 180,
+    RegistryCallFailed = 181,
 }
