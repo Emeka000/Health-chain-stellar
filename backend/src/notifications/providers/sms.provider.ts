@@ -1,12 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import AfricasTalking from 'africastalking';
+import AfricasTalking, { AfricasTalkingOptions } from 'africastalking';
 
 @Injectable()
 export class SmsProvider {
   private readonly logger = new Logger(SmsProvider.name);
-  private africastalking: any;
+  private africastalking: ReturnType<typeof AfricasTalking> | null = null;
 
   constructor(private configService: ConfigService) {
     const apiKey = this.configService.get<string>('AT_API_KEY');
@@ -40,5 +40,9 @@ export class SmsProvider {
       this.logger.error(`Failed to send SMS to ${to}`, error);
       throw error;
     }
+  }
+
+  isHealthy(): boolean {
+    return this.africastalking !== null;
   }
 }

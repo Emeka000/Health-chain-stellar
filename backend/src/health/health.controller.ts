@@ -13,6 +13,8 @@ import { RequirePermissions } from '../auth/decorators/require-permissions.decor
 import { SorobanRpcHealthIndicator } from './indicators/soroban-rpc.health-indicator';
 import { BullMQHealthIndicator } from './indicators/bullmq.health-indicator';
 import { RedisHealthIndicator } from './indicators/redis.health-indicator';
+import { FirebaseHealthIndicator } from './indicators/firebase.health-indicator';
+import { SmsHealthIndicator } from './indicators/sms.health-indicator';
 
 @ApiTags('health')
 @Controller('health')
@@ -24,6 +26,8 @@ export class HealthController {
     private readonly soroban: SorobanRpcHealthIndicator,
     private readonly bullmq: BullMQHealthIndicator,
     private readonly memory: MemoryHealthIndicator,
+    private readonly firebase: FirebaseHealthIndicator,
+    private readonly sms: SmsHealthIndicator,
   ) {}
 
   /**
@@ -41,6 +45,8 @@ export class HealthController {
         () => this.redis.isHealthy('redis'),
         () => this.soroban.isHealthy('soroban_rpc'),
         () => this.bullmq.isHealthy('bullmq'),
+        () => this.firebase.isHealthy('firebase'),
+        () => this.sms.isHealthy('sms'),
       ]);
       return { status: 'ok' };
     } catch {
@@ -63,6 +69,8 @@ export class HealthController {
       () => this.redis.isHealthy('redis'),
       () => this.soroban.isHealthy('soroban_rpc'),
       () => this.bullmq.isHealthy('bullmq'),
+      () => this.firebase.isHealthy('firebase'),
+      () => this.sms.isHealthy('sms'),
       () => this.memory.checkHeap('memory_heap', 300 * 1024 * 1024),
     ]);
   }
