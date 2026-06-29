@@ -61,6 +61,15 @@ echo "✅ Deployment complete!"
 echo ""
 echo "📝 Contract IDs saved to ${OUTPUT_FILE}"
 
+echo ""
+echo "🔧 Next step: Initialize contracts"
+echo "   Before using the contracts, you must run the initialization script:"
+echo ""
+echo "   STELLAR_IDENTITY=${IDENTITY} STELLAR_NETWORK=${NETWORK} ./scripts/initialize-contracts.sh"
+echo ""
+echo "   This initializes each contract with the admin address and dependency references."
+echo ""
+
 # ── Regenerate TypeScript bindings (issue #846) ────────────────────────────────
 echo ""
 echo "🔗 Regenerating TypeScript client bindings..."
