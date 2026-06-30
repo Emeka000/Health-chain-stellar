@@ -1,4 +1,5 @@
 #![no_std]
+#![deny(deprecated)]
 
 /// Cross-contract coordinator for the HealthDonor workflow.
 ///
@@ -25,6 +26,8 @@ use soroban_sdk::{contract, contractevent, contractimpl, contracttype, Address, 
 /// within this window, anyone may call `expire_workflow` to roll back the
 /// allocation and free the reserved units and escrowed payment.
 const WORKFLOW_TIMEOUT_SECS: u64 = 6 * 60 * 60;
+
+const CONTRACT_VERSION: u32 = 1;
 
 // ── Minimal interface types mirroring the domain contracts ────────────────────
 // These allow the coordinator to inspect cross-contract return values without
@@ -303,6 +306,11 @@ impl CoordinatorContract {
             .set(&DataKey::PaymentContract, &payment_contract);
         CoordInitialized { admin }.publish(&env);
         Ok(())
+    }
+
+    /// Get contract version
+    pub fn version(_env: Env) -> u32 {
+        CONTRACT_VERSION
     }
 
     /// Pause all state-mutating functions. Admin only.

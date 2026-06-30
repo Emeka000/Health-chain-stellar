@@ -1,4 +1,5 @@
 #![no_std]
+#![deny(deprecated)]
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, Env,
@@ -19,6 +20,7 @@ pub struct ComplianceAttested {
 
 const DEFAULT_MIN_TEMPERATURE_C: i32 = 2;
 const DEFAULT_MAX_TEMPERATURE_C: i32 = 6;
+const CONTRACT_VERSION: u32 = 1;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -98,6 +100,10 @@ impl DeliveryContract {
         .publish(&env);
 
         Ok(())
+    }
+
+    pub fn version(_env: Env) -> u32 {
+        CONTRACT_VERSION
     }
 
     pub fn is_initialized(env: Env) -> bool {

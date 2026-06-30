@@ -1,4 +1,5 @@
 #![no_std]
+#![deny(deprecated)]
 
 mod error;
 mod events;
@@ -29,6 +30,8 @@ mod inventory_client {
 }
 
 use inventory_client::InventoryContractClient;
+
+const CONTRACT_VERSION: u32 = 1;
 
 #[contract]
 pub struct RequestContract;
@@ -112,6 +115,10 @@ impl RequestContract {
         events::emit_initialized(&env, &admin, &inventory_contract);
 
         Ok(())
+    }
+
+    pub fn version(_env: Env) -> u32 {
+        CONTRACT_VERSION
     }
 
     pub fn authorize_hospital(env: Env, hospital: Address) -> Result<(), ContractError> {

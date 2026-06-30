@@ -1,4 +1,5 @@
 #![no_std]
+#![deny(deprecated)]
 
 mod error;
 mod events;
@@ -75,6 +76,8 @@ pub struct InventoryContract;
 #[contractimpl]
 impl InventoryContract {
     const MAX_RESERVATION_DURATION_SECS: u64 = 86_400 * 7;
+    const CONTRACT_VERSION: u32 = 1;
+
     /// Initialize the inventory contract
     ///
     /// # Arguments
@@ -98,6 +101,10 @@ impl InventoryContract {
         storage::set_authorized_bank(&env, &admin, true);
 
         Ok(())
+    }
+
+    pub fn version(_env: Env) -> u32 {
+        Self::CONTRACT_VERSION
     }
 
     /// Pause the contract. Only the admin can call this.

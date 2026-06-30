@@ -1,4 +1,6 @@
 #![no_std]
+#![deny(deprecated)]
+
 use soroban_sdk::token;
 use soroban_sdk::{
     contract, contractevent, contracterror, contractimpl, contracttype, symbol_short, Address, Env,
@@ -143,6 +145,7 @@ pub enum Error {
 
 // ── Storage keys ───────────────────────────────────────────────────────────────
 
+const CONTRACT_VERSION: u32 = 1;
 const PAYMENT_COUNTER: soroban_sdk::Symbol = symbol_short!("PAY_CTR");
 const PLEDGE_COUNTER: soroban_sdk::Symbol = symbol_short!("PLG_CTR");
 const ADMIN_KEY: soroban_sdk::Symbol = symbol_short!("ADMIN");
@@ -576,6 +579,10 @@ impl PaymentContract {
             env.storage().instance().set(&REQ_CONTRACT, &rc);
         }
         Ok(())
+    }
+
+    pub fn version(_env: Env) -> u32 {
+        CONTRACT_VERSION
     }
 
     pub fn pause(env: Env, admin: Address) -> Result<(), Error> {

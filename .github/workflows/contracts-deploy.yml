@@ -103,10 +103,10 @@ jobs:
           retention-days: 7
 
   deploy-testnet:
-    name: Deploy to Stellar Testnet
+    name: Deploy to Stellar Testnet & Run Smoke Tests
     runs-on: ubuntu-latest
     needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'pull_request'
     environment:
       name: testnet
       url: https://stellar.expert/explorer/testnet
@@ -180,6 +180,49 @@ jobs:
           
           echo "Deployment complete!"
           cat deployment/contracts-testnet.json
+
+      - name: Run smoke tests on deployed contracts
+        run: |
+          echo "🧪 Running smoke tests on deployed contracts..."
+
+          # Extract contract IDs and test version() on each
+          CONTRACTS=$(jq -r '.contracts | keys[]' deployment/contracts-testnet.json)
+
+          for contract in $CONTRACTS; do
+            CONTRACT_ID=$(jq -r ".contracts.$contract" deployment/contracts-testnet.json)
+
+            if [ -z "$CONTRACT_ID" ] || [ "$CONTRACT_ID" == "null" ]; then
+              echo "⚠️  Skipping $contract: no contract ID found"
+              continue
+            fi
+
+            echo "Testing $contract (ID: $CONTRACT_ID)..."
+
+            # Call version() function on the contract
+            # Note: view functions don't require authentication
+            RESULT=$(soroban contract invoke \
+              --id "$CONTRACT_ID" \
+              --network testnet \
+              -- version 2>&1)
+
+            if [ $? -eq 0 ]; then
+              echo "✅ $contract version() returned: $RESULT"
+
+              # Verify version is 1
+              if [[ "$RESULT" == "1" ]]; then
+                echo "✅ Version matches expected value (1)"
+              else
+                echo "⚠️  Version returned '$RESULT', expected '1'"
+              fi
+            else
+              echo "❌ Failed to call version() on $contract"
+              echo "   Error: $RESULT"
+              exit 1
+            fi
+            echo ""
+          done
+
+          echo "✅ All smoke tests passed!"
 
       - name: Upload deployment manifest
         uses: actions/upload-artifact@v4

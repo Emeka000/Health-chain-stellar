@@ -1,4 +1,5 @@
 #![no_std]
+#![deny(deprecated)]
 
 mod error;
 mod matching;
@@ -46,6 +47,8 @@ pub trait RequestsContractInterface {
 // Contract
 // ---------------------------------------------------------------------------
 
+const CONTRACT_VERSION: u32 = 1;
+
 #[contract]
 pub struct MatchingContract;
 
@@ -75,6 +78,10 @@ impl MatchingContract {
         env.storage().instance().set(&DataKey::Initialized, &true);
 
         Ok(())
+    }
+
+    pub fn version(_env: Env) -> u32 {
+        CONTRACT_VERSION
     }
 
     /// Pause all state-mutating functions. Admin only.

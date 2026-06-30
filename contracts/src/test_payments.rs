@@ -437,7 +437,7 @@ fn fee_calculation_is_correct() {
         fixed_fee: 0,
     };
 
-    assert_eq!(fees.total(), Some(20));
+    assert_eq!(fees.total(), Ok(20));
     assert_eq!(fees.calculate_net_amount(1_000).unwrap(), 980);
 }
 
@@ -1079,11 +1079,11 @@ fn fee_structure_total_returns_correct_sum() {
         performance_bonus: 25,
         fixed_fee: 10,
     };
-    assert_eq!(fee.total(), Some(185));
+    assert_eq!(fee.total(), Ok(185));
 }
 
 #[test]
-fn fee_structure_total_returns_none_on_i128_overflow() {
+fn fee_structure_total_returns_err_on_i128_overflow() {
     let env = Env::default();
     let fee = FeeStructure {
         policy_id: Symbol::new(&env, "p"),
@@ -1092,7 +1092,7 @@ fn fee_structure_total_returns_none_on_i128_overflow() {
         performance_bonus: 3,
         fixed_fee: 0,
     };
-    assert_eq!(fee.total(), None);
+    assert_eq!(fee.total(), Err(PaymentError::Overflow));
 }
 
 #[test]
@@ -1121,7 +1121,7 @@ fn test_fee_arithmetic_overflow_boundary() {
         performance_bonus: 0,
         fixed_fee: 0,
     };
-    assert_eq!(fee.total(), None);
+    assert_eq!(fee.total(), Err(PaymentError::Overflow));
     assert_eq!(fee.calculate_net_amount(1_000), Err(PaymentError::Overflow));
 }
 

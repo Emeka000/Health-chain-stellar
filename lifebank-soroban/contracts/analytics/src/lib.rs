@@ -1,4 +1,5 @@
 #![no_std]
+#![deny(deprecated)]
 
 mod error;
 mod types;
@@ -18,6 +19,7 @@ pub struct AnalyticsInitialized {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
+const CONTRACT_VERSION: u32 = 1;
 const DAILY_SECS: u64 = 86_400;
 const WEEKLY_SECS: u64 = 604_800;
 // Calendar months are 28-31 days, so this is a fixed 30-day rolling window,
@@ -153,6 +155,11 @@ impl AnalyticsContract {
         AnalyticsInitialized { admin }.publish(&env);
 
         Ok(())
+    }
+
+    /// Get contract version
+    pub fn version(_env: Env) -> u32 {
+        CONTRACT_VERSION
     }
 
     // ── Configuration ─────────────────────────────────────────────────────────
