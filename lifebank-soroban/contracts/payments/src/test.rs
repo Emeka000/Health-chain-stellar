@@ -962,3 +962,102 @@ fn test_create_escrow_rejects_negative_amount() {
     let result = client.try_create_escrow(&1u64, &hospital, &payee, &-1i128, &token_id);
     assert_eq!(result, Err(Ok(Error::InvalidAmount)), "Negative amount escrow must be rejected");
 }
+
+// ── Security fix: update_status bypass (issue #1120) ─────────────────────────
+
+/// update_status rejects terminal states (Released/Refunded/Cancelled) to prevent
+/// bypassing escrow token transfers.
+#[test]
+fn test_update_status_rejects_terminal_states() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    let token_id = deploy_token_with_balance(&env, &admin, &admin, 10_000);
+    let hospital = Address::generate(&env);
+    let payee = Address::generate(&env);
+
+    // Create escrow payment (status = Locked)
+    let pid = client.create_escrow(&1u64, &hospital, &payee, &1_000i128, &token_id);
+
+    // Attempt to bypass release_escrow by calling update_status with Released
+    let result = client.try_update_status(&pid, &PaymentStatus::Released, &admin);
+    assert_eq!(
+        result,
+        Err(Ok(Error::InvalidStatusTransition)),
+        "update_status must reject Released (requires token transfer)"
+    );
+
+    // Attempt to bypass refund_escrow by calling update_status with Refunded
+    let result = client.try_update_status(&pid, &PaymentStatus::Refunded, &admin);
+    assert_eq!(
+        result,
+        Err(Ok(Error::InvalidStatusTransition)),
+        "update_status must reject Refunded (requires token transfer)"
+    );
+
+    // Attempt to set Cancelled
+    let result = client.try_update_status(&pid, &PaymentStatus::Cancelled, &admin);
+    assert_eq!(
+        result,
+        Err(Ok(Error::InvalidStatusTransition)),
+        "update_status must reject Cancelled (terminal state)"
+    );
+
+    // Verify payment is still Locked
+    let p = client.get_payment(&pid);
+    assert_eq!(p.status, PaymentStatus::Locked, "Payment should remain Locked");
+}
+
+/// update_status rejects transitions FROM terminal states.
+#[test]
+fn test_update_status_rejects_transitions_from_terminal() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    let token_id = deploy_token_with_balance(&env, &admin, &admin, 10_000);
+    let hospital = Address::generate(&env);
+    let payee = Address::generate(&env);
+
+    // Create and release escrow
+    let pid = client.create_escrow(&1u64, &hospital, &payee, &1_000i128, &token_id);
+    client.release_escrow(&admin, &pid);
+    let p = client.get_payment(&pid);
+    assert_eq!(p.status, PaymentStatus::Released);
+
+    // Attempt to transition from Released to Disputed
+    let result = client.try_update_status(&pid, &PaymentStatus::Disputed, &admin);
+    assert_eq!(
+        result,
+        Err(Ok(Error::InvalidStatusTransition)),
+        "Cannot transition from Released to any other state"
+    );
+}
+
+/// update_status allows non-terminal transitions (e.g., Pending → Disputed).
+#[test]
+fn test_update_status_allows_non_terminal_transitions() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+
+    // Create non-escrow payment (status = Pending)
+    let pid = client.create_payment(&1u64, &payer, &payee, &1_000i128);
+
+    // Transition to Disputed (allowed)
+    client.update_status(&pid, &PaymentStatus::Disputed, &admin);
+    let p = client.get_payment(&pid);
+    assert_eq!(p.status, PaymentStatus::Disputed, "Payment should be Disputed");
+
+    // Transition back to Pending (allowed)
+    client.update_status(&pid, &PaymentStatus::Pending, &admin);
+    let p = client.get_payment(&pid);
+    assert_eq!(p.status, PaymentStatus::Pending, "Payment should be Pending again");
+}

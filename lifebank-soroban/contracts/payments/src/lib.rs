@@ -141,6 +141,9 @@ pub enum Error {
     InvalidVestingSchedule = 518,
     /// Arithmetic overflow detected in running totals.
     Overflow = 518,
+    /// Invalid status transition — terminal states (Released/Refunded/Cancelled)
+    /// require fund-moving functions (release_escrow/refund_escrow).
+    InvalidStatusTransition = 519,
 }
 
 // ── Storage keys ───────────────────────────────────────────────────────────────
@@ -935,6 +938,16 @@ impl PaymentContract {
         Ok(())
     }
 
+    /// Admin-only status updater for NON-TERMINAL transitions only.
+    /// 
+    /// SECURITY FIX (issue #1120): This function now rejects terminal states
+    /// (Released, Refunded, Cancelled) to prevent bypassing escrow token transfers.
+    /// For fund-moving transitions, use `release_escrow` or `refund_escrow` instead.
+    /// 
+    /// Allowed transitions:
+    /// - Pending → Locked (manual escrow lock)
+    /// - Disputed → Locked (reset after dispute resolution)
+    /// - Any → Disputed (flag for review)
     pub fn update_status(
         env: Env,
         payment_id: u64,
@@ -944,17 +957,26 @@ impl PaymentContract {
         caller.require_auth();
         Self::require_not_paused(&env)?;
         Self::require_admin(&env, &caller)?;
+        
+        // SECURITY: Reject terminal states that require token transfers
+        if matches!(status, PaymentStatus::Released | PaymentStatus::Refunded | PaymentStatus::Cancelled) {
+            return Err(Error::InvalidStatusTransition);
+        }
+        
         let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
         let old_status = payment.status;
+        
+        // Additional validation: prevent transitioning FROM terminal states
+        if matches!(old_status, PaymentStatus::Released | PaymentStatus::Refunded | PaymentStatus::Cancelled) {
+            return Err(Error::InvalidStatusTransition);
+        }
+        
         payment.status = status;
         payment.updated_at = env.ledger().timestamp();
         store_payment(&env, &payment);
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, status, payment_id);
         update_stats_on_transition(&env, payment.amount, old_status, status)?;
-        if matches!(status, PaymentStatus::Released | PaymentStatus::Refunded | PaymentStatus::Cancelled) {
-            remove_from_request_index(&env, payment.request_id);
-        }
 
         // Emit event on every status transition so off-chain indexers can stay
         // in sync without polling. Topics: ("payment", "status") so indexers can
