@@ -3,21 +3,23 @@
 ## Health Record Implementation
 
 The health-record backend module is tracked in `.kiro/specs/health-record-implementation/`.
-None of the tasks below are started yet.
 
 ### Contract layer (`contracts/src/`)
 
-The existing contract (`contracts/src/lib.rs`) implements a **blood unit registry** —
-not a patient record registry. There is no `patient-registry` contract.
-`update_record` and `get_record_history` do **not** exist in the codebase.
+The legacy stubbed health-record methods — `store_record`, `get_record`, `verify_access` —
+have been fully implemented with proper storage, access control, authentication, and events.
+They live in `contracts/src/lib.rs` alongside the blood-unit registry.
 
-- [ ] Create `patient-registry` Soroban contract (or extend `contracts/src/lib.rs`)
-- [ ] Implement `store_record(patient_id, encrypted_ref, metadata)` entry point
+- [x] Implement `store_record(patient_id, encrypted_ref)` entry point with patient auth and auto-grant
+- [x] Implement `get_record(caller, patient_id)` with access control enforcement
+- [x] Implement `verify_access(patient_id, provider_id)` returning authorization status
+- [x] Add `grant_access` / `revoke_access` methods for patient-controlled sharing
+- [x] Emit `HealthRecordStoredEvent` and `HealthRecordAccessEvent` events
+- [x] Write Soroban unit tests for access denial and retrieval correctness
+- [ ] Create `patient-registry` Soroban contract (or extend further)
 - [ ] Implement `update_record(patient_id, new_encrypted_ref, metadata)` with version bump
 - [ ] Implement `get_record_history(patient_id)` returning ordered version list
 - [ ] Add `RecordVersion` struct (version number, encrypted_ref, timestamp, actor)
-- [ ] Emit `record_stored` / `record_updated` events
-- [ ] Write Soroban unit tests for versioning invariants
 
 ### Backend layer (`backend/src/`)
 

@@ -6,10 +6,10 @@ Welcome! This is where we build the smart contracts for Health Chain on Stellar 
 
 Health Chain is a decentralized healthcare data management system. Our smart contracts handle:
 
-- **Data Integrity** - Store immutable health record hashes on-chain
-- **Access Control** - Patients control who can access their data
-- **Transparency** - Every access is logged and auditable
-- **Privacy** - Only hashes go on-chain, actual records stay off-chain
+- **Health Record Hashes** - Store and retrieve cryptographic health record hashes on-chain
+- **Patient-Controlled Access** - Patients grant and revoke provider access to their records
+- **Privacy-Preserving** - Only hashes/encrypted references are stored; raw data never touches the chain
+- **Audit Events** - Every store, grant, and revoke operation emits an on-chain event
 
 ## Getting Started
 
