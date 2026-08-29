@@ -9,7 +9,13 @@ import {
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 
-import { PaginatedResponse, PaginationQueryDto, PaginationUtil } from '../common/pagination';
+import {
+  PaginatedResponse,
+  PaginationQueryDto,
+  PaginationUtil,
+} from '../common/pagination';
+import { OrgVerificationLifecycleService } from '../organizations/services/org-verification-lifecycle.service';
+import { RestrictionLevel } from '../organizations/enums/org-lifecycle.enum';
 import {
   OrderConfirmedEvent,
   OrderCancelledEvent,
@@ -66,6 +72,7 @@ export class OrdersService {
     private readonly inventoryService: InventoryService,
     private readonly requestStatusService: RequestStatusService,
     private readonly orderFeeService: OrderFeeService,
+    private readonly orgVerificationLifecycleService: OrgVerificationLifecycleService,
     private readonly approvalService: ApprovalService,
     private readonly slaService: SlaService,
     private readonly outboxService: OutboxService,
@@ -153,6 +160,15 @@ export class OrdersService {
   async create(dto: CreateOrderDto, actorId?: string) {
     if (!dto.bloodBankId)
       throw new BadRequestException('bloodBankId is required');
+    const restriction =
+      await this.orgVerificationLifecycleService.getRestrictionLevel(
+        dto.hospitalId,
+      );
+    if (restriction !== RestrictionLevel.NONE) {
+      throw new ForbiddenException(
+        'This hospital is restricted from creating new orders',
+      );
+    }
     const saved = await this.createOrderEntity(dto, actorId);
     if (
       saved.status === OrderStatus.CONFIRMED ||
@@ -163,9 +179,14 @@ export class OrdersService {
     return { message: 'Order created successfully', data: saved };
   }
 
-  async update(id: string, updateDto: UpdateOrderDto, actor?: TenantActorContext) {
+  async update(
+    id: string,
+    updateDto: UpdateOrderDto,
+    actor?: TenantActorContext,
+  ) {
     const order = await this.findOrderOrFail(id, actor);
-    if (updateDto.deliveryAddress !== undefined) order.deliveryAddress = updateDto.deliveryAddress;
+    if (updateDto.deliveryAddress !== undefined)
+      order.deliveryAddress = updateDto.deliveryAddress;
     if (updateDto.quantity !== undefined) order.quantity = updateDto.quantity;
     const updated = await this.orderRepo.save(order);
     return { message: 'Order updated successfully', data: updated };
@@ -220,7 +241,10 @@ export class OrdersService {
     const order = await this.findOrderOrFail(orderId, actor);
     await this.dataSource.transaction(async (manager) => {
       order.riderId = riderId;
-      this.stateMachine.transition(order.status as OrderStatus, OrderStatus.DISPATCHED);
+      this.stateMachine.transition(
+        order.status as OrderStatus,
+        OrderStatus.DISPATCHED,
+      );
       order.status = OrderStatus.DISPATCHED;
       await manager.save(OrderEntity, order);
       await this.outboxService.publishInTransaction(

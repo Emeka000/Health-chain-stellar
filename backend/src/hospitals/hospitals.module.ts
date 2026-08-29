@@ -6,12 +6,6 @@ import { HospitalOverrideAuditEntity } from './entities/hospital-override-audit.
 import { HospitalEntity } from './entities/hospital.entity';
 import { HospitalsController } from './hospitals.controller';
 import { HospitalsService } from './hospitals.service';
-import { HospitalEntity } from './entities/hospital.entity';
-import { HospitalCapacityConfigEntity } from './entities/hospital-capacity-config.entity';
-
-@Module({
-  imports: [
-    TypeOrmModule.forFeature([HospitalEntity, HospitalCapacityConfigEntity]),
 import { HospitalIntakeWindowService } from './services/hospital-intake-window.service';
 
 @Module({

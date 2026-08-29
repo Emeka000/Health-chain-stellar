@@ -11,6 +11,7 @@ import { InventoryStockEntity } from '../inventory/entities/inventory-stock.enti
 import { InventoryModule } from '../inventory/inventory.module';
 import { MapsModule } from '../maps/maps.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { OrganizationsModule } from '../organizations/organizations.module';
 import { OrganizationEntity } from '../organizations/entities/organization.entity';
 import { DispatchRecord } from '../dispatch/entities/dispatch-record.entity';
 import { RiderEntity } from '../riders/entities/rider.entity';
@@ -75,6 +76,7 @@ import { OrderSplittingService } from './services/order-splitting.service';
     InventoryModule,
     BlockchainModule,
     NotificationsModule,
+    OrganizationsModule,
     CompensationModule,
     MapsModule,
     EscalationModule,

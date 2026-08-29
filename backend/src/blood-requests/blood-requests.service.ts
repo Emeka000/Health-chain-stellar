@@ -7,6 +7,8 @@ import { Repository } from 'typeorm';
 
 import { UserRole } from '../auth/enums/user-role.enum';
 import { PermissionsService } from '../auth/permissions.service';
+import { RestrictionLevel } from '../organizations/enums/org-lifecycle.enum';
+import { OrgVerificationLifecycleService } from '../organizations/services/org-verification-lifecycle.service';
 import { LIFEBANK_REQUESTS_METHODS } from '../blockchain/contracts/lifebank-contracts';
 import { SorobanService } from '../blockchain/services/soroban.service';
 import { CompensationService } from '../common/compensation/compensation.service';
@@ -21,9 +23,15 @@ import {
   BloodRequestItemEntity,
   ItemPriority,
 } from './entities/blood-request-item.entity';
-import { BloodRequestEntity, RequestUrgency } from './entities/blood-request.entity';
+import {
+  BloodRequestEntity,
+  RequestUrgency,
+} from './entities/blood-request.entity';
 import { RequestStatusHistoryEntity } from './entities/request-status-history.entity';
-import { RequestStatus, BloodRequestStatus } from './enums/blood-request-status.enum';
+import {
+  RequestStatus,
+  BloodRequestStatus,
+} from './enums/blood-request-status.enum';
 import { UrgencyLevel } from './enums/urgency-level.enum';
 import { TriageScoringService } from './services/triage-scoring.service';
 import {
@@ -50,6 +58,7 @@ export class BloodRequestsService {
     private readonly requestStatusHistoryRepo: Repository<RequestStatusHistoryEntity>,
     private readonly inventoryService: InventoryService,
     private readonly sorobanService: SorobanService,
+    private readonly orgVerificationLifecycleService: OrgVerificationLifecycleService,
     private readonly compensationService: CompensationService,
     private readonly chainService: BloodRequestChainService,
     private readonly emailService: BloodRequestEmailService,
@@ -61,7 +70,10 @@ export class BloodRequestsService {
 
   // ── Private helpers ────────────────────────────────────────────────────────
 
-  private assertHospitalAuthorization(user: RequestUser, hospitalId: string): void {
+  private assertHospitalAuthorization(
+    user: RequestUser,
+    hospitalId: string,
+  ): void {
     if (user.role === UserRole.HOSPITAL) {
       this.permissionsService.assertIsAdminOrSelf(
         user,
@@ -74,7 +86,9 @@ export class BloodRequestsService {
   private assertRequiredByFuture(requiredByIso: string): Date {
     const requiredBy = new Date(requiredByIso);
     if (Number.isNaN(requiredBy.getTime())) {
-      throw new BadRequestException('requiredBy must be a valid ISO 8601 date-time');
+      throw new BadRequestException(
+        'requiredBy must be a valid ISO 8601 date-time',
+      );
     }
     if (requiredBy.getTime() <= Date.now()) {
       throw new BadRequestException('requiredBy must be in the future');
@@ -86,7 +100,9 @@ export class BloodRequestsService {
     for (let attempt = 0; attempt < 12; attempt += 1) {
       const suffix = randomBytes(3).toString('hex').toUpperCase();
       const requestNumber = `BR-${Date.now()}-${suffix}`;
-      const exists = await this.bloodRequestRepo.exist({ where: { requestNumber } });
+      const exists = await this.bloodRequestRepo.exist({
+        where: { requestNumber },
+      });
       if (!exists) return requestNumber;
     }
     throw new Error('Unable to allocate a unique request number');
@@ -115,7 +131,9 @@ export class BloodRequestsService {
   }
 
   private async enqueue(saved: BloodRequestEntity): Promise<void> {
-    const urgency = (saved.urgency as unknown as QueueRequestUrgency) ?? QueueRequestUrgency.ROUTINE;
+    const urgency =
+      (saved.urgency as unknown as QueueRequestUrgency) ??
+      QueueRequestUrgency.ROUTINE;
     await this.queue.add(
       'process-request',
       { requestId: saved.id, urgency, enqueuedAt: Date.now() },
@@ -136,13 +154,27 @@ export class BloodRequestsService {
     user: RequestUser,
   ): Promise<{ message: string; data: BloodRequestEntity }> {
     this.assertHospitalAuthorization(user, dto.hospitalId);
+    const restriction =
+      await this.orgVerificationLifecycleService.getRestrictionLevel(
+        dto.hospitalId,
+      );
+    if (restriction !== RestrictionLevel.NONE) {
+      throw new BadRequestException(
+        'This hospital is restricted from creating new blood requests',
+      );
+    }
     const requiredBy = this.assertRequiredByFuture(dto.requiredBy);
     const urgencyLevel = dto.urgencyLevel ?? UrgencyLevel.ROUTINE;
-    const urgency = dto.urgency ?? this.mapUrgencyLevelToRequestUrgency(urgencyLevel);
+    const urgency =
+      dto.urgency ?? this.mapUrgencyLevelToRequestUrgency(urgencyLevel);
     const slaResponseDueAt = this.calculateSlaResponseDueAt(urgencyLevel);
 
     const requestNumber = await this.allocateRequestNumber();
-    const reserved: Array<{ bloodBankId: string; bloodType: string; quantity: number }> = [];
+    const reserved: Array<{
+      bloodBankId: string;
+      bloodType: string;
+      quantity: number;
+    }> = [];
 
     try {
       // 1. Reserve inventory for each item
@@ -155,7 +187,11 @@ export class BloodRequestsService {
             'Item quantity must be specified as quantityMl or quantity',
           );
         }
-        await this.inventoryService.reserveStockOrThrow(bloodBankId, bloodType, quantity);
+        await this.inventoryService.reserveStockOrThrow(
+          bloodBankId,
+          bloodType,
+          quantity,
+        );
         reserved.push({ bloodBankId, bloodType, quantity });
       }
 
@@ -179,7 +215,11 @@ export class BloodRequestsService {
         // Blockchain failure — compensate inventory reservations
         const irrecoverableErr = new BloodRequestIrrecoverableError(
           `Soroban ${LIFEBANK_REQUESTS_METHODS.createRequest} failed for ${requestNumber}`,
-          { requestNumber, hospitalId: dto.hospitalId, reservedItems: reserved },
+          {
+            requestNumber,
+            hospitalId: dto.hospitalId,
+            reservedItems: reserved,
+          },
           err,
         );
 
@@ -249,7 +289,9 @@ export class BloodRequestsService {
           LOW: 1,
         };
         const current = (i.priority as ItemPriority) ?? ItemPriority.NORMAL;
-        return (priorityOrder[current] ?? 2) > (priorityOrder[highest] ?? 2) ? current : highest;
+        return (priorityOrder[current] ?? 2) > (priorityOrder[highest] ?? 2)
+          ? current
+          : highest;
       }, ItemPriority.NORMAL);
 
       const triage = this.triageScoringService.compute({

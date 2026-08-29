@@ -4,13 +4,19 @@ import {
   Post,
   Param,
   Query,
+  Req,
   Res,
   HttpStatus,
   UseGuards,
   ValidationPipe,
-  ParseBoolPipe,
   DefaultValuePipe,
 } from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Response } from 'express';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -19,8 +25,14 @@ import { RequirePermissions } from '../auth/decorators/require-permissions.decor
 import { Permission } from '../auth/enums/permission.enum';
 
 import { ReportingService } from './reporting.service';
-import { ReportViewRefreshService, MaterializedViewName } from './report-view-refresh.service';
-import { ReportingQueryDto, ReportSummaryQueryDto } from './dto/reporting-query.dto';
+import {
+  ReportViewRefreshService,
+  MaterializedViewName,
+} from './report-view-refresh.service';
+import {
+  ReportingQueryDto,
+  ReportSummaryQueryDto,
+} from './dto/reporting-query.dto';
 
 @ApiTags('Reporting')
 @ApiBearerAuth()
@@ -41,10 +53,11 @@ export class ReportingController {
   @Get('search')
   @RequirePermissions(Permission.READ_ANALYTICS)
   async search(
+    @Req() req: { user?: { role?: string; organizationId?: string | null } },
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     filters: ReportingQueryDto,
   ) {
-    return this.reportingService.search(filters);
+    return this.reportingService.search(filters, req.user);
   }
 
   /**
@@ -57,10 +70,15 @@ export class ReportingController {
   @Get('summary')
   @RequirePermissions(Permission.READ_ANALYTICS)
   async getSummary(
+    @Req() req: { user?: { role?: string; organizationId?: string | null } },
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     filters: ReportSummaryQueryDto,
   ) {
-    return this.reportingService.getSummary(filters, filters.forceLive);
+    return this.reportingService.getSummary(
+      filters,
+      filters.forceLive,
+      req.user,
+    );
   }
 
   /**
@@ -72,12 +90,19 @@ export class ReportingController {
   @Get('orders/daily-summary')
   @RequirePermissions(Permission.READ_ANALYTICS)
   async getOrderDailySummary(
+    @Req() req: { user?: { role?: string; organizationId?: string | null } },
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
     @Query('page', new DefaultValuePipe(1)) page?: number,
     @Query('pageSize', new DefaultValuePipe(50)) pageSize?: number,
   ) {
-    return this.reportingService.getOrderDailySummary(startDate, endDate, page, pageSize);
+    return this.reportingService.getOrderDailySummary(
+      startDate,
+      endDate,
+      page,
+      pageSize,
+      req.user,
+    );
   }
 
   /**
@@ -88,10 +113,15 @@ export class ReportingController {
   @Get('units/inventory')
   @RequirePermissions(Permission.READ_ANALYTICS)
   async getBloodUnitInventory(
+    @Req() req: { user?: { role?: string; organizationId?: string | null } },
     @Query('bloodType') bloodType?: string,
     @Query('status') status?: string,
   ) {
-    return this.reportingService.getBloodUnitInventory(bloodType, status);
+    return this.reportingService.getBloodUnitInventory(
+      bloodType,
+      status,
+      req.user,
+    );
   }
 
   /**
@@ -115,7 +145,9 @@ export class ReportingController {
   @Post('views/:viewName/refresh')
   @RequirePermissions(Permission.ADMIN_ACCESS)
   async refreshView(@Param('viewName') viewName: string) {
-    return this.reportingService.triggerViewRefresh(viewName as MaterializedViewName);
+    return this.reportingService.triggerViewRefresh(
+      viewName as MaterializedViewName,
+    );
   }
 
   /**
@@ -139,11 +171,12 @@ export class ReportingController {
   @Get('export')
   @RequirePermissions(Permission.READ_ANALYTICS)
   async export(
+    @Req() req: { user?: { role?: string; organizationId?: string | null } },
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     filters: ReportingQueryDto,
     @Res() res: Response,
   ) {
-    const buffer = await this.reportingService.exportToExcel(filters);
+    const buffer = await this.reportingService.exportToExcel(filters, req.user);
 
     res.set({
       'Content-Type':

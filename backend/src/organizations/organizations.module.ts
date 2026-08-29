@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { BlockchainModule } from '../blockchain/blockchain.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { SorobanModule } from '../soroban/soroban.module';
 
 import { OrgGracePeriodEntity } from './entities/org-grace-period.entity';
 import { OrgVerificationHistoryEntity } from './entities/org-verification-history.entity';
@@ -34,11 +35,24 @@ import { OrgStatsModule } from './stats/org-stats.module';
       OrgGracePeriodEntity,
     ]),
     BlockchainModule,
+    SorobanModule,
     NotificationsModule,
     OrgStatsModule,
   ],
   controllers: [OrganizationsController, OrgTrustScoreController],
-  providers: [OrganizationsService, OrganizationReviewsService, VerificationSyncService, OrgTrustScoringService, OrgVerificationLifecycleService],
-  exports: [OrganizationsService, OrganizationReviewsService, VerificationSyncService, OrgTrustScoringService, OrgVerificationLifecycleService],
+  providers: [
+    OrganizationsService,
+    OrganizationReviewsService,
+    VerificationSyncService,
+    OrgTrustScoringService,
+    OrgVerificationLifecycleService,
+  ],
+  exports: [
+    OrganizationsService,
+    OrganizationReviewsService,
+    VerificationSyncService,
+    OrgTrustScoringService,
+    OrgVerificationLifecycleService,
+  ],
 })
 export class OrganizationsModule {}
