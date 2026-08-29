@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { JwtModule } from '@nestjs/jwt';
 
 import { EscalationEntity } from './entities/escalation.entity';
 import { EscalationTimelineEventEntity } from './entities/escalation-timeline.entity';
@@ -21,6 +23,15 @@ import { UserActivityModule } from '../user-activity/user-activity.module';
     ]),
     NotificationsModule,
     UserActivityModule,
+    ConfigModule,
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.get<string>('JWT_SECRET'),
+        signOptions: { expiresIn: '1d' },
+      }),
+    }),
   ],
   controllers: [EscalationController],
   providers: [

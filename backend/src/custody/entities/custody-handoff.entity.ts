@@ -42,4 +42,8 @@ export class CustodyHandoffEntity extends BaseEntity {
 
   @Column({ name: 'confirmed_at', type: 'timestamptz', nullable: true })
   confirmedAt: Date | null;
+
+  /** Authenticated user who performed this record or confirm action */
+  @Column({ name: 'performed_by_user_id', type: 'varchar', nullable: true })
+  performedByUserId: string | null;
 }
