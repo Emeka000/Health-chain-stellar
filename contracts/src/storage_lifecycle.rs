@@ -76,8 +76,9 @@ use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol, Vec};
 
 use crate::{
     BloodStatus, BloodUnit, CustodyEvent, CustodyStatus, DataKey, Error, StatusChangeEvent,
-    BLOOD_BANKS, BLOOD_UNITS, CUSTODY_EVENTS, DISPUTES, DISPUTE_METADATA, HISTORY, HOSPITALS,
-    PAYMENTS, PAYMENT_STATS, PENDING_APPROVALS, REQUESTS, REQUEST_KEYS,
+    BLOOD_BANKS, BLOOD_UNITS, CUSTODY_EVENTS, DISPUTES, DISPUTE_METADATA, ESCROW_ACCOUNTS,
+    HISTORY, HOSPITALS, MULTISIG_CONFIG, PAYMENTS, PAYMENT_STATS, PENDING_APPROVALS, REQUESTS,
+    REQUEST_KEYS,
 };
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -101,7 +102,7 @@ pub const SECONDS_PER_DAY: u64 = 86_400;
 /// Compact summary stored in place of a full `Vec<StatusChangeEvent>` after
 /// the unit's history has been archived off-chain.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArchivedHistorySummary {
     /// Total number of status-change events that existed before archival.
     pub total_events: u32,
@@ -128,7 +129,7 @@ pub enum ArchiveKey {
 /// Compact summary stored after custody events for a terminal unit have been
 /// pruned from the `CUSTODY_EVENTS` map.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArchivedCustodySummary {
     /// Total confirmed custody transfers.
     pub total_confirmed: u32,
