@@ -511,6 +511,7 @@ export class IncidentReviewsService {
       status: CorrectiveActionStatus.COMPLETED,
       completionNotes: dto.completionNotes,
       completionEvidence: dto.completionEvidence ?? null,
+      completedBy,
       completedAt: new Date(),
     });
 
@@ -537,6 +538,10 @@ export class IncidentReviewsService {
 
     if (action.status !== CorrectiveActionStatus.COMPLETED) {
       throw new BadRequestException('Action must be completed before verification');
+    }
+
+    if (action.completedBy && verifiedBy === action.completedBy) {
+      throw new ForbiddenException('The user who completed this action cannot also verify it');
     }
 
     await this.actionRepo.update(actionId, {

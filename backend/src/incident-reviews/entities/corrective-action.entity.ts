@@ -62,6 +62,10 @@ export class CorrectiveActionEntity {
     @Column({ name: 'completion_notes', type: 'text', nullable: true })
     completionNotes: string | null;
 
+    /** Authenticated user who marked this action as completed */
+    @Column({ name: 'completed_by', type: 'varchar', nullable: true })
+    completedBy: string | null;
+
     /** User who verified the action was completed correctly */
     @Column({ name: 'verified_by', type: 'varchar', nullable: true })
     verifiedBy: string | null;

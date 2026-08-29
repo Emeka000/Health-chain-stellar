@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Request } from 'express';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
@@ -18,15 +19,17 @@ export class CustodyController {
   @Post('handoffs')
   @RequirePermissions(Permission.TRANSFER_CUSTODY)
   @ApiOperation({ summary: 'Record a custody handoff between actors' })
-  record(@Body() dto: RecordHandoffDto) {
-    return this.service.recordHandoff(dto);
+  record(@Body() dto: RecordHandoffDto, @Req() req: Request) {
+    const performedByUserId: string = (req.user as any)?.id ?? (req.user as any)?.sub ?? 'unknown';
+    return this.service.recordHandoff(dto, performedByUserId);
   }
 
   @Post('handoffs/:id/confirm')
   @RequirePermissions(Permission.TRANSFER_CUSTODY)
   @ApiOperation({ summary: 'Confirm a pending custody handoff' })
-  confirm(@Param('id') id: string, @Body() dto: ConfirmHandoffDto) {
-    return this.service.confirmHandoff(id, dto);
+  confirm(@Param('id') id: string, @Body() dto: ConfirmHandoffDto, @Req() req: Request) {
+    const callerUserId: string = (req.user as any)?.id ?? (req.user as any)?.sub ?? 'unknown';
+    return this.service.confirmHandoff(id, dto, callerUserId);
   }
 
   @Get('units/:bloodUnitId/timeline')
