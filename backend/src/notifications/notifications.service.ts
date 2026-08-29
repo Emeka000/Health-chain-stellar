@@ -1,6 +1,5 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable, InternalServerErrorException, NotFoundException, Logger } from '@nestjs/common';
-import { ForbiddenException, Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, NotFoundException, ForbiddenException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 
 import { Queue } from 'bullmq';

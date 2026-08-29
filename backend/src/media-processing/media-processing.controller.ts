@@ -88,7 +88,7 @@ export class MediaProcessingController {
 
     // Issue a signed URL for the approved file
     const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const signed = this.mediaService.issueSignedUrl(result.fileId, context.ownerId, baseUrl);
+    const signed = await this.mediaService.issueSignedUrl(result.fileId, context.ownerId, baseUrl);
 
     return { ...result, signedUrl: signed };
   }
