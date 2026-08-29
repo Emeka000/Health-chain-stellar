@@ -77,6 +77,8 @@ pub enum Error {
     DeliveryAddressTooLong = 34,
     /// Requested page number exceeds the total number of available pages.
     PageNotFound = 35,
+    /// initialize() was called after the contract already has an admin set.
+    AlreadyInitialized = 36,
 }
 
 // Alias for issue/docs terminology.
@@ -644,10 +646,13 @@ pub struct HealthChainContract;
 #[contractimpl]
 impl HealthChainContract {
     /// Initialize the contract with admin
-    pub fn initialize(env: Env, admin: Address) -> Symbol {
+    pub fn initialize(env: Env, admin: Address) -> Result<Symbol, Error> {
+        if env.storage().instance().has(&ADMIN) {
+            return Err(Error::AlreadyInitialized);
+        }
         admin.require_auth();
         env.storage().instance().set(&ADMIN, &admin);
-        symbol_short!("init")
+        Ok(symbol_short!("init"))
     }
 
     /// Get contract version
@@ -4791,6 +4796,26 @@ mod test {
         env.mock_all_auths();
         let result = client.initialize(&admin);
         assert_eq!(result, symbol_short!("init"));
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #36)")]
+    fn test_initialize_twice_fails() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let attacker = Address::generate(&env);
+        let contract_id = env.register(HealthChainContract, ());
+        let client = HealthChainContractClient::new(&env, &contract_id);
+
+        env.mock_all_auths();
+
+        // First call succeeds and sets the real admin.
+        let result = client.initialize(&admin);
+        assert_eq!(result, symbol_short!("init"));
+
+        // A second call (e.g. from an attacker trying to seize admin) must fail
+        // instead of silently overwriting the existing admin.
+        client.initialize(&attacker);
     }
 
     #[test]
