@@ -7,6 +7,14 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  IsBoolean,
+  IsEnum,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+} from 'class-validator';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
@@ -19,19 +27,43 @@ import {
 } from '../enums/unit-disposition.enum';
 
 class EvaluateDispositionDto {
+  @IsUUID('4')
   bloodUnitId: string;
+
+  @IsNumber()
   elapsedTimeMinutes: number;
+
+  @IsBoolean()
   temperatureBreach: boolean;
+
+  @IsBoolean()
   coldChainVerified: boolean;
 }
 
 class RecordDispositionDto {
+  @IsUUID('4')
   bloodUnitId: string;
+
+  @IsEnum(UnitDisposition)
   disposition: UnitDisposition;
+
+  @IsEnum(DispositionReason)
   reason: DispositionReason;
+
+  @IsOptional()
+  @IsString()
   notes?: string;
+
+  @IsOptional()
+  @IsNumber()
   elapsedTimeMinutes?: number;
+
+  @IsOptional()
+  @IsBoolean()
   temperatureBreach?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   coldChainVerified?: boolean;
 }
 

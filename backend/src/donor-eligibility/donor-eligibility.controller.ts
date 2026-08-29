@@ -44,6 +44,7 @@ export class DonorEligibilityController {
   @ApiOperation({ summary: 'Post deferrals' })
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('deferrals')
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   createDeferral(@Body() dto: CreateDeferralDto, @User('id') userId: string) {
     return this.service.createDeferral(dto, userId);
   }
