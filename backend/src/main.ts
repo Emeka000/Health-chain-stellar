@@ -40,10 +40,10 @@ async function bootstrap() {
   }
 
   app.useGlobalFilters(
-    new ValidationExceptionFilter(isProduction),
-    new ThrottlerExceptionFilter(isProduction),
-    new AppErrorFilter(isProduction),
     new AllExceptionsFilter(isProduction),
+    new AppErrorFilter(isProduction),
+    new ThrottlerExceptionFilter(isProduction),
+    new ValidationExceptionFilter(isProduction),
   );
 
   // Global validation pipe

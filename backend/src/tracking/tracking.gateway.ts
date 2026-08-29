@@ -1,4 +1,6 @@
 import { Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { createHash } from 'crypto';
 import {
   WebSocketGateway,
@@ -12,6 +14,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
+import { DispatchRecord } from '../dispatch/entities/dispatch-record.entity';
 
 const VALID_DELIVERY_STATUSES = new Set([
   'pending',
@@ -88,7 +91,11 @@ export class TrackingGateway
   private readonly connectedClients = new Map<string, ClientContext>();
   private readonly streamStates = new Map<string, StreamState>();
 
-  constructor(private readonly jwtService: JwtService) {}
+  constructor(
+    private readonly jwtService: JwtService,
+    @InjectRepository(DispatchRecord)
+    private readonly dispatchRepo: Repository<DispatchRecord>,
+  ) {}
 
   afterInit(_server: Server): void {
     this.logger.log('TrackingGateway WebSocket server initialised');
@@ -150,10 +157,33 @@ export class TrackingGateway
    * Returns true if the authenticated client is allowed to subscribe to a delivery room.
    * Admins and dispatchers can subscribe to any delivery.
    * Riders can only subscribe to their own deliveries.
-   * Regular users are allowed to subscribe (read-only consumers).
+   * Regular users are not allowed to subscribe to other users' deliveries.
    */
-  private canSubscribe(ctx: ClientContext, _deliveryId: string): boolean {
-    return ['admin', 'super_admin', 'dispatcher', 'rider', 'user'].includes(ctx.role);
+  private async canSubscribe(ctx: ClientContext, deliveryId: string): Promise<boolean> {
+    // Admins and dispatchers have full access
+    if (['admin', 'super_admin', 'dispatcher'].includes(ctx.role)) {
+      return true;
+    }
+
+    // For non-admin users, verify ownership of the delivery by looking up the dispatch record
+    const dispatch = await this.dispatchRepo.findOne({
+      where: { orderId: deliveryId },
+    });
+
+    if (!dispatch) {
+      this.logger.warn(
+        `Delivery not found: deliveryId=${deliveryId} user=${ctx.userId}`,
+      );
+      return false;
+    }
+
+    // Riders can only access their assigned deliveries
+    if (ctx.role === 'rider' && ctx.riderId) {
+      return ctx.riderId === dispatch.riderId;
+    }
+
+    // Other authenticated roles (user) cannot subscribe to deliveries
+    return false;
   }
 
   /**
@@ -295,7 +325,7 @@ export class TrackingGateway
   // ---------------------------------------------------------------------------
 
   @SubscribeMessage('delivery.subscribe')
-  handleDeliverySubscribe(
+  async handleDeliverySubscribe(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { deliveryId: string },
   ) {
@@ -310,7 +340,7 @@ export class TrackingGateway
       return;
     }
 
-    if (!this.canSubscribe(ctx, data.deliveryId)) {
+    if (!(await this.canSubscribe(ctx, data.deliveryId))) {
       this.rejectUnauthorized(client, 'subscribe', data.deliveryId);
       return;
     }
