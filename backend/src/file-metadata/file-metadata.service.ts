@@ -240,6 +240,10 @@ export class FileMetadataService {
     return this.auditRepo.find({ where: { fileId: id }, order: { version: 'ASC' } });
   }
 
+  async findById(id: string): Promise<FileMetadataEntity | null> {
+    return this.repo.findOne({ where: { id } });
+  }
+
   private async findOrFail(id: string): Promise<FileMetadataEntity> {
     const record = await this.repo.findOne({ where: { id } });
     if (!record) throw new NotFoundException(`File metadata '${id}' not found`);

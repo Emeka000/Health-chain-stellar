@@ -36,6 +36,7 @@ import { DlqReplayAuditService } from '../services/dlq-replay-audit.service';
 import { FailedSorobanTxService } from '../services/failed-soroban-tx.service';
 import { QueueMetricsService } from '../services/queue-metrics.service';
 import { SorobanService } from '../services/soroban.service';
+import { Public } from '../../auth/decorators/public.decorator';
 
 import type { QueueMetrics, SorobanTxResult } from '../types/soroban-tx.types';
 
@@ -132,6 +133,7 @@ export class BlockchainController {
   @ApiOperation({ summary: 'Post webhook callback' })
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('webhook/callback')
+  @Public()
   @HttpCode(HttpStatus.OK)
   async processCallback(
     @Body() callback: BlockchainCallbackDto,

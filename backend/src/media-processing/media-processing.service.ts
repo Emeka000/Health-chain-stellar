@@ -10,6 +10,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { FileMetadataService } from '../file-metadata/file-metadata.service';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -109,7 +110,10 @@ export class MediaProcessingService {
   /** Signed URL TTL in seconds (default 15 minutes) */
   private readonly signedUrlTtlSeconds: number;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly fileMetadataService: FileMetadataService,
+  ) {
     this.signedUrlTtlSeconds = this.configService.get<number>(
       'MEDIA_SIGNED_URL_TTL_SECONDS',
       900,
@@ -203,10 +207,14 @@ export class MediaProcessingService {
    * Issue a short-lived signed URL token for an approved file.
    * The token is a random hex string stored in memory with an expiry.
    */
-  issueSignedUrl(fileId: string, ownerId: string, baseUrl: string): SignedUrlResult {
+  async issueSignedUrl(fileId: string, requestingOwnerId: string, baseUrl: string): Promise<SignedUrlResult> {
+    const file = await this.fileMetadataService.findById(fileId);
+    if (!file) throw new NotFoundException(`File '${fileId}' not found`);
+    if (file.ownerId !== requestingOwnerId) throw new ForbiddenException('Access denied: you do not own this file');
+
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = Date.now() + this.signedUrlTtlSeconds * 1000;
-    this.signedUrlStore.set(token, { fileId, ownerId, expiresAt });
+    this.signedUrlStore.set(token, { fileId, ownerId: requestingOwnerId, expiresAt });
 
     return {
       url: `${baseUrl}/media/serve/${token}`,

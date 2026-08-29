@@ -10,7 +10,7 @@ import {
 
 import { Request, Response } from 'express';
 import { Observable, of } from 'rxjs';
-import { tap } from 'rxjs/operators';
+import { finalize, tap } from 'rxjs/operators';
 
 import { ErrorCode } from '../errors/error-codes.enum';
 
@@ -80,21 +80,12 @@ export class IdempotencyInterceptor implements NestInterceptor {
       );
     }
 
-    try {
-      return next.handle().pipe(
-        tap(async (data) => {
-          // Store response for future retries
-          const statusCode = response.statusCode || 200;
-          await this.idempotencyService.storeResponse(
-            idempotencyKey,
-            statusCode,
-            data,
-          );
-        }),
-      );
-    } finally {
-      // Release lock after processing
-      await this.idempotencyService.releaseLock(idempotencyKey);
-    }
+    return next.handle().pipe(
+      tap(async (data) => {
+        const statusCode = response.statusCode || 200;
+        await this.idempotencyService.storeResponse(idempotencyKey, statusCode, data);
+      }),
+      finalize(() => this.idempotencyService.releaseLock(idempotencyKey)),
+    );
   }
 }
