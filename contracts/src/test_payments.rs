@@ -518,7 +518,8 @@ fn auto_refund_after_timeout() {
         ledger.timestamp += 11;
     });
 
-    assert_eq!(client.process_expired_disputes(), 1);
+    let dispute_ids = vec![&env, dispute_id];
+    assert_eq!(client.process_expired_disputes(&dispute_ids), 1);
 
     let events = env.events().all();
     let last_event = events.events().last().unwrap();
@@ -595,7 +596,8 @@ fn no_refund_before_deadline() {
         ledger.timestamp += 9;
     });
 
-    assert_eq!(client.process_expired_disputes(), 0);
+    let dispute_ids = vec![&env, dispute_id];
+    assert_eq!(client.process_expired_disputes(&dispute_ids), 0);
 }
 
 #[test]
@@ -736,7 +738,8 @@ fn manual_resolution_prevents_refund() {
         ledger.timestamp += 11;
     });
 
-    assert_eq!(client.process_expired_disputes(), 0);
+    let dispute_ids = vec![&env, dispute_id];
+    assert_eq!(client.process_expired_disputes(&dispute_ids), 0);
 }
 
 #[test]
@@ -816,7 +819,8 @@ fn non_disputed_payments_are_ignored() {
     assert_eq!(client.get_dispute_timeout(), DEFAULT_DISPUTE_TIMEOUT_SECS);
 
     let _payment_id = client.create_payment(&1, &payer, &payee, &1_500, &asset, &default_fee_structure(&env), &admin);
-    assert_eq!(client.process_expired_disputes(), 0);
+    let dispute_ids = Vec::new(&env);
+    assert_eq!(client.process_expired_disputes(&dispute_ids), 0);
     assert_eq!(client.get_payment_stats(), PaymentStats::new());
 }
 
@@ -1023,7 +1027,7 @@ fn configure_multisig_is_admin_only_and_persists_storage() {
 }
 
 #[test]
-fn configure_multisig_clears_in_flight_pending_approvals() {
+fn configure_multisig_preserves_valid_in_flight_pending_approvals() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -1061,8 +1065,8 @@ fn configure_multisig_clears_in_flight_pending_approvals() {
     satisfy_escrow_conditions(&env, &contract_id, payment_id, &signer_one);
     client.propose_release(&payment_id, &signer_one);
 
-    // Reconfigure multisig to a different signer set, clearing pending approvals
-    client.configure_multisig(&vec![&env, signer_three.clone()], &1);
+    // Reconfigure multisig to a different signer set without erasing valid votes.
+    client.configure_multisig(&vec![&env, signer_one.clone(), signer_three.clone()], &2);
 
     env.as_contract(&contract_id, || {
         let approvals: Map<u64, PendingApproval> = env
@@ -1070,10 +1074,9 @@ fn configure_multisig_clears_in_flight_pending_approvals() {
             .persistent()
             .get(&PENDING_APPROVALS)
             .unwrap();
-        assert!(
-            approvals.is_empty(),
-            "Pending approvals should be cleared after configure_multisig"
-        );
+        let approval = approvals.get(payment_id).unwrap();
+        assert_eq!(approval.approvals.len(), 1);
+        assert!(approval.approvals.contains(signer_one.clone()));
     });
 }
 
