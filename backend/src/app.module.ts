@@ -3,17 +3,16 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ScheduleModule } from '@nestjs/schedule';
 
 import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
-import type Redis from 'ioredis';
 
 import { AnomalyModule } from './anomaly/anomaly.module';
-import { ApprovalModule } from './approvals/approval.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { ApprovalModule } from './approvals/approval.module';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from './auth/guards/permissions.guard';
@@ -23,9 +22,12 @@ import { BloodMatchingModule } from './blood-matching/blood-matching.module';
 import { BloodRequestsModule } from './blood-requests/blood-requests.module';
 import { BloodUnitsModule } from './blood-units/blood-units.module';
 import { ColdChainModule } from './cold-chain/cold-chain.module';
-import { ConsentModule } from './consent/consent.module';
+import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
+import { CorrelationIdService } from './common/middleware/correlation-id.service';
+import { ApiCompatibilityInterceptor } from './common/versioning/api-compatibility.interceptor';
 import { AppConfigModule } from './config/config.module';
 import { THROTTLE_TTL_MS } from './config/throttle-limits.config';
+import { ConsentModule } from './consent/consent.module';
 import { ContractEventIndexerModule } from './contract-event-indexer/contract-event-indexer.module';
 import { CustodyModule } from './custody/custody.module';
 import { DeliveryProofModule } from './delivery-proof/delivery-proof.module';
@@ -45,6 +47,7 @@ import { IncidentReviewsModule } from './incident-reviews/incident-reviews.modul
 import { InventoryModule } from './inventory/inventory.module';
 import { LocationHistoryModule } from './location-history/location-history.module';
 import { MapsModule } from './maps/maps.module';
+import { MediaProcessingModule } from './media-processing/media-processing.module';
 import { MigrationSafetyModule } from './migrations/migration-safety.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
@@ -64,16 +67,14 @@ import { RouteDeviationModule } from './route-deviation/route-deviation.module';
 import { SlaModule } from './sla/sla.module';
 import { SorobanModule } from './soroban/soroban.module';
 import { SurgeSimulationModule } from './surge-simulation/surge-simulation.module';
+import { RoleAwareThrottlerGuard } from './throttler/role-aware-throttler.guard';
+import { throttleGetTracker } from './throttler/throttle-tracker.util';
 import { TrackingModule } from './tracking/tracking.module';
 import { TransparencyModule } from './transparency/transparency.module';
 import { UsersModule } from './users/users.module';
 import { UssdModule } from './ussd-session/ussd.module';
-import { MediaProcessingModule } from './media-processing/media-processing.module';
-import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
-import { CorrelationIdService } from './common/middleware/correlation-id.service';
-import { RoleAwareThrottlerGuard } from './throttler/role-aware-throttler.guard';
-import { ApiCompatibilityInterceptor } from './common/versioning/api-compatibility.interceptor';
-import { throttleGetTracker } from './throttler/throttle-tracker.util';
+
+import type Redis from 'ioredis';
 
 @Module({
   imports: [
@@ -162,6 +163,9 @@ import { throttleGetTracker } from './throttler/throttle-tracker.util';
     EscalationModule,
     EscrowGovernanceModule,
     EventsModule,
+    // NOTE: FeePolicyModule (from fee-policy/) is imported via FeeCorrectionModule & OrdersModule.
+    // fee-policy-validation module is intentionally NOT imported as it is superseded and would
+    // collide with the fee_policies table under an incompatible schema. See issue #1340.
     FeeCorrectionModule,
     FileMetadataModule,
     HospitalsModule,
