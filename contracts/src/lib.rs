@@ -3263,9 +3263,12 @@ impl HealthChainContract {
     /// Update request status
     pub fn update_request_status(
         env: Env,
+        caller: Address,
         request_id: u64,
         new_status: RequestStatus,
     ) -> Result<(), Error> {
+        caller.require_auth();
+
         let mut requests: Map<u64, BloodRequest> = env
             .storage()
             .persistent()
@@ -3274,7 +3277,15 @@ impl HealthChainContract {
 
         let mut request = requests.get(request_id).ok_or(Error::UnitNotFound)?;
 
-        let caller = env.current_contract_address();
+        // Authorization: admin, the requesting hospital, or an authorized blood bank
+        let admin: Option<Address> = env.storage().instance().get(&ADMIN);
+        let is_admin = admin == Some(caller.clone());
+        let is_owning_hospital = caller == request.hospital_id;
+        let is_bank = Self::is_blood_bank(env.clone(), caller.clone());
+
+        if !is_admin && !is_owning_hospital && !is_bank {
+            return Err(Error::Unauthorized);
+        }
 
         // Validate status transition
         if !Self::is_valid_status_transition(&request.status, &new_status) {
@@ -6184,7 +6195,7 @@ mod test {
         );
 
         env.mock_all_auths();
-        client.update_request_status(&request_id, &RequestStatus::Approved);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::Approved);
     }
 
     #[test]
@@ -6206,9 +6217,9 @@ mod test {
         );
 
         env.mock_all_auths();
-        client.update_request_status(&request_id, &RequestStatus::Approved);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::Approved);
         env.mock_all_auths();
-        client.update_request_status(&request_id, &RequestStatus::InProgress);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::InProgress);
     }
 
     #[test]
@@ -6231,7 +6242,7 @@ mod test {
         );
 
         // Try to go directly from Pending to Fulfilled (invalid)
-        client.update_request_status(&request_id, &RequestStatus::Fulfilled);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::Fulfilled);
     }
 
     #[test]
@@ -6253,15 +6264,99 @@ mod test {
             &String::from_str(&env, "Ward A"),
         );
 
-        client.update_request_status(&request_id, &RequestStatus::Approved);
-        client.update_request_status(&request_id, &RequestStatus::InProgress);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::Approved);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::InProgress);
 
         // Manually fulfill by creating a dummy fulfilled state
         // For this test, we'll use cancel and then try to update cancelled
         client.cancel_request(&request_id, &String::from_str(&env, "Test"));
 
         // Try to update from Cancelled (terminal state)
-        client.update_request_status(&request_id, &RequestStatus::Pending);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::Pending);
+    }
+
+    #[test]
+    fn test_update_request_status_unauthorized_caller_rejected() {
+        let env = Env::default();
+        let (contract_id, _, hospital, client) = setup_contract_with_hospital(&env);
+
+        env.mock_all_auths();
+        let current_time = env.ledger().timestamp();
+        let required_by = current_time + 3600;
+
+        let request_id = client.create_request(
+            &hospital,
+            &BloodType::OPositive,
+            &500,
+            &UrgencyLevel::Urgent,
+            &required_by,
+            &String::from_str(&env, "Ward A"),
+        );
+
+        // An address unrelated to the request (not admin, not the requesting
+        // hospital, not a registered blood bank) must not be able to change
+        // its status, even when its signature is otherwise valid.
+        let attacker = Address::generate(&env);
+        env.mock_all_auths();
+        let result =
+            client.try_update_request_status(&attacker, &request_id, &RequestStatus::Approved);
+        assert!(matches!(result, Err(Ok(Error::Unauthorized))));
+
+        // Status must remain unchanged.
+        let request: BloodRequest = env.as_contract(&contract_id, || {
+            let requests: Map<u64, BloodRequest> =
+                env.storage().persistent().get(&REQUESTS).unwrap();
+            requests.get(request_id).unwrap()
+        });
+        assert_eq!(request.status, RequestStatus::Pending);
+    }
+
+    #[test]
+    fn test_update_request_status_admin_authorized_succeeds() {
+        let env = Env::default();
+        let (_, admin, hospital, client) = setup_contract_with_hospital(&env);
+
+        env.mock_all_auths();
+        let current_time = env.ledger().timestamp();
+        let required_by = current_time + 3600;
+
+        let request_id = client.create_request(
+            &hospital,
+            &BloodType::OPositive,
+            &500,
+            &UrgencyLevel::Urgent,
+            &required_by,
+            &String::from_str(&env, "Ward A"),
+        );
+
+        env.mock_all_auths();
+        client.update_request_status(&admin, &request_id, &RequestStatus::Approved);
+    }
+
+    #[test]
+    fn test_update_request_status_blood_bank_authorized_succeeds() {
+        let env = Env::default();
+        let (_, _, hospital, client) = setup_contract_with_hospital(&env);
+
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        env.mock_all_auths();
+        let current_time = env.ledger().timestamp();
+        let required_by = current_time + 3600;
+
+        let request_id = client.create_request(
+            &hospital,
+            &BloodType::OPositive,
+            &500,
+            &UrgencyLevel::Urgent,
+            &required_by,
+            &String::from_str(&env, "Ward A"),
+        );
+
+        env.mock_all_auths();
+        client.update_request_status(&bank, &request_id, &RequestStatus::Approved);
     }
 
     #[test]
@@ -6344,8 +6439,8 @@ mod test {
         );
 
         // Move to Fulfilled
-        client.update_request_status(&request_id, &RequestStatus::Approved);
-        client.update_request_status(&request_id, &RequestStatus::InProgress);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::Approved);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::InProgress);
 
         // We can't actually fulfill without blood bank, so let's just cancel an already cancelled
         client.cancel_request(&request_id, &String::from_str(&env, "First cancel"));
@@ -6402,7 +6497,7 @@ mod test {
         );
 
         // Approve and start progress
-        client.update_request_status(&request_id, &RequestStatus::Approved);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::Approved);
 
         // Fulfill the request
         let unit_ids = vec![&env, unit_id_1, unit_id_2];
@@ -6459,7 +6554,7 @@ mod test {
             &(current_time + 3600),
             &String::from_str(&env, "Ward O"),
         );
-        client.update_request_status(&request_id, &RequestStatus::Approved);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::Approved);
 
         let unit_ids = vec![&env, unit_id_1, unit_id_2];
         let result = client.try_fulfill_request(&bank, &request_id, &unit_ids);
@@ -6522,7 +6617,7 @@ mod test {
             &(current_time + 3600),
             &String::from_str(&env, "Ward E"),
         );
-        client.update_request_status(&request_id, &RequestStatus::Approved);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::Approved);
 
         let unit_ids = vec![&env, unit_id_1, unit_id_2];
         client.fulfill_request(&bank, &request_id, &unit_ids);
@@ -6568,7 +6663,7 @@ mod test {
             &(current_time + 3600),
             &String::from_str(&env, "Ward P"),
         );
-        client.update_request_status(&request_id, &RequestStatus::Approved);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::Approved);
 
         let unit_ids = vec![&env, unit_id];
         client.fulfill_request(&bank, &request_id, &unit_ids);
@@ -6634,7 +6729,7 @@ mod test {
             &String::from_str(&env, "Ward A"),
         );
 
-        client.update_request_status(&request_id, &RequestStatus::Approved);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::Approved);
 
         // Try to fulfill as non-bank (hospital cannot fulfill)
         let unit_ids = vec![&env, 1u64];
@@ -6688,7 +6783,7 @@ mod test {
 
         let unit_ids = vec![&env, unit_id_1, unit_id_2];
         env.mock_all_auths();
-        client.update_request_status(&request_id, &RequestStatus::Approved);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::Approved);
 
         env.as_contract(&contract_id, || {
             let mut units: Map<u64, BloodUnit> = env
@@ -6731,7 +6826,7 @@ mod test {
         );
 
         env.mock_all_auths();
-        client.update_request_status(&request_id, &RequestStatus::Rejected);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::Rejected);
     }
 
     #[test]
@@ -6753,7 +6848,7 @@ mod test {
         );
 
         env.mock_all_auths();
-        client.update_request_status(&request_id, &RequestStatus::Approved);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::Approved);
 
         env.mock_all_auths();
         client.cancel_request(&request_id, &String::from_str(&env, "Changed requirements"));
@@ -6794,9 +6889,9 @@ mod test {
         );
 
         env.mock_all_auths();
-        client.update_request_status(&request_id, &RequestStatus::Approved);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::Approved);
         env.mock_all_auths();
-        client.update_request_status(&request_id, &RequestStatus::InProgress);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::InProgress);
 
         let unit_ids = vec![&env, unit_id];
         env.mock_all_auths();
@@ -6880,7 +6975,7 @@ mod test {
 
         // Approve request to move to next state
         env.mock_all_auths();
-        client.update_request_status(&request_id, &RequestStatus::Approved);
+        client.update_request_status(&hospital, &request_id, &RequestStatus::Approved);
 
         // Cancel request and verify event is emitted with released units
         let cancel_reason = String::from_str(&env, "Patient condition improved");
@@ -6898,12 +6993,12 @@ mod test {
     #[should_panic(expected = "Error(Contract, #7)")] // UnitNotFound (used for request not found)
     fn test_update_status_nonexistent_request() {
         let env = Env::default();
-        let (_, _, _, client) = setup_contract_with_hospital(&env);
+        let (_, _, hospital, client) = setup_contract_with_hospital(&env);
 
         env.mock_all_auths();
 
         // Try to update status of non-existent request
-        client.update_request_status(&999u64, &RequestStatus::Approved);
+        client.update_request_status(&hospital, &999u64, &RequestStatus::Approved);
     }
 
     #[test]
