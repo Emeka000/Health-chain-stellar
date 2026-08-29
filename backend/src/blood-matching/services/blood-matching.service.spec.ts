@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
+import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 
 import { BloodRequestItemEntity } from '../../blood-requests/entities/blood-request-item.entity';
 import { BloodRequestEntity } from '../../blood-requests/entities/blood-request.entity';
@@ -60,6 +60,24 @@ describe('BloodMatchingService', () => {
     findOne: jest.fn(),
   };
 
+  const mockQueryRunnerManager = {
+    find: jest.fn(),
+    update: jest.fn(),
+  };
+
+  const mockQueryRunner = {
+    connect: jest.fn(),
+    startTransaction: jest.fn(),
+    commitTransaction: jest.fn(),
+    rollbackTransaction: jest.fn(),
+    release: jest.fn(),
+    manager: mockQueryRunnerManager,
+  };
+
+  const mockDataSource = {
+    createQueryRunner: jest.fn(() => mockQueryRunner),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -80,6 +98,10 @@ describe('BloodMatchingService', () => {
         {
           provide: getRepositoryToken(InventoryStockEntity),
           useValue: mockInventoryRepository,
+        },
+        {
+          provide: getDataSourceToken(),
+          useValue: mockDataSource,
         },
       ],
     }).compile();
@@ -134,8 +156,8 @@ describe('BloodMatchingService', () => {
 
   describe('findMatches', () => {
     it('should find matches for a blood request', async () => {
-      mockBloodUnitRepository.find.mockResolvedValue([mockBloodUnit]);
-      mockBloodUnitRepository.update.mockResolvedValue({});
+      mockQueryRunnerManager.find.mockResolvedValue([mockBloodUnit]);
+      mockQueryRunnerManager.update.mockResolvedValue({ affected: 1 });
 
       const result = await service.findMatches({
         requestId: 'req-1',
@@ -152,7 +174,7 @@ describe('BloodMatchingService', () => {
     });
 
     it('should return empty matches if no units available', async () => {
-      mockBloodUnitRepository.find.mockResolvedValue([]);
+      mockQueryRunnerManager.find.mockResolvedValue([]);
 
       const result = await service.findMatches({
         requestId: 'req-1',
@@ -170,8 +192,8 @@ describe('BloodMatchingService', () => {
 
   describe('findMatchesForMultipleRequests', () => {
     it('should find matches for multiple requests', async () => {
-      mockBloodUnitRepository.find.mockResolvedValue([mockBloodUnit]);
-      mockBloodUnitRepository.update.mockResolvedValue({});
+      mockQueryRunnerManager.find.mockResolvedValue([mockBloodUnit]);
+      mockQueryRunnerManager.update.mockResolvedValue({ affected: 1 });
 
       const requests = [
         {

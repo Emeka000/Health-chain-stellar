@@ -1,7 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
+import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 
-import { Repository, MoreThanOrEqual } from 'typeorm';
+import { DataSource, MoreThanOrEqual, QueryRunner, Repository } from 'typeorm';
 
 import { BloodRequestItemEntity } from '../../blood-requests/entities/blood-request-item.entity';
 import { BloodRequestEntity } from '../../blood-requests/entities/blood-request.entity';
@@ -109,6 +109,8 @@ export class BloodMatchingService {
     @InjectRepository(InventoryStockEntity)
     private readonly inventoryRepository: Repository<InventoryStockEntity>,
     private readonly compatibilityEngine: BloodCompatibilityEngine,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
   ) {}
 
   async findMatches(request: MatchingRequest): Promise<MatchingResponse> {
@@ -119,23 +121,26 @@ export class BloodMatchingService {
     // Get compatible blood types
     const compatibleTypes = this.getCompatibleBloodTypes(request.bloodType);
 
-    // Find available blood units
-    const availableUnits = await this.findAvailableUnits(
-      compatibleTypes,
-      request.quantityMl,
-    );
+    // Find, score and reserve matching units atomically so two concurrent
+    // requests can never both be handed the same physical unit.
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    // Score and rank matches
-    const scoredMatches = await this.scoreMatches(availableUnits, request);
-
-    // Sort by score (highest first)
-    scoredMatches.sort((a, b) => b.matchScore - a.matchScore);
-
-    // Select best matches
-    const selectedMatches = this.selectBestMatches(
-      scoredMatches,
-      request.quantityMl,
-    );
+    let selectedMatches: MatchResult[];
+    try {
+      selectedMatches = await this.findAndReserveMatchingUnits(
+        queryRunner,
+        compatibleTypes,
+        request,
+      );
+      await queryRunner.commitTransaction();
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
 
     // Calculate totals
     const totalMatched = selectedMatches.reduce(
@@ -171,13 +176,12 @@ export class BloodMatchingService {
       return a.requiredBy.getTime() - b.requiredBy.getTime();
     });
 
-    // Process each request
+    // Process each request. findMatches() already reserves matched units
+    // atomically, so units taken by an earlier (higher-urgency) request in
+    // this batch are unavailable to later ones.
     for (const request of sortedRequests) {
       const response = await this.findMatches(request);
       responses.push(response);
-
-      // Update inventory to reflect matched units
-      await this.reserveMatchedUnits(response.matches);
     }
 
     return responses;
@@ -199,13 +203,20 @@ export class BloodMatchingService {
     return compatibility.canDonateTo;
   }
 
-  private async findAvailableUnits(
+  /**
+   * Finds candidate units under a pessimistic write lock, scores them, picks
+   * the best matches, and reserves them — all inside the caller's
+   * transaction — so concurrent callers can never both walk away thinking
+   * they secured the same unit.
+   */
+  private async findAndReserveMatchingUnits(
+    queryRunner: QueryRunner,
     bloodTypes: string[],
-    quantityMl: number,
-  ): Promise<BloodUnit[]> {
+    request: MatchingRequest,
+  ): Promise<MatchResult[]> {
     const now = new Date();
 
-    return this.bloodUnitRepository.find({
+    const candidateUnits = await queryRunner.manager.find(BloodUnit, {
       where: {
         bloodType: bloodTypes as any,
         status: BloodStatus.AVAILABLE,
@@ -214,7 +225,30 @@ export class BloodMatchingService {
       order: {
         expiresAt: 'ASC', // FIFO - oldest expiration first
       },
+      lock: { mode: 'pessimistic_write' },
     });
+
+    const scoredMatches = await this.scoreMatches(candidateUnits, request);
+    scoredMatches.sort((a, b) => b.matchScore - a.matchScore);
+    const selectedMatches = this.selectBestMatches(
+      scoredMatches,
+      request.quantityMl,
+    );
+
+    for (const match of selectedMatches) {
+      const result = await queryRunner.manager.update(
+        BloodUnit,
+        { id: match.bloodUnitId, status: BloodStatus.AVAILABLE },
+        { status: BloodStatus.RESERVED },
+      );
+      if (!result.affected) {
+        throw new ConflictException(
+          `Blood unit ${match.bloodUnitId} is no longer available`,
+        );
+      }
+    }
+
+    return selectedMatches;
   }
 
   private async scoreMatches(
@@ -369,14 +403,6 @@ export class BloodMatchingService {
     }
 
     return selectedMatches;
-  }
-
-  private async reserveMatchedUnits(matches: MatchResult[]): Promise<void> {
-    for (const match of matches) {
-      await this.bloodUnitRepository.update(match.bloodUnitId, {
-        status: 'reserved' as any,
-      });
-    }
   }
 
   async calculateMatchingScore(
