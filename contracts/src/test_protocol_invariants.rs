@@ -231,7 +231,8 @@ fn property_duplicate_and_invalid_request_transitions_fail_deterministically() {
     );
     assert!(matches!(duplicate, Err(Ok(Error::DuplicateRequest))));
 
-    let invalid = client(&fixture).try_update_request_status(&first_id, &RequestStatus::Fulfilled);
+    let invalid = client(&fixture)
+        .try_update_request_status(&fixture.hospital, &first_id, &RequestStatus::Fulfilled);
     assert!(matches!(invalid, Err(Ok(Error::InvalidTransition))));
     assert_eq!(
         stored_request(&fixture, first_id).status,
