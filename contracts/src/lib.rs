@@ -551,6 +551,8 @@ pub enum DataKey {
     HealthRecord(Symbol),
     /// Explicit access grant for a patient/provider pair.
     HealthRecordAccess(Symbol, Symbol),
+    /// Blood-type units index: BloodType -> Vec<u64>
+    BloodTypeUnits(BloodType),
 }
 
 /// Metadata for paginated custody trail
@@ -2184,6 +2186,19 @@ pub(crate) fn reindex_status(env: &Env, unit_id: u64, old_status: BloodStatus, n
     env.storage().persistent().set(&new_key, &new_ids);
 }
 
+/// Append `unit_id` to the BloodTypeUnits index for `blood_type`.
+/// Call once when a unit is first registered.
+pub(crate) fn index_blood_type_unit(env: &Env, blood_type: BloodType, unit_id: u64) {
+    let key = DataKey::BloodTypeUnits(blood_type);
+    let mut ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env));
+    ids.push_back(unit_id);
+    env.storage().persistent().set(&key, &ids);
+}
+
 // ── SHARED HELPERS (Internal) ──
 
 pub(crate) fn get_next_id(env: &Env) -> u64 {
@@ -2330,63 +2345,58 @@ impl HealthChainContract {
             == LifecycleState::Active
     }
 
-    /// Helper: Derive deterministic event_id for custody transfers
-    /// Uses SHA256 hash of: unit_id + from_custodian + to_custodian + ledger_sequence
+    /// Helper: Derive deterministic event_id for custody transfers.
+    /// Uses SHA256 of: unit_id (8 bytes) + from strkey bytes + to strkey bytes + ledger_sequence (4 bytes).
+    /// Both sides use the stable strkey (bech32) serialisation so the hash is
+    /// reproducible across transactions — unlike Val payloads which are transient handles.
     fn derive_event_id(
         env: &Env,
         unit_id: u64,
         from_custodian: &Address,
         to_custodian: &Address,
     ) -> String {
-        use soroban_sdk::{Bytes, BytesN};
+        use soroban_sdk::BytesN;
 
         let ledger_sequence = env.ledger().sequence();
-
-        // Create input bytes for hashing
         let mut input = Bytes::new(env);
 
-        // Add unit_id (8 bytes)
         for byte in unit_id.to_be_bytes().iter() {
             input.push_back(*byte);
         }
 
-        // Add from_custodian as Val (8 bytes)
-        let from_val_u64: u64 = from_custodian.to_val().get_payload();
-        for byte in from_val_u64.to_be_bytes().iter() {
-            input.push_back(*byte);
+        // Stable serialisation: strkey is deterministic for the same address
+        // across all transactions, unlike Val payloads which are transient handles.
+        let from_str = from_custodian.to_string();
+        let from_bytes = Bytes::from(&from_str);
+        for i in 0..from_bytes.len() {
+            input.push_back(from_bytes.get(i).unwrap());
         }
 
-        // Add to_custodian as Val (8 bytes)
-        let to_val_u64: u64 = to_custodian.to_val().get_payload();
-        for byte in to_val_u64.to_be_bytes().iter() {
-            input.push_back(*byte);
+        let to_str = to_custodian.to_string();
+        let to_bytes = Bytes::from(&to_str);
+        for i in 0..to_bytes.len() {
+            input.push_back(to_bytes.get(i).unwrap());
         }
 
-        // Add ledger_sequence (4 bytes)
         for byte in ledger_sequence.to_be_bytes().iter() {
             input.push_back(*byte);
         }
 
-        // Compute SHA256 hash
         let hash: BytesN<32> = env.crypto().sha256(&input).into();
-
-        // Convert hash to hex string
         let hex_chars = b"0123456789abcdef";
         let mut hex_array = [0u8; HEX_HASH_LENGTH];
-
         for i in 0..32u32 {
             let byte = hash.get(i).unwrap();
-            let high = (byte >> 4) & 0x0f;
-            let low = byte & 0x0f;
-            hex_array[(i * 2) as usize] = hex_chars[high as usize];
-            hex_array[(i * 2 + 1) as usize] = hex_chars[low as usize];
+            hex_array[(i * 2) as usize] = hex_chars[((byte >> 4) & 0x0f) as usize];
+            hex_array[(i * 2 + 1) as usize] = hex_chars[(byte & 0x0f) as usize];
         }
-
         String::from_bytes(env, &hex_array)
     }
 
-    /// Public function to compute event_id for a given transfer
-    /// Callers can use this to compute the event_id needed for confirm_transfer and cancel_transfer
+    /// Compute the event_id for a transfer so callers can reference it in
+    /// `confirm_transfer` / `cancel_transfer`.
+    /// Pass the `ledger_sequence` stored in the `CustodyEvent` returned by
+    /// `initiate_transfer` — no guessing required.
     pub fn compute_event_id(
         env: Env,
         unit_id: u64,
@@ -2394,48 +2404,38 @@ impl HealthChainContract {
         to_custodian: Address,
         ledger_sequence: u32,
     ) -> String {
-        use soroban_sdk::{Bytes, BytesN};
+        use soroban_sdk::BytesN;
 
-        // Create input bytes for hashing
         let mut input = Bytes::new(&env);
 
-        // Add unit_id (8 bytes)
         for byte in unit_id.to_be_bytes().iter() {
             input.push_back(*byte);
         }
 
-        // Add from_custodian as Val (8 bytes)
-        let from_val_u64: u64 = from_custodian.to_val().get_payload();
-        for byte in from_val_u64.to_be_bytes().iter() {
-            input.push_back(*byte);
+        let from_str = from_custodian.to_string();
+        let from_bytes = Bytes::from(&from_str);
+        for i in 0..from_bytes.len() {
+            input.push_back(from_bytes.get(i).unwrap());
         }
 
-        // Add to_custodian as Val (8 bytes)
-        let to_val_u64: u64 = to_custodian.to_val().get_payload();
-        for byte in to_val_u64.to_be_bytes().iter() {
-            input.push_back(*byte);
+        let to_str = to_custodian.to_string();
+        let to_bytes = Bytes::from(&to_str);
+        for i in 0..to_bytes.len() {
+            input.push_back(to_bytes.get(i).unwrap());
         }
 
-        // Add ledger_sequence (4 bytes)
         for byte in ledger_sequence.to_be_bytes().iter() {
             input.push_back(*byte);
         }
 
-        // Compute SHA256 hash
         let hash: BytesN<32> = env.crypto().sha256(&input).into();
-
-        // Convert hash to hex string
         let hex_chars = b"0123456789abcdef";
         let mut hex_array = [0u8; HEX_HASH_LENGTH];
-
         for i in 0..32u32 {
             let byte = hash.get(i).unwrap();
-            let high = (byte >> 4) & 0x0f;
-            let low = byte & 0x0f;
-            hex_array[(i * 2) as usize] = hex_chars[high as usize];
-            hex_array[(i * 2 + 1) as usize] = hex_chars[low as usize];
+            hex_array[(i * 2) as usize] = hex_chars[((byte >> 4) & 0x0f) as usize];
+            hex_array[(i * 2 + 1) as usize] = hex_chars[(byte & 0x0f) as usize];
         }
-
         String::from_bytes(&env, &hex_array)
     }
 
@@ -2729,6 +2729,37 @@ impl HealthChainContract {
             .set(&NEXT_PAYMENT_ID, &(payment_id + 1));
 
         Ok(payment_id)
+    }
+
+    /// Transition a payment from Pending to Escrowed (fund_escrow).
+    ///
+    /// This is the missing Pending → Escrowed entrypoint described in #1390.
+    /// The payer authenticates and the payment moves to Escrowed, unlocking
+    /// `raise_dispute` and `propose_release`.
+    pub fn fund_escrow(env: Env, payment_id: u64, payer: Address) -> Result<(), Error> {
+        payer.require_auth();
+
+        let mut payments: Map<u64, Payment> = env
+            .storage()
+            .persistent()
+            .get(&PAYMENTS)
+            .ok_or(Error::PaymentNotFound)?;
+
+        let mut payment = payments.get(payment_id).ok_or(Error::PaymentNotFound)?;
+
+        if payment.payer != payer {
+            return Err(Error::Unauthorized);
+        }
+
+        if !payment.can_transition_to(PaymentStatus::Escrowed) {
+            return Err(Error::InvalidPaymentStatus);
+        }
+
+        payment.status = PaymentStatus::Escrowed;
+        payments.set(payment_id, payment);
+        env.storage().persistent().set(&PAYMENTS, &payments);
+
+        Ok(())
     }
 
     /// Update the release conditions for an escrowed payment (admin only).
@@ -3471,7 +3502,7 @@ impl HealthChainContract {
         env.storage().persistent().set(&BLOOD_UNITS, &units);
         request.reserved_unit_ids = vec![&env];
 
-        requests.set(request_id, request);
+        requests.set(request_id, request.clone());
         env.storage().persistent().set(&REQUESTS, &requests);
 
         let current_time = env.ledger().timestamp();
@@ -3898,21 +3929,24 @@ impl HealthChainContract {
 
     /// Mark a blood unit as Reserved, called by the authorized inventory contract.
     ///
-    /// Only the contract stored via `set_inventory_contract` may call this.
-    /// The `bank_id` is the blood bank that owns the unit — its auth is verified
-    /// by the inventory contract before this cross-contract call is made.
+    /// `caller` must be the contract address stored via `set_inventory_contract`.
+    /// The inventory contract passes its own address and Soroban enforces its auth.
     pub fn inventory_reserve_unit(
         env: Env,
+        caller: Address,
         bank_id: Address,
         unit_id: u64,
         hospital_id: Address,
     ) -> Result<(), Error> {
+        // Require the caller to authenticate itself.
+        caller.require_auth();
         let authorized: Address = env
             .storage()
             .instance()
             .get(&INVENTORY_CONTRACT)
             .ok_or(Error::Unauthorized)?;
-        if env.current_contract_address() != authorized {
+        // Verify the authenticated caller is the registered inventory contract.
+        if caller != authorized {
             return Err(Error::Unauthorized);
         }
 
@@ -3957,19 +3991,20 @@ impl HealthChainContract {
 
     /// Release a previously reserved blood unit back to Available.
     ///
-    /// Called by the authorized inventory contract when a reservation is
-    /// cancelled or expires.
+    /// `caller` must be the contract address stored via `set_inventory_contract`.
     pub fn inventory_release_unit(
         env: Env,
+        caller: Address,
         bank_id: Address,
         unit_id: u64,
     ) -> Result<(), Error> {
+        caller.require_auth();
         let authorized: Address = env
             .storage()
             .instance()
             .get(&INVENTORY_CONTRACT)
             .ok_or(Error::Unauthorized)?;
-        if env.current_contract_address() != authorized {
+        if caller != authorized {
             return Err(Error::Unauthorized);
         }
 
@@ -4083,94 +4118,164 @@ impl HealthChainContract {
         units.set(id, unit);
         env.storage().persistent().set(&BLOOD_UNITS, &units);
 
+        // Maintain blood-type index so query_by_blood_type / check_availability work correctly.
+        index_blood_type_unit(&env, blood_type, id);
+        // Seed the StatusUnits(Available) index for this legacy unit.
+        let status_key = DataKey::StatusUnits(BloodStatus::Available);
+        let mut status_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&status_key)
+            .unwrap_or(Vec::new(&env));
+        if !status_ids.contains(id) {
+            status_ids.push_back(id);
+            env.storage().persistent().set(&status_key, &status_ids);
+        }
+
         id
     }
 
-    /// Query blood inventory by blood type with filters
-    /// Query blood inventory by blood type with filters
+    /// Query blood inventory by blood type with filters.
+    ///
+    /// Driven by the `StatusUnits(Available)` × `BloodTypeUnits(blood_type)` indexes
+    /// so the working set is bounded to matching units, not the full inventory.
+    /// Results are insertion-sorted into a bounded top-`max_results` buffer by
+    /// expiration date (FIFO), avoiding the previous O(n²) bubble sort.
     pub fn query_by_blood_type(
         env: Env,
         blood_type: BloodType,
         min_quantity: u32,
         max_results: u32,
     ) -> Vec<BloodUnit> {
+        let current_time = env.ledger().timestamp();
+        let limit = if max_results == 0 { u32::MAX } else { max_results };
+
+        // Intersect StatusUnits(Available) ∩ BloodTypeUnits(blood_type) for a
+        // bounded candidate set instead of scanning the full BLOOD_UNITS map.
+        let available_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::StatusUnits(BloodStatus::Available))
+            .unwrap_or(Vec::new(&env));
+
+        let bt_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::BloodTypeUnits(blood_type))
+            .unwrap_or(Vec::new(&env));
+
         let units: Map<u64, BloodUnit> = env
             .storage()
             .persistent()
             .get(&BLOOD_UNITS)
             .unwrap_or(Map::new(&env));
 
-        let current_time = env.ledger().timestamp();
-        let mut results = vec![&env];
-        let mut temp_units = vec![&env];
+        // Use the smaller index for the outer loop to minimise iterations.
+        let (outer, inner) = if available_ids.len() <= bt_ids.len() {
+            (available_ids.clone(), bt_ids.clone())
+        } else {
+            (bt_ids.clone(), available_ids.clone())
+        };
 
-        // Collect matching units (Available status, non-expired, matching blood type, sufficient quantity)
-        for (_, unit) in units.iter() {
-            if unit.blood_type == blood_type
-                && unit.status == BloodStatus::Available
-                && unit.quantity >= min_quantity
-                && unit.expiration_date > current_time
-            {
-                temp_units.push_back(unit);
+        // Bounded insertion-sort buffer: keep only the `limit` earliest-expiring units.
+        let mut sorted: Vec<BloodUnit> = Vec::new(&env);
+
+        for id in outer.iter() {
+            if !inner.contains(id) {
+                continue;
             }
-        }
-
-        // Sort by expiration date (FIFO - earliest expiration first)
-        let len = temp_units.len();
-        for i in 0..len {
-            for j in 0..len.saturating_sub(i + 1) {
-                let unit_j = temp_units.get(j).unwrap();
-                let unit_j_plus_1 = temp_units.get(j + 1).unwrap();
-
-                if unit_j.expiration_date > unit_j_plus_1.expiration_date {
-                    temp_units.set(j, unit_j_plus_1.clone());
-                    temp_units.set(j + 1, unit_j);
+            let unit = match units.get(id) {
+                Some(u) => u,
+                None => continue,
+            };
+            if unit.status != BloodStatus::Available
+                || unit.blood_type != blood_type
+                || unit.quantity < min_quantity
+                || unit.expiration_date <= current_time
+            {
+                continue;
+            }
+            // Insertion sort into the bounded buffer.
+            let mut pos = sorted.len();
+            for k in 0..sorted.len() {
+                if unit.expiration_date < sorted.get(k).unwrap().expiration_date {
+                    pos = k;
+                    break;
                 }
             }
-        }
-
-        // Apply pagination
-        let limit = if max_results == 0 {
-            len
-        } else {
-            max_results.min(len)
-        };
-        for i in 0..limit {
-            if let Some(unit) = temp_units.get(i) {
-                results.push_back(unit);
+            if pos < sorted.len() {
+                // Shift right and insert — only within the limit.
+                let mut new_sorted: Vec<BloodUnit> = Vec::new(&env);
+                for k in 0..pos {
+                    new_sorted.push_back(sorted.get(k).unwrap());
+                }
+                new_sorted.push_back(unit);
+                for k in pos..sorted.len() {
+                    if new_sorted.len() >= limit {
+                        break;
+                    }
+                    new_sorted.push_back(sorted.get(k).unwrap());
+                }
+                sorted = new_sorted;
+            } else if sorted.len() < limit {
+                sorted.push_back(unit);
             }
         }
 
-        results
+        sorted
     }
 
-    /// Check if sufficient blood quantity is available
+    /// Check if sufficient blood quantity is available.
+    ///
+    /// Uses the `StatusUnits(Available)` × `BloodTypeUnits(blood_type)` indexes
+    /// to avoid a full-map scan.
     pub fn check_availability(env: Env, blood_type: BloodType, required_quantity: u32) -> bool {
+        let current_time = env.ledger().timestamp();
+
+        let available_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::StatusUnits(BloodStatus::Available))
+            .unwrap_or(Vec::new(&env));
+
+        let bt_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::BloodTypeUnits(blood_type))
+            .unwrap_or(Vec::new(&env));
+
         let units: Map<u64, BloodUnit> = env
             .storage()
             .persistent()
             .get(&BLOOD_UNITS)
             .unwrap_or(Map::new(&env));
 
-        let current_time = env.ledger().timestamp();
-        let mut total_quantity: u32 = 0;
+        let (outer, inner) = if available_ids.len() <= bt_ids.len() {
+            (available_ids, bt_ids)
+        } else {
+            (bt_ids, available_ids)
+        };
 
-        // Sum up available quantities for the blood type (Available status and non-expired only)
-        for (_, unit) in units.iter() {
-            if unit.blood_type == blood_type
-                && unit.status == BloodStatus::Available
+        let mut total: u32 = 0;
+        for id in outer.iter() {
+            if !inner.contains(id) {
+                continue;
+            }
+            let unit = match units.get(id) {
+                Some(u) => u,
+                None => continue,
+            };
+            if unit.status == BloodStatus::Available
+                && unit.blood_type == blood_type
                 && unit.expiration_date > current_time
             {
-                total_quantity = total_quantity.saturating_add(unit.quantity);
-
-                // Early exit if we've found enough
-                if total_quantity >= required_quantity {
+                total = total.saturating_add(unit.quantity);
+                if total >= required_quantity {
                     return true;
                 }
             }
         }
-
-        total_quantity >= required_quantity
+        false
     }
 
     /// Get all blood units registered by a specific bank.

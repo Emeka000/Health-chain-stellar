@@ -20,8 +20,9 @@ use crate::{
         MAX_BATCH_EXPIRY_SIZE, MAX_QUANTITY_ML, MAX_SHELF_LIFE_DAYS, MIN_QUANTITY_ML,
         MIN_SHELF_LIFE_DAYS, SECONDS_PER_DAY,
     },
-    get_next_id, index_bank_unit, index_donor_unit, record_status_change, reindex_status,
-    BloodComponent, BloodRegisteredEvent, BloodStatus, BloodType, BloodUnit, Error, BLOOD_UNITS,
+    get_next_id, index_bank_unit, index_blood_type_unit, index_donor_unit, record_status_change,
+    reindex_status, BloodComponent, BloodRegisteredEvent, BloodStatus, BloodType, BloodUnit, Error,
+    BLOOD_UNITS,
 };
 
 // ── WRITE ─────────────────────────────────────────────────────────────────────
@@ -89,6 +90,8 @@ pub fn register_unit(
     index_bank_unit(env, &bank_id, unit_id);
     let resolved_donor = donor_id.clone().unwrap_or(symbol_short!("ANON"));
     index_donor_unit(env, &bank_id, &resolved_donor, unit_id);
+    // Maintain blood-type index for O(1) intersection in query_by_blood_type / check_availability.
+    index_blood_type_unit(env, blood_type, unit_id);
     // New unit starts as Available — seed the status index directly
     let status_key = crate::DataKey::StatusUnits(BloodStatus::Available);
     let mut status_ids: soroban_sdk::Vec<u64> = env
