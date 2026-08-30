@@ -5,25 +5,26 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository, Between } from 'typeorm';
+
+import { DataSource, Repository } from 'typeorm';
 
 import { ApprovalService } from '../approvals/approval.service';
-import { ApprovalActionType, ApprovalStatus } from '../approvals/enums/approval.enum';
+import { ApprovalActionType } from '../approvals/enums/approval.enum';
+import { PaginationUtil, PaginatedResponse } from '../common/pagination';
 import { FeePolicyService } from '../fee-policy/fee-policy.service';
 import { OrderEntity } from '../orders/entities/order.entity';
-import { PaginationUtil, PaginatedResponse } from '../common/pagination';
 
+import {
+  ExecuteFeeCorrectionDto,
+  FeeCorrectionQueryDto,
+  InitiateFeeCorrectionDto,
+} from './dto/fee-correction.dto';
 import { FeeAdjustmentEntryEntity } from './entities/fee-adjustment-entry.entity';
 import { FeeCorrectionRunEntity } from './entities/fee-correction-run.entity';
 import {
   FeeAdjustmentEntryStatus,
   FeeCorrectionRunStatus,
 } from './enums/fee-correction.enum';
-import {
-  ExecuteFeeCorrectionDto,
-  FeeCorrectionQueryDto,
-  InitiateFeeCorrectionDto,
-} from './dto/fee-correction.dto';
 
 /** Number of orders processed per DB transaction during execution. */
 const DEFAULT_BATCH_SIZE = 100;
@@ -257,7 +258,9 @@ export class FeeCorrectionService {
    * Returns all adjustment entries for a specific order across all runs.
    * Consumers use this to reconstruct the full fee history for an order.
    */
-  async getOrderFeeHistory(orderId: string): Promise<FeeAdjustmentEntryEntity[]> {
+  async getOrderFeeHistory(
+    orderId: string,
+  ): Promise<FeeAdjustmentEntryEntity[]> {
     return this.entryRepo.find({
       where: { orderId },
       order: { createdAt: 'ASC' },
@@ -273,13 +276,18 @@ export class FeeCorrectionService {
   ): Promise<{ reproducible: boolean; mismatches: string[] }> {
     const run = await this.findRunOrFail(runId);
     const entries = await this.entryRepo.find({
-      where: { correctionRunId: runId, status: FeeAdjustmentEntryStatus.APPLIED },
+      where: {
+        correctionRunId: runId,
+        status: FeeAdjustmentEntryStatus.APPLIED,
+      },
     });
 
     const mismatches: string[] = [];
 
     for (const entry of entries) {
-      const order = await this.orderRepo.findOne({ where: { id: entry.orderId } });
+      const order = await this.orderRepo.findOne({
+        where: { id: entry.orderId },
+      });
       if (!order) {
         mismatches.push(`Order ${entry.orderId} not found`);
         continue;
@@ -313,7 +321,6 @@ export class FeeCorrectionService {
       let cursor = run.cursorOrderId;
       let processed = run.totalProcessed;
 
-      // eslint-disable-next-line no-constant-condition
       while (true) {
         const batch = await this.fetchNextBatch(run, cursor, batchSize);
         if (batch.length === 0) break;
@@ -340,7 +347,9 @@ export class FeeCorrectionService {
         totalProcessed: processed,
       });
 
-      this.logger.log(`Fee correction run ${run.id} completed. ${processed} orders processed.`);
+      this.logger.log(
+        `Fee correction run ${run.id} completed. ${processed} orders processed.`,
+      );
     } catch (err) {
       await this.runRepo.update(run.id, {
         status: FeeCorrectionRunStatus.INTERRUPTED,
@@ -357,7 +366,9 @@ export class FeeCorrectionService {
   ): Promise<OrderEntity[]> {
     const qb = this.orderRepo
       .createQueryBuilder('order')
-      .where('order.appliedPolicyId = :policyId', { policyId: run.policySnapshotId })
+      .where('order.appliedPolicyId = :policyId', {
+        policyId: run.policySnapshotId,
+      })
       .andWhere('order.createdAt >= :from', { from: run.affectedFrom })
       .andWhere('order.createdAt <= :to', { to: run.affectedTo })
       .andWhere('order.feeBreakdown IS NOT NULL')
@@ -367,7 +378,9 @@ export class FeeCorrectionService {
 
     if (cursor) {
       // Resume: skip orders at or before the cursor position
-      const cursorOrder = await this.orderRepo.findOne({ where: { id: cursor } });
+      const cursorOrder = await this.orderRepo.findOne({
+        where: { id: cursor },
+      });
       if (cursorOrder) {
         qb.andWhere(
           '(order.createdAt > :cursorDate OR (order.createdAt = :cursorDate AND order.id > :cursorId))',
@@ -397,7 +410,10 @@ export class FeeCorrectionService {
         let entryStatus = FeeAdjustmentEntryStatus.APPLIED;
 
         try {
-          correctedBreakdown = await this.recomputeFee(order, run.correctedPolicyId);
+          correctedBreakdown = await this.recomputeFee(
+            order,
+            run.correctedPolicyId,
+          );
         } catch (err) {
           this.logger.warn(
             `Could not recompute fee for order ${order.id}: ${(err as Error).message}`,
@@ -408,13 +424,17 @@ export class FeeCorrectionService {
         }
 
         const deltaDeliveryFee =
-          (correctedBreakdown.deliveryFee ?? 0) - (originalBreakdown.deliveryFee ?? 0);
+          (correctedBreakdown.deliveryFee ?? 0) -
+          (originalBreakdown.deliveryFee ?? 0);
         const deltaPlatformFee =
-          (correctedBreakdown.platformFee ?? 0) - (originalBreakdown.platformFee ?? 0);
+          (correctedBreakdown.platformFee ?? 0) -
+          (originalBreakdown.platformFee ?? 0);
         const deltaPerformanceFee =
-          (correctedBreakdown.performanceFee ?? 0) - (originalBreakdown.performanceFee ?? 0);
+          (correctedBreakdown.performanceFee ?? 0) -
+          (originalBreakdown.performanceFee ?? 0);
         const deltaTotalFee =
-          (correctedBreakdown.totalFee ?? 0) - (originalBreakdown.totalFee ?? 0);
+          (correctedBreakdown.totalFee ?? 0) -
+          (originalBreakdown.totalFee ?? 0);
 
         // Skip zero-delta entries (policy change had no effect on this order)
         if (
@@ -487,27 +507,46 @@ export class FeeCorrectionService {
   ): Promise<OrderEntity['feeBreakdown'] & {}> {
     const policy = await this.feePolicyService.findOne(correctedPolicyId);
 
-    // Reconstruct the FeePreviewDto from the order's stored breakdown
-    // and the corrected policy's parameters.
+    // Use the stored distanceKm from the original fee breakdown.
+    // If not available, refuse to recompute performanceFee to avoid silent corruption.
+    let distanceKm = 0;
+    if (
+      order.feeBreakdown?.distanceKm !== undefined &&
+      order.feeBreakdown.distanceKm !== null
+    ) {
+      distanceKm = order.feeBreakdown.distanceKm;
+    } else {
+      // Distance not persisted; refuse to use a degenerate proxy
+      this.logger.warn(
+        `Order ${order.id} has no stored distanceKm; performanceFee will not be recomputed`,
+      );
+      // distanceKm remains 0 to indicate unknown distance
+    }
+
     const breakdown = await this.feePolicyService.previewFees({
       geographyCode: policy.geographyCode,
       urgencyTier: policy.urgencyTier,
-      distanceKm: order.feeBreakdown?.baseAmount
-        ? order.feeBreakdown.baseAmount / (order.quantity * 100) // reverse-engineer distance proxy
-        : 10,
+      distanceKm: distanceKm,
       serviceLevel: policy.serviceLevel,
       quantity: order.quantity,
     });
 
+    const storedDistance = order.feeBreakdown?.distanceKm ?? 0;
     return {
       deliveryFee: breakdown.deliveryFee,
       platformFee: breakdown.platformFee,
-      performanceFee: breakdown.performanceFee,
+      performanceFee: distanceKm > 0 ? breakdown.performanceFee : 0, // Don't apply performanceFee if distance unknown
       fixedFee: breakdown.fixedFee ?? 0,
-      totalFee: breakdown.totalFee,
+      totalFee:
+        distanceKm > 0
+          ? breakdown.totalFee
+          : breakdown.deliveryFee +
+            breakdown.platformFee +
+            (breakdown.fixedFee ?? 0),
       baseAmount: breakdown.baseAmount,
       appliedPolicyId: correctedPolicyId,
       auditHash: breakdown.auditHash,
+      distanceKm: storedDistance,
     };
   }
 
@@ -531,7 +570,9 @@ export class FeeCorrectionService {
     return Number(result[0]?.total ?? 0);
   }
 
-  private async assertApprovalGranted(run: FeeCorrectionRunEntity): Promise<void> {
+  private async assertApprovalGranted(
+    run: FeeCorrectionRunEntity,
+  ): Promise<void> {
     if (!run.approvalRequestId) return; // No approval required (test/admin bypass)
 
     // The run status is already APPROVED — the listener set it.

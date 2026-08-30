@@ -60,10 +60,12 @@ export class ReconciliationService {
   /**
    * Trigger a new reconciliation run.
    * If a snapshot for a previous interrupted run exists, resumes from that cursor.
+   * Prevents concurrent runs via idempotency key and status checks.
    */
   async triggerRun(
     triggeredBy?: string,
     resumeRunId?: string,
+    idempotencyKey?: string,
   ): Promise<ReconciliationRunEntity> {
     let run: ReconciliationRunEntity;
     let snapshot: ReconciliationSnapshotEntity | null = null;
@@ -89,8 +91,48 @@ export class ReconciliationService {
         });
       }
     } else {
-      run = this.runRepo.create({ triggeredBy: triggeredBy ?? null });
-      await this.runRepo.save(run);
+      // Check if any non-completed run is already in progress
+      const inProgressRun = await this.runRepo.findOne({
+        where: { status: ReconciliationRunStatus.RUNNING },
+      });
+      if (inProgressRun) {
+        throw new BadRequestException(
+          `A reconciliation run is already in progress (ID: ${inProgressRun.id})`,
+        );
+      }
+
+      // Generate or use provided idempotency key
+      const key =
+        idempotencyKey ||
+        `run-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+      // Attempt to create a new run with the idempotency key
+      run = this.runRepo.create({
+        triggeredBy: triggeredBy ?? null,
+        idempotencyKey: key,
+      });
+
+      try {
+        await this.runRepo.save(run);
+      } catch (error) {
+        // Handle unique constraint violation (duplicate idempotency key)
+        const err = error as Record<string, unknown>;
+        if (
+          err.code === 'ER_DUP_ENTRY' ||
+          err.code === 'SQLITE_CONSTRAINT' ||
+          err.code === '23505'
+        ) {
+          const existingRun = await this.runRepo.findOne({
+            where: { idempotencyKey: key },
+          });
+          if (existingRun) {
+            throw new BadRequestException(
+              `A reconciliation run with idempotency key '${key}' already exists (ID: ${existingRun.id})`,
+            );
+          }
+        }
+        throw error;
+      }
 
       snapshot = this.snapshotRepo.create({
         runId: run.id,
