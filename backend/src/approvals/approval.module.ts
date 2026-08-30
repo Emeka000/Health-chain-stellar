@@ -1,6 +1,7 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { OrdersModule } from '../orders/orders.module';
 import { UserActivityModule } from '../user-activity/user-activity.module';
 import { ApprovalDecisionEntity } from './entities/approval-decision.entity';
 import { ApprovalRequestEntity } from './entities/approval-request.entity';
@@ -11,6 +12,7 @@ import { ApprovalService } from './approval.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature([ApprovalRequestEntity, ApprovalDecisionEntity]),
+    forwardRef(() => OrdersModule),
     UserActivityModule,
   ],
   providers: [ApprovalService, ApprovalListener],

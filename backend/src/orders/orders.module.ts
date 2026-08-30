@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -33,7 +33,7 @@ import { OrderStateMachine } from './state-machine/order-state-machine';
     InventoryModule,
     NotificationsModule,
     FeePolicyModule,
-    ApprovalModule,
+    forwardRef(() => ApprovalModule),
     SlaModule,
     EventsModule,
     OrganizationsModule,
