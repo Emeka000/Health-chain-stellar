@@ -358,26 +358,10 @@ export class SorobanService {
         );
       }
 
-      if (state.status === 'confirmed' || state.status === 'final') {
-        this.logger.log('blockchain.transaction.confirmed', {
-          transactionHash: callback.transactionHash,
-          status: state.status,
-          timestamp: new Date().toISOString(),
-        });
-      }
-    } else if (callback.status === 'failed') {
-      this.logger.warn('blockchain.transaction.failed', {
-        transactionHash: callback.transactionHash,
-        status: 'failed',
-        error: callback.details ?? null,
-        timestamp: new Date().toISOString(),
-      });
-    } else if (callback.status === 'pending') {
-      this.logger.log('blockchain.transaction.pending', {
-        transactionHash: callback.transactionHash,
-        status: 'pending',
-        timestamp: new Date().toISOString(),
-      });
+      await this.txStateRepo.save(txState);
+    } else {
+      // Still confirming — persist the updated confirmation count.
+      await this.txStateRepo.save(txState);
     }
   }
 

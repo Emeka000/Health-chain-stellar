@@ -127,16 +127,6 @@ export class InventoryService {
     return { data };
   }
 
-  async getLowStockItems(threshold: number = 10) {
-    const data = await this.inventoryRepo
-      .createQueryBuilder('inventory')
-      .where('inventory.availableUnits <= :threshold', { threshold })
-      .getMany();
-
-    return {
-      message: 'Low stock items retrieved successfully',
-      data,
-    };
   async getLowStockItems(threshold = 10) {
     const data = await this.stockRepo.getLowStock(threshold);
     return { message: 'Low stock items retrieved successfully', data };

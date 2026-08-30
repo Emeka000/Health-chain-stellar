@@ -7,14 +7,13 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { IdempotencyModule } from '../common/idempotency/idempotency.module';
 import { RedisModule } from '../redis/redis.module';
 import { UserActivityModule } from '../user-activity/user-activity.module';
-import { UserEntity } from '../users/entities/user.entity';
 import { TwoFactorAuthEntity } from '../users/entities/two-factor-auth.entity';
+import { UserEntity } from '../users/entities/user.entity';
 
 import { AuthController } from './auth.controller';
-import { PermissionsController } from './permissions.controller';
 import { AuthService } from './auth.service';
-import { EmailVerificationEntity } from './entities/email-verification.entity';
 import { AuthSessionEntity } from './entities/auth-session.entity';
+import { EmailVerificationEntity } from './entities/email-verification.entity';
 import { PasswordResetTokenEntity } from './entities/password-reset-token.entity';
 import { RolePermissionEntity } from './entities/role-permission.entity';
 import { RoleEntity } from './entities/role.entity';
@@ -25,23 +24,36 @@ import { JwtStrategy } from './jwt.strategy';
 import { MfaController } from './mfa/mfa.controller';
 import { MfaService } from './mfa/mfa.service';
 import { PasswordResetService } from './password-reset.service';
+import { PermissionsController } from './permissions.controller';
 import { PermissionsService } from './permissions.service';
 import { AuthSessionRepository } from './repositories/auth-session.repository';
 import { ScopeResolutionService } from './scope-resolution.service';
 import { SessionRiskService } from './session-risk.service';
+import { WsAuthService } from './ws-auth.service';
 
+import type { JwtModuleOptions } from '@nestjs/jwt';
+
+/**
+ * AuthModule dependency audit (Issue #1011):
+ * - Imports: UserActivityModule (audit logging)
+ * - Imported by: BloodUnitsModule, BloodRequestsModule, and others
+ * - Risk: Circular dependency if UserActivityModule imports BloodUnitsModule, BloodRequestsModule, or AuthModule
+ * - Status: No circular dependency detected. UserActivityModule is standalone.
+ * - PermissionsService can safely be imported by feature modules.
+ */
 @Module({
   imports: [
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => {
-        const expiresIn = configService.get<string>('JWT_EXPIRES_IN') ?? '1h';
+      useFactory: (configService: ConfigService): JwtModuleOptions => {
+        const expiresIn = (configService.get<string>('JWT_EXPIRES_IN') ??
+          '1h') as NonNullable<JwtModuleOptions['signOptions']>['expiresIn'];
         return {
           secret: configService.get<string>('JWT_SECRET') ?? 'default-secret',
           signOptions: {
-            expiresIn: expiresIn as any,
+            expiresIn,
           },
         };
       },
@@ -59,11 +71,12 @@ import { SessionRiskService } from './session-risk.service';
     IdempotencyModule,
     UserActivityModule,
   ],
-  controllers: [AuthController, PermissionsController],
+  controllers: [AuthController, PermissionsController, MfaController],
   providers: [
     AuthService,
     MfaService,
     PasswordResetService,
+    JwtKeyService,
     JwtStrategy,
     JwtAuthGuard,
     PermissionsGuard,
@@ -71,11 +84,13 @@ import { SessionRiskService } from './session-risk.service';
     AuthSessionRepository,
     ScopeResolutionService,
     SessionRiskService,
+    WsAuthService,
   ],
   exports: [
     AuthService,
     MfaService,
     PasswordResetService,
+    JwtKeyService,
     JwtStrategy,
     JwtAuthGuard,
     PermissionsGuard,
@@ -84,6 +99,7 @@ import { SessionRiskService } from './session-risk.service';
     JwtModule,
     AuthSessionRepository,
     SessionRiskService,
+    WsAuthService,
   ],
 })
 export class AuthModule {}

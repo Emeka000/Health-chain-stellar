@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 
 import {
+  BadRequestException,
   Controller,
   Get,
   HttpCode,
@@ -26,7 +27,11 @@ import {
 } from '@nestjs/swagger';
 import { Response } from 'express';
 
-import { MediaProcessingService, MediaUploadContext } from './media-processing.service';
+import {
+  MEDIA_OWNER_TYPES,
+  MediaProcessingService,
+  MediaUploadContext,
+} from './media-processing.service';
 
 @ApiTags('Media Processing')
 @ApiBearerAuth()
@@ -54,7 +59,7 @@ export class MediaProcessingController {
       properties: {
         file: { type: 'string', format: 'binary' },
         category: { type: 'string', enum: ['profile', 'evidence', 'medical', 'signature'] },
-        ownerType: { type: 'string' },
+        ownerType: { type: 'string', enum: [...MEDIA_OWNER_TYPES] },
       },
       required: ['file', 'category'],
     },
@@ -67,16 +72,23 @@ export class MediaProcessingController {
     @Query('ownerType') ownerType: string,
     @Request() req: any,
   ) {
+    const resolvedOwnerType = ownerType ?? 'user';
+    if (!MEDIA_OWNER_TYPES.includes(resolvedOwnerType as MediaUploadContext['ownerType'])) {
+      throw new BadRequestException(
+        `Invalid ownerType. Must be one of: ${MEDIA_OWNER_TYPES.join(', ')}`,
+      );
+    }
+
     const context: MediaUploadContext = {
       ownerId: req.user?.id ?? 'anonymous',
-      ownerType: ownerType ?? 'user',
+      ownerType: resolvedOwnerType as MediaUploadContext['ownerType'],
       category: (category ?? 'profile') as MediaUploadContext['category'],
     };
     const result = await this.mediaService.ingest(file, context);
 
     // Issue a signed URL for the approved file
     const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const signed = this.mediaService.issueSignedUrl(result.fileId, context.ownerId, baseUrl);
+    const signed = await this.mediaService.issueSignedUrl(result.fileId, context.ownerId, baseUrl);
 
     return { ...result, signedUrl: signed };
   }

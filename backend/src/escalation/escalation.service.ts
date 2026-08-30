@@ -142,7 +142,7 @@ export class EscalationService {
 
     this.eventEmitter.emit(
       'escalation.acknowledged',
-      new EscalationAcknowledgedEvent(escalationId, actor.userId),
+      new EscalationAcknowledgedEvent(escalationId, actor.userId, escalation.hospitalId),
     );
 
     return escalation;

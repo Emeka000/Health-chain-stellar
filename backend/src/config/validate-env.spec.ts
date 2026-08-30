@@ -33,7 +33,7 @@ describe('validateEnv', () => {
 
       expect(result.DATABASE_NAME).toBe('healthchain');
       expect(result.JWT_SECRET).toBe('super-secret-key-that-is-long-enough');
-      expect(result.PORT).toBe(3000); // default
+      expect(result.PORT).toBe(3001); // default
       expect(result.NODE_ENV).toBe('development'); // default
       expect(result.REDIS_HOST).toBe('localhost'); // default
     });

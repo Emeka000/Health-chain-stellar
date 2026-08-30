@@ -7,6 +7,8 @@ export const SUPPORTED_CONTRACT_EVENT_SCHEMA_VERSIONS = [
 ] as const;
 
 export type EventLike = {
+  eventType?: string;
+  transactionHash?: string;
   eventData?: Record<string, unknown> | null;
   topics?: unknown[] | null;
 };
@@ -49,6 +51,62 @@ export function assertSupportedContractEventSchemaVersion(
     throw new UnsupportedContractEventSchemaVersionError(version);
   }
   return version;
+}
+
+export type ContractEventDecoder<T = Record<string, unknown>> = (
+  event: EventLike,
+) => T;
+
+export interface EventDecoderRegistration {
+  eventType: string;
+  schemaVersion: number;
+  decoder: ContractEventDecoder;
+}
+
+export interface PartialEventMetadata {
+  schemaVersion: number;
+  eventType?: string;
+  transactionHash?: string;
+}
+
+const decoderRegistry = new Map<string, ContractEventDecoder>();
+
+function decoderKey(eventType: string, schemaVersion: number): string {
+  return `${eventType}::${schemaVersion}`;
+}
+
+/** Registers a decoder for a given event type + schema version pair. */
+export function registerEventDecoder(
+  registration: EventDecoderRegistration,
+): void {
+  decoderRegistry.set(
+    decoderKey(registration.eventType, registration.schemaVersion),
+    registration.decoder,
+  );
+}
+
+/**
+ * Attempts to decode an event using the decoder registered for its type and
+ * schema version. Returns `undefined` (rather than throwing) when no decoder
+ * is registered for that combination, so callers can quarantine the event.
+ * Throws `UnsupportedContractEventSchemaVersionError` if the schema version
+ * itself is not one this build knows how to handle.
+ */
+export function tryDecodeEvent(
+  event: EventLike & { eventType: string },
+): Record<string, unknown> | undefined {
+  const version = assertSupportedContractEventSchemaVersion(event);
+  const decoder = decoderRegistry.get(decoderKey(event.eventType, version));
+  return decoder ? decoder(event) : undefined;
+}
+
+/** Best-effort metadata for quarantine logging when an event can't be decoded. */
+export function extractPartialMetadata(event: EventLike): PartialEventMetadata {
+  return {
+    schemaVersion: getContractEventSchemaVersion(event),
+    eventType: event.eventType,
+    transactionHash: event.transactionHash,
+  };
 }
 
 function parseTopicVersion(topic: unknown): number | undefined {

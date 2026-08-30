@@ -40,10 +40,10 @@ async function bootstrap() {
   }
 
   app.useGlobalFilters(
-    new ValidationExceptionFilter(isProduction),
-    new ThrottlerExceptionFilter(isProduction),
-    new AppErrorFilter(isProduction),
     new AllExceptionsFilter(isProduction),
+    new AppErrorFilter(isProduction),
+    new ThrottlerExceptionFilter(isProduction),
+    new ValidationExceptionFilter(isProduction),
   );
 
   // Global validation pipe
@@ -85,7 +85,7 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('docs', app, document);
 
-  const port = configService.get<number>('PORT', 3000);
+  const port = configService.get<number>('PORT', 3001);
   await app.listen(port);
 
   logger.log(

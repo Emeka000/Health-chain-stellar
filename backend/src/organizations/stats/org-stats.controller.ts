@@ -11,10 +11,14 @@ import { Response } from 'express';
 import { OrgStatsService } from './org-stats.service';
 import { exportToExcel, exportToPdf } from './export.helper';
 
+@ApiTags('Organizations')
+@ApiBearerAuth()
 @Controller('api/v1/organization/stats')
 export class OrgStatsController {
   constructor(private readonly statsService: OrgStatsService) {}
 
+  @ApiOperation({ summary: 'Get :orgId' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':orgId')
   async getStats(
     @Param('orgId', ParseUUIDPipe) orgId: string,
@@ -23,6 +27,8 @@ export class OrgStatsController {
     return this.statsService.getStats(orgId, req.user.organizationId);
   }
 
+  @ApiOperation({ summary: 'Get :orgId export' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':orgId/export')
   async exportStats(
     @Param('orgId', ParseUUIDPipe) orgId: string,

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -27,6 +28,7 @@ import { BloodStatus } from './enums/blood-status.enum';
 interface AuthenticatedUserContext {
   id: string;
   role: string;
+  organizationId?: string | null;
 }
 
 export const ALLOWED_TRANSITIONS: Record<BloodStatus, BloodStatus[]> = {
@@ -85,6 +87,8 @@ export class BloodStatusService {
     if (!unit) {
       throw new NotFoundException(`Blood unit ${unitId} not found`);
     }
+
+    this.assertOwnsUnit(unit, user);
 
     this.validateTransition(unit.status, dto.status);
 
@@ -167,6 +171,8 @@ export class BloodStatusService {
     if (!unit) {
       throw new NotFoundException(`Blood unit ${unitId} not found`);
     }
+
+    this.assertOwnsUnit(unit, user);
 
     if (unit.status !== BloodStatus.AVAILABLE) {
       throw new ConflictException(
@@ -277,6 +283,21 @@ export class BloodStatusService {
 
   isValidTransition(from: BloodStatus, to: BloodStatus): boolean {
     return ALLOWED_TRANSITIONS[from]?.includes(to) ?? false;
+  }
+
+  private assertOwnsUnit(
+    unit: BloodUnit,
+    user?: AuthenticatedUserContext,
+  ): void {
+    if (!user || user.role === 'admin') {
+      return;
+    }
+
+    if (unit.organizationId !== user.organizationId) {
+      throw new ForbiddenException(
+        `You do not have permission to modify blood unit ${unit.id}`,
+      );
+    }
   }
 
   private validateTransition(from: BloodStatus, to: BloodStatus): void {

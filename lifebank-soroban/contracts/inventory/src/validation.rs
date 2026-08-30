@@ -27,7 +27,7 @@ pub fn validate_blood_type(blood_type: BloodType) -> Result<(), ContractError> {
 
 /// Validate blood quantity is within acceptable range (100-600ml)
 pub fn validate_quantity(quantity_ml: u32) -> Result<(), ContractError> {
-    if quantity_ml < 100 || quantity_ml > 600 {
+    if !(100..=600).contains(&quantity_ml) {
         return Err(ContractError::InvalidQuantity);
     }
     Ok(())

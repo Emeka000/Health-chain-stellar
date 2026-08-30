@@ -6,7 +6,12 @@ import { useRouteDeviations } from "@/lib/hooks/useRouteDeviations";
 import { useAuthStore } from "@/lib/stores/auth.store";
 import type { RouteDeviationIncident } from "@/lib/types/route-deviation";
 
-import DeviationIncidentCard from "./DeviationIncidentCard";
+import dynamic from "next/dynamic";
+
+const DeviationIncidentCard = dynamic(() => import("./DeviationIncidentCard"), {
+  ssr: false,
+  loading: () => <div className="h-48 bg-gray-100 rounded-2xl animate-pulse" />,
+});
 
 const SEVERITY_ORDER: Record<string, number> = { severe: 0, moderate: 1, minor: 2 };
 

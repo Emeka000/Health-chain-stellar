@@ -4,13 +4,19 @@ import {
   Post,
   Param,
   Query,
+  Req,
   Res,
   HttpStatus,
   UseGuards,
   ValidationPipe,
-  ParseBoolPipe,
   DefaultValuePipe,
 } from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Response } from 'express';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -19,9 +25,17 @@ import { RequirePermissions } from '../auth/decorators/require-permissions.decor
 import { Permission } from '../auth/enums/permission.enum';
 
 import { ReportingService } from './reporting.service';
-import { ReportViewRefreshService, MaterializedViewName } from './report-view-refresh.service';
-import { ReportingQueryDto, ReportSummaryQueryDto } from './dto/reporting-query.dto';
+import {
+  ReportViewRefreshService,
+  MaterializedViewName,
+} from './report-view-refresh.service';
+import {
+  ReportingQueryDto,
+  ReportSummaryQueryDto,
+} from './dto/reporting-query.dto';
 
+@ApiTags('Reporting')
+@ApiBearerAuth()
 @Controller('reporting')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class ReportingController {
@@ -34,13 +48,16 @@ export class ReportingController {
    * Multi-domain search with pagination.
    * Supports page/pageSize (preferred) or legacy limit/offset.
    */
+  @ApiOperation({ summary: 'Get search' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('search')
   @RequirePermissions(Permission.READ_ANALYTICS)
   async search(
+    @Req() req: { user?: { role?: string; organizationId?: string | null } },
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     filters: ReportingQueryDto,
   ) {
-    return this.reportingService.search(filters);
+    return this.reportingService.search(filters, req.user);
   }
 
   /**
@@ -48,46 +65,71 @@ export class ReportingController {
    * Served from materialized views when fresh; falls back to live queries.
    * Staleness metadata is always included in the response.
    */
+  @ApiOperation({ summary: 'Get summary' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('summary')
   @RequirePermissions(Permission.READ_ANALYTICS)
   async getSummary(
+    @Req() req: { user?: { role?: string; organizationId?: string | null } },
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     filters: ReportSummaryQueryDto,
   ) {
-    return this.reportingService.getSummary(filters, filters.forceLive);
+    return this.reportingService.getSummary(
+      filters,
+      filters.forceLive,
+      req.user,
+    );
   }
 
   /**
    * Pre-aggregated daily order summary from materialized view.
    * Supports optional date range and pagination.
    */
+  @ApiOperation({ summary: 'Get orders daily summary' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('orders/daily-summary')
   @RequirePermissions(Permission.READ_ANALYTICS)
   async getOrderDailySummary(
+    @Req() req: { user?: { role?: string; organizationId?: string | null } },
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
     @Query('page', new DefaultValuePipe(1)) page?: number,
     @Query('pageSize', new DefaultValuePipe(50)) pageSize?: number,
   ) {
-    return this.reportingService.getOrderDailySummary(startDate, endDate, page, pageSize);
+    return this.reportingService.getOrderDailySummary(
+      startDate,
+      endDate,
+      page,
+      pageSize,
+      req.user,
+    );
   }
 
   /**
    * Blood unit inventory snapshot from materialized view.
    */
+  @ApiOperation({ summary: 'Get units inventory' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('units/inventory')
   @RequirePermissions(Permission.READ_ANALYTICS)
   async getBloodUnitInventory(
+    @Req() req: { user?: { role?: string; organizationId?: string | null } },
     @Query('bloodType') bloodType?: string,
     @Query('status') status?: string,
   ) {
-    return this.reportingService.getBloodUnitInventory(bloodType, status);
+    return this.reportingService.getBloodUnitInventory(
+      bloodType,
+      status,
+      req.user,
+    );
   }
 
   /**
    * Returns freshness metadata for all materialized views.
    * Consumers use this to decide whether to request a refresh.
    */
+  @ApiOperation({ summary: 'Get views freshness' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('views/freshness')
   @RequirePermissions(Permission.READ_ANALYTICS)
   async getViewFreshness() {
@@ -98,16 +140,22 @@ export class ReportingController {
    * Trigger a manual refresh of a specific materialized view.
    * Requires ADMIN_ACCESS permission.
    */
+  @ApiOperation({ summary: 'Post views :viewName refresh' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('views/:viewName/refresh')
   @RequirePermissions(Permission.ADMIN_ACCESS)
   async refreshView(@Param('viewName') viewName: string) {
-    return this.reportingService.triggerViewRefresh(viewName as MaterializedViewName);
+    return this.reportingService.triggerViewRefresh(
+      viewName as MaterializedViewName,
+    );
   }
 
   /**
    * Trigger refresh of all materialized views.
    * Requires ADMIN_ACCESS permission.
    */
+  @ApiOperation({ summary: 'Post views refresh all' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('views/refresh-all')
   @RequirePermissions(Permission.ADMIN_ACCESS)
   async refreshAllViews() {
@@ -118,14 +166,17 @@ export class ReportingController {
    * Excel export endpoint.
    * Capped at 10 000 rows per domain.
    */
+  @ApiOperation({ summary: 'Get export' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('export')
   @RequirePermissions(Permission.READ_ANALYTICS)
   async export(
+    @Req() req: { user?: { role?: string; organizationId?: string | null } },
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     filters: ReportingQueryDto,
     @Res() res: Response,
   ) {
-    const buffer = await this.reportingService.exportToExcel(filters);
+    const buffer = await this.reportingService.exportToExcel(filters, req.user);
 
     res.set({
       'Content-Type':

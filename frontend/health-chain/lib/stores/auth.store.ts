@@ -37,17 +37,26 @@ const initialState: AuthState = {
   isAuthenticated: false,
 };
 
+function syncAuthCookie(isAuthenticated: boolean, accessToken: string | null): void {
+  if (typeof window === 'undefined') return;
+  if (isAuthenticated && accessToken) {
+    const value = encodeURIComponent(
+      JSON.stringify({ state: { isAuthenticated: true, accessToken } })
+    );
+    document.cookie = `auth-storage=${value}; path=/; SameSite=Lax`;
+  } else {
+    document.cookie = 'auth-storage=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';
+  }
+}
+
 export const useAuthStore = create<AuthStore>()(
   persist(
     (set) => ({
       ...initialState,
 
       setTokens: (accessToken: string, refreshToken: string) => {
-        set({
-          accessToken,
-          refreshToken,
-          isAuthenticated: true,
-        });
+        set({ accessToken, refreshToken, isAuthenticated: true });
+        syncAuthCookie(true, accessToken);
       },
 
       setUser: (user: User) => {
@@ -56,10 +65,12 @@ export const useAuthStore = create<AuthStore>()(
 
       updateAccessToken: (accessToken: string) => {
         set({ accessToken });
+        syncAuthCookie(true, accessToken);
       },
 
       clearAuth: () => {
         set(initialState);
+        syncAuthCookie(false, null);
       },
     }),
     {

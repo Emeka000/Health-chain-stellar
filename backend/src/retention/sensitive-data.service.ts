@@ -399,7 +399,102 @@ export class SensitiveDataService {
       take: 1000, // Limit for admin UI
     });
   }
-}
+
+  /**
+   * Purge all PII for a user - permanent deletion after consent withdrawal
+   */
+  async purgeUserData(userId: string): Promise<void> {
+    this.logger.log(`Starting purge of user data for userId: ${userId}`);
+
+    const redactions = await this.dataRedactionRepository.find({
+      where: { executedByUserId: userId, status: RedactionStatus.COMPLETED },
+    });
+
+    for (const redaction of redactions) {
+      const deleteData: any = {};
+      deleteData[redaction.fieldName] = null;
+
+      switch (redaction.entityType) {
+        case 'blood_unit':
+          await this.bloodUnitRepository.update(redaction.entityId, deleteData);
+          break;
+        case 'rider':
+          await this.riderRepository.update(redaction.entityId, deleteData);
+          break;
+        case 'organization':
+          await this.organizationRepository.update(redaction.entityId, deleteData);
+          break;
+        case 'location_history':
+          await this.locationHistoryRepository.update(redaction.entityId, deleteData);
+          break;
+      }
+    }
+
+    this.logger.log(`Purged ${redactions.length} PII fields for userId: ${userId}`);
+  }
+
+  /**
+   * Anonymise a record by replacing identifying fields with anonymized values
+   */
+  async anonymiseRecord(entity: any): Promise<void> {
+    if (!entity || !entity.id) {
+      throw new Error('Invalid entity for anonymization');
+    }
+
+    const updateData: any = {};
+
+    switch (entity.constructor.name) {
+      case 'BloodUnit':
+        updateData.donorId = 'ANON-' + Math.random().toString(36).substring(2, 15);
+        updateData.storageLocation = '[ANONYMIZED]';
+        if (entity.testResults) {
+          updateData.testResults = { anonymized: true };
+        }
+        await this.bloodUnitRepository.update(entity.id, updateData);
+        break;
+
+      case 'RiderEntity':
+        updateData.latitude = 0;
+        updateData.longitude = 0;
+        updateData.identityDocumentUrl = '[ANONYMIZED]';
+        updateData.vehicleDocumentUrl = '[ANONYMIZED]';
+        await this.riderRepository.update(entity.id, updateData);
+        break;
+
+      case 'OrganizationEntity':
+        updateData.verificationDocuments = { anonymized: true };
+        updateData.licenseDocumentPath = '[ANONYMIZED]';
+        updateData.certificateDocumentPath = '[ANONYMIZED]';
+        updateData.rejectionReason = '[ANONYMIZED]';
+        await this.organizationRepository.update(entity.id, updateData);
+        break;
+
+      case 'LocationHistoryEntity':
+        updateData.latitude = 0;
+        updateData.longitude = 0;
+        updateData.accuracy = 0;
+        updateData.speed = 0;
+        updateData.heading = 0;
+        updateData.altitude = 0;
+        await this.locationHistoryRepository.update(entity.id, updateData);
+        break;
+
+      default:
+        throw new Error(`Unknown entity type for anonymization: ${entity.constructor.name}`);
+    }
+
+    this.logger.log(`Anonymized ${entity.constructor.name} record: ${entity.id}`);
+  }
+
+  private async executeSingleRedaction(redaction: DataRedactionEntity, userId?: string): Promise<void> {
+    let originalValue: any;
+
+    switch (redaction.entityType) {
+      case 'blood_unit':
+        const bloodUnit = await this.bloodUnitRepository.findOne({ where: { id: redaction.entityId } });
+        if (bloodUnit) {
+          originalValue = (bloodUnit as any)[redaction.fieldName];
+        }
         break;
 
       case 'rider':
@@ -425,7 +520,6 @@ export class SensitiveDataService {
     }
 
     if (originalValue === null || originalValue === undefined) {
-      // Field is already empty, mark as completed
       redaction.status = RedactionStatus.COMPLETED;
       redaction.executedAt = new Date();
       redaction.executedByUserId = userId;
@@ -433,10 +527,8 @@ export class SensitiveDataService {
       return;
     }
 
-    // Store original value
     redaction.originalValue = typeof originalValue === 'object' ? JSON.stringify(originalValue) : String(originalValue);
 
-    // Apply redaction based on field type
     let redactedValue: string;
 
     switch (redaction.fieldType) {
@@ -450,7 +542,6 @@ export class SensitiveDataService {
         break;
 
       case SensitiveFieldType.COORDINATES:
-        // For coordinates, we can round to reduce precision or set to null
         redactedValue = '0.000000';
         break;
 
@@ -464,7 +555,6 @@ export class SensitiveDataService {
 
     redaction.redactedValue = redactedValue;
 
-    // Update the entity
     const updateData: any = {};
     updateData[redaction.fieldName] = redaction.fieldType === SensitiveFieldType.COORDINATES ? parseFloat(redactedValue) : redactedValue;
 
@@ -486,7 +576,6 @@ export class SensitiveDataService {
         break;
     }
 
-    // Mark redaction as completed
     redaction.status = RedactionStatus.COMPLETED;
     redaction.executedAt = new Date();
     redaction.executedByUserId = userId;

@@ -251,6 +251,8 @@ describe('IncidentReviewsService - Workflow Automation', () => {
         });
     });
 
+    const mockActor = { userId: 'user-456', role: 'admin', organizationId: null };
+
     describe('completeCorrectiveAction', () => {
         it('should complete corrective action', async () => {
             const actionId = 'action-123';
@@ -273,6 +275,7 @@ describe('IncidentReviewsService - Workflow Automation', () => {
             };
 
             mockActionRepo.findOne.mockResolvedValueOnce(mockAction);
+            mockReviewRepo.findOne.mockResolvedValue({ id: 'review-123', hospitalId: null, bloodBankId: null });
             mockActionRepo.update.mockResolvedValue({});
             mockActionRepo.findOne.mockResolvedValueOnce(mockUpdated);
 
@@ -280,6 +283,7 @@ describe('IncidentReviewsService - Workflow Automation', () => {
                 actionId,
                 dto,
                 'user-456',
+                mockActor,
             );
 
             expect(result).toEqual(mockUpdated);
@@ -301,12 +305,14 @@ describe('IncidentReviewsService - Workflow Automation', () => {
             const mockAction = {
                 id: actionId,
                 status: CorrectiveActionStatus.COMPLETED,
+                reviewId: 'review-123',
             };
 
             mockActionRepo.findOne.mockResolvedValue(mockAction);
+            mockReviewRepo.findOne.mockResolvedValue({ id: 'review-123', hospitalId: null, bloodBankId: null });
 
             await expect(
-                service.completeCorrectiveAction(actionId, dto, 'user-456'),
+                service.completeCorrectiveAction(actionId, dto, 'user-456', mockActor),
             ).rejects.toThrow('Action already completed');
         });
     });
@@ -333,6 +339,7 @@ describe('IncidentReviewsService - Workflow Automation', () => {
             };
 
             mockActionRepo.findOne.mockResolvedValueOnce(mockAction);
+            mockReviewRepo.findOne.mockResolvedValue({ id: 'review-123', hospitalId: null, bloodBankId: null });
             mockActionRepo.update.mockResolvedValue({});
             mockActionRepo.find.mockResolvedValue([mockUpdated]);
             mockActionRepo.findOne.mockResolvedValueOnce(mockUpdated);
@@ -342,6 +349,7 @@ describe('IncidentReviewsService - Workflow Automation', () => {
                 actionId,
                 dto,
                 'user-789',
+                mockActor,
             );
 
             expect(result).toEqual(mockUpdated);
@@ -366,12 +374,14 @@ describe('IncidentReviewsService - Workflow Automation', () => {
             const mockAction = {
                 id: actionId,
                 status: CorrectiveActionStatus.PENDING,
+                reviewId: 'review-123',
             };
 
             mockActionRepo.findOne.mockResolvedValue(mockAction);
+            mockReviewRepo.findOne.mockResolvedValue({ id: 'review-123', hospitalId: null, bloodBankId: null });
 
             await expect(
-                service.verifyCorrectiveAction(actionId, dto, 'user-789'),
+                service.verifyCorrectiveAction(actionId, dto, 'user-789', mockActor),
             ).rejects.toThrow('Action must be completed before verification');
         });
     });

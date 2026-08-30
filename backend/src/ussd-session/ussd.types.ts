@@ -27,6 +27,7 @@ export interface UssdSession {
   sessionNonce: string;
   sequenceNumber: number;
   userId?: string;
+  pendingLoginPhone?: string;
   selectedBloodType?: string;
   selectedQuantity?: number;
   selectedBloodBankId?: string;

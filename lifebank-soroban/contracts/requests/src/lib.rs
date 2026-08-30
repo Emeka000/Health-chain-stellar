@@ -1,4 +1,5 @@
 #![no_std]
+#![deny(deprecated)]
 
 mod error;
 mod events;
@@ -22,18 +23,32 @@ mod inventory_client {
     use soroban_sdk::{contractclient, Address, Env};
 
     #[contractclient(name = "InventoryContractClient")]
+    #[allow(dead_code)]
     pub trait InventoryContractInterface {
         fn release_reservation(env: Env, caller: Address, reservation_id: u64);
+        fn release_reservation_by_contract(
+            env: Env,
+            authorized_contract: Address,
+            reservation_id: u64,
+        );
     }
 }
 
 use inventory_client::InventoryContractClient;
+
+const CONTRACT_VERSION: u32 = 1;
+
+/// Maximum number of entries accepted by `batch_create_requests`.
+/// Mirrors the sibling matching contract's `MAX_BATCH_SIZE` so callers hit a
+/// dedicated error instead of the instruction or storage-write limit.
+const MAX_BATCH_SIZE: u32 = 50;
 
 #[contract]
 pub struct RequestContract;
 
 #[contractimpl]
 impl RequestContract {
+    #[allow(clippy::too_many_arguments)]
     fn append_history(
         env: &Env,
         request: &mut BloodRequest,
@@ -58,7 +73,7 @@ impl RequestContract {
     }
 
     fn ensure_non_empty_reason(reason: &String) -> Result<(), ContractError> {
-        if reason.len() == 0 {
+        if reason.is_empty() {
             Err(ContractError::InvalidReason)
         } else {
             Ok(())
@@ -81,8 +96,11 @@ impl RequestContract {
         if let Some(res_id) = request.reservation_id {
             let inventory_addr = storage::get_inventory_contract(env);
             let inv_client = InventoryContractClient::new(env, &inventory_addr);
-            let admin = storage::get_admin(env);
-            inv_client.release_reservation(&admin, &res_id);
+            let requests_contract = env.current_contract_address();
+            // Use cross-contract authorization: the requests contract itself is
+            // the authorized intermediary. The inventory contract verifies that
+            // this function is called FROM the requests contract address.
+            inv_client.release_reservation_by_contract(&requests_contract, &res_id);
             request.reservation_id = None;
             true
         } else {
@@ -111,6 +129,10 @@ impl RequestContract {
         events::emit_initialized(&env, &admin, &inventory_contract);
 
         Ok(())
+    }
+
+    pub fn version(_env: Env) -> u32 {
+        CONTRACT_VERSION
     }
 
     pub fn authorize_hospital(env: Env, hospital: Address) -> Result<(), ContractError> {
@@ -188,6 +210,7 @@ impl RequestContract {
             assigned_units: soroban_sdk::Vec::new(&env),
             fulfilled_quantity_ml: 0,
             reservation_id: None,
+            fulfilled_by: None,
             history: soroban_sdk::Vec::new(&env),
         };
         let mut request = request;
@@ -204,6 +227,7 @@ impl RequestContract {
         );
 
         storage::set_request(&env, &request);
+        storage::append_to_hospital_requests(&env, &hospital, request_id);
         events::emit_request_created(&env, &request);
 
         Ok(request_id)
@@ -213,6 +237,7 @@ impl RequestContract {
     /// Each tuple is `(blood_type, component, quantity_ml, urgency, required_by_timestamp)`.
     /// Returns the Vec of new request IDs in input order.
     /// Validates all items first, then writes all atomically.
+    /// Rejects batches larger than `MAX_BATCH_SIZE` before either pass begins.
     pub fn batch_create_requests(
         env: Env,
         hospital: Address,
@@ -221,13 +246,16 @@ impl RequestContract {
         hospital.require_auth();
         storage::require_initialized(&env)?;
 
+        if entries.len() > MAX_BATCH_SIZE {
+            return Err(ContractError::BatchTooLarge);
+        }
+
         if !storage::is_hospital_authorized(&env, &hospital) {
             return Err(ContractError::NotAuthorizedHospital);
         }
 
         for i in 0..entries.len() {
-            let (_, _, quantity_ml, _, required_by_timestamp) =
-                entries.get(i).unwrap();
+            let (_, _, quantity_ml, _, required_by_timestamp) = entries.get(i).unwrap();
             validation::validate_timestamp(&env, required_by_timestamp)?;
             validation::validate_quantity(quantity_ml)?;
         }
@@ -251,6 +279,7 @@ impl RequestContract {
                 assigned_units: soroban_sdk::Vec::new(&env),
                 fulfilled_quantity_ml: 0,
                 reservation_id: None,
+                fulfilled_by: None,
                 history: soroban_sdk::Vec::new(&env),
             };
             let mut request = request;
@@ -266,6 +295,7 @@ impl RequestContract {
                 false,
             );
             storage::set_request(&env, &request);
+            storage::append_to_hospital_requests(&env, &hospital, request_id);
             events::emit_request_created(&env, &request);
             ids.push_back(request_id);
         }
@@ -284,8 +314,8 @@ impl RequestContract {
         storage::require_initialized(&env)?;
         Self::ensure_non_empty_reason(&reason)?;
 
-        let mut request = storage::get_request(&env, request_id)
-            .ok_or(ContractError::RequestNotFound)?;
+        let mut request =
+            storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
 
         let admin = storage::get_admin(&env);
         if caller != request.hospital_id && caller != admin {
@@ -313,12 +343,7 @@ impl RequestContract {
         );
         storage::set_request(&env, &request);
 
-        events::emit_request_cancelled(
-            &env,
-            request_id,
-            &caller,
-            env.ledger().timestamp(),
-        );
+        events::emit_request_cancelled(&env, request_id, &caller, env.ledger().timestamp());
 
         Ok(())
     }
@@ -340,8 +365,8 @@ impl RequestContract {
             return Err(ContractError::Unauthorized);
         }
 
-        let mut request = storage::get_request(&env, request_id)
-            .ok_or(ContractError::RequestNotFound)?;
+        let mut request =
+            storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
 
         if request.status == new_status {
             return Err(ContractError::InvalidRequestStatus);
@@ -363,7 +388,9 @@ impl RequestContract {
                 released_reservation = Self::release_reservation_if_present(&env, &mut request);
             }
             RequestStatus::Fulfilled => {
-                let remaining = request.quantity_ml.saturating_sub(request.fulfilled_quantity_ml);
+                let remaining = request
+                    .quantity_ml
+                    .saturating_sub(request.fulfilled_quantity_ml);
                 fulfilled_delta_ml = remaining;
                 request.fulfilled_quantity_ml = request.quantity_ml;
             }
@@ -419,11 +446,14 @@ impl RequestContract {
 
         let mut request =
             storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
-        if request.status != RequestStatus::Approved && request.status != RequestStatus::InProgress {
+        if request.status != RequestStatus::Approved && request.status != RequestStatus::InProgress
+        {
             return Err(ContractError::InvalidRequestStatus);
         }
 
-        let remaining = request.quantity_ml.saturating_sub(request.fulfilled_quantity_ml);
+        let remaining = request
+            .quantity_ml
+            .saturating_sub(request.fulfilled_quantity_ml);
         if fulfilled_delta_ml > remaining {
             return Err(ContractError::InvalidQuantity);
         }
@@ -460,12 +490,101 @@ impl RequestContract {
         Ok(())
     }
 
+    /// Set the inventory reservation ID for a request. Admin only.
+    /// Called when units are reserved against a request so cancellation can release them.
+    /// Rejects overwrite of an existing reservation (which would orphan inventory units)
+    /// and only accepts requests in Approved or InProgress status.
+    pub fn set_reservation_id(
+        env: Env,
+        caller: Address,
+        request_id: u64,
+        reservation_id: u64,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        storage::require_initialized(&env)?;
+
+        let admin = storage::get_admin(&env);
+        if caller != admin {
+            return Err(ContractError::Unauthorized);
+        }
+
+        let mut request =
+            storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
+
+        match request.status {
+            RequestStatus::Approved | RequestStatus::InProgress => {}
+            _ => return Err(ContractError::InvalidRequestStatus),
+        }
+
+        if request.reservation_id.is_some() {
+            return Err(ContractError::ReservationAlreadySet);
+        }
+
+        request.reservation_id = Some(reservation_id);
+        let status = request.status;
+        Self::append_history(
+            &env,
+            &mut request,
+            &caller,
+            status,
+            false,
+            status,
+            String::from_str(&env, "Reservation ID set"),
+            0,
+            false,
+        );
+        storage::set_request(&env, &request);
+
+        events::emit_reservation_id_set(
+            &env,
+            request_id,
+            &caller,
+            reservation_id,
+            env.ledger().timestamp(),
+        );
+
+        Ok(())
+    }
+
+    /// Record which organization (blood bank) fulfilled a request.
+    /// Authorized blood banks can set themselves as the fulfilling org; admin can set any org.
+    pub fn set_fulfilling_org(
+        env: Env,
+        caller: Address,
+        request_id: u64,
+        org_id: Address,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        storage::require_initialized(&env)?;
+
+        let admin = storage::get_admin(&env);
+        let is_admin = caller == admin;
+        let is_authorized_blood_bank = storage::is_blood_bank_authorized(&env, &caller);
+
+        if !is_admin && !is_authorized_blood_bank {
+            return Err(ContractError::NotAuthorizedBloodBank);
+        }
+
+        // Blood banks may only set themselves; admin can set any org
+        if !is_admin && caller != org_id {
+            return Err(ContractError::NotAuthorizedBloodBank);
+        }
+
+        let mut request =
+            storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
+        request.fulfilled_by = Some(org_id);
+        storage::set_request(&env, &request);
+
+        Ok(())
+    }
+
     pub fn get_request_history(
         env: Env,
         request_id: u64,
     ) -> Result<soroban_sdk::Vec<RequestHistoryEntry>, ContractError> {
         storage::require_initialized(&env)?;
-        let request = storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
+        let request =
+            storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
         Ok(request.history)
     }
 
@@ -491,6 +610,7 @@ impl RequestContract {
 
     /// Returns a paginated slice of blood requests for a given hospital.
     /// `page` is zero-indexed; `page_size` is capped at 50 to bound instruction usage.
+    /// Uses a per-hospital index for O(hospital_request_count) complexity instead of O(system_counter).
     pub fn get_requests_by_hospital(
         env: Env,
         hospital_id: Address,
@@ -499,22 +619,16 @@ impl RequestContract {
     ) -> Result<soroban_sdk::Vec<BloodRequest>, ContractError> {
         storage::require_initialized(&env)?;
         let page_size = page_size.min(50) as usize;
-        let counter = storage::get_request_counter(&env);
+        let request_ids = storage::get_hospital_request_ids(&env, &hospital_id);
         let start = (page as usize).saturating_mul(page_size);
+        let end = (start + page_size).min(request_ids.len());
+
         let mut results: soroban_sdk::Vec<BloodRequest> = soroban_sdk::Vec::new(&env);
-        let mut matched: usize = 0;
-        let mut collected: usize = 0;
-        for id in 1..=counter {
-            if let Some(req) = storage::get_request(&env, id) {
-                if req.hospital_id == hospital_id {
-                    if matched >= start && collected < page_size {
-                        results.push_back(req);
-                        collected += 1;
-                    }
-                    matched += 1;
-                    if collected == page_size {
-                        break;
-                    }
+        if start < request_ids.len() {
+            for i in start..end {
+                let id = request_ids.get(i).unwrap();
+                if let Some(req) = storage::get_request(&env, id) {
+                    results.push_back(req);
                 }
             }
         }
@@ -542,7 +656,11 @@ impl RequestContract {
     ///
     /// # Errors
     /// * `Unauthorized` - If caller is not the admin
-    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), ContractError> {
+    pub fn upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), ContractError> {
         admin.require_auth();
         storage::require_initialized(&env)?;
         let stored_admin = storage::get_admin(&env);
@@ -553,3 +671,6 @@ impl RequestContract {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod test_security_fixes;

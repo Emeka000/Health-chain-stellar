@@ -72,6 +72,15 @@ export class UserEntity extends BaseEntity {
   @Column({ name: 'password_history', type: 'simple-json', nullable: true })
   passwordHistory?: string[];
 
+  @Column({ name: 'ussd_pin_hash', nullable: true })
+  ussdPinHash?: string | null;
+
+  @Column({ name: 'ussd_pin_failed_attempts', type: 'int', default: 0 })
+  ussdPinFailedAttempts: number;
+
+  @Column({ name: 'ussd_pin_locked_until', type: 'timestamp', nullable: true })
+  ussdPinLockedUntil?: Date | null;
+
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive: boolean;
 

@@ -50,7 +50,7 @@ src/
 ### Base URL
 
 ```
-http://localhost:3000/api/v1
+http://localhost:3001/api/v1
 ```
 
 All routes are prefixed with `/api/v1`, controlled by the `API_PREFIX` environment variable.
@@ -193,6 +193,8 @@ Copy `.env.example` to `.env` and fill in the required values:
 cp .env.example .env
 ```
 
+> The backend defaults to `PORT=3001`. The Next.js frontend defaults to port 3000, so running both at once won't conflict.
+
 Key variables:
 
 ```env
@@ -231,7 +233,7 @@ npm run migration:generate # generate migration from entity changes
 Interactive Swagger docs are available at:
 
 ```
-http://localhost:3000/docs
+http://localhost:3001/docs
 ```
 
 ---

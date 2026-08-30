@@ -15,9 +15,21 @@ import {
 } from '@nestjs/swagger';
 import { IsNotEmpty, IsString, Matches } from 'class-validator';
 
+import { Public } from '../decorators/public.decorator';
 import { MfaService } from './mfa.service';
 
 export class MfaVerifyDto {
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^\d{6}$/, { message: 'token must be a 6-digit number' })
+  token: string;
+}
+
+export class MfaLoginChallengeDto {
+  @IsString()
+  @IsNotEmpty()
+  user_id: string;
+
   @IsString()
   @IsNotEmpty()
   @Matches(/^\d{6}$/, { message: 'token must be a 6-digit number' })
@@ -69,6 +81,24 @@ export class MfaController {
     }
     // Subsequent logins: validate code and return mfaToken
     return this.mfaService.validateMfaCode(userId, dto.token);
+  }
+
+  @Public()
+  @Post('login-challenge')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Complete step-up MFA login',
+    description:
+      'Unauthenticated endpoint used after login() returns { mfa_required: true, user_id }. ' +
+      'Accepts the user_id and a valid TOTP code, and returns a short-lived mfaToken ' +
+      'that must be exchanged for a full access token via POST /auth/mfa/exchange.',
+  })
+  @ApiResponse({
+    status: 200,
+    schema: { example: { mfaToken: 'eyJ...' } },
+  })
+  async loginChallenge(@Body() dto: MfaLoginChallengeDto) {
+    return this.mfaService.validateMfaCode(dto.user_id, dto.token);
   }
 
   @Delete('disable')

@@ -7,7 +7,7 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 
-import { Repository } from 'typeorm';
+import { Repository, EntityManager } from 'typeorm';
 
 import {
   OrderCancelledEvent,
@@ -49,7 +49,6 @@ export class RequestStatusService {
     private readonly ordersGateway: OrdersGateway,
     private readonly eventEmitter: EventEmitter2,
     private readonly inventoryService: InventoryService,
-    private readonly permissionsService: PermissionsService,
     @Optional()
     @InjectRepository(BlockchainEvent)
     private readonly blockchainEventRepo?: Repository<BlockchainEvent>,
@@ -68,10 +67,7 @@ export class RequestStatusService {
     const previousStatus = order.status;
 
     if (actorRole) {
-      this.enforceActionRole(dto.action, {
-        id: actorId ?? '',
-        role: actorRole,
-      });
+      this.enforceActionRole(dto.action, actorRole);
     }
     this.stateMachine.transition(previousStatus, nextStatus);
 

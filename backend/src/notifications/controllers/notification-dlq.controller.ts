@@ -1,14 +1,19 @@
 import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { RequirePermissions } from '../../auth/decorators/require-permissions.decorator';
 import { Permission } from '../../auth/enums/permission.enum';
 import { DlqEntryStatus } from '../entities/notification-dlq.entity';
 import { NotificationDlqService } from '../services/notification-dlq.service';
 
+@ApiTags('Notifications')
+@ApiBearerAuth()
 @Controller('notifications/dlq')
 export class NotificationDlqController {
   constructor(private readonly dlqService: NotificationDlqService) {}
 
   @RequirePermissions(Permission.MANAGE_NOTIFICATIONS)
+  @ApiOperation({ summary: 'Get' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get()
   list(
     @Query('status') status?: DlqEntryStatus,
@@ -18,18 +23,24 @@ export class NotificationDlqController {
   }
 
   @RequirePermissions(Permission.MANAGE_NOTIFICATIONS)
+  @ApiOperation({ summary: 'Get :id' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id')
   get(@Param('id') id: string) {
     return this.dlqService.get(id);
   }
 
   @RequirePermissions(Permission.MANAGE_NOTIFICATIONS)
+  @ApiOperation({ summary: 'Post :id replay' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post(':id/replay')
   replay(@Param('id') id: string, @Req() req: { user?: { id?: string } }) {
     return this.dlqService.replay(id, req.user?.id ?? 'system');
   }
 
   @RequirePermissions(Permission.MANAGE_NOTIFICATIONS)
+  @ApiOperation({ summary: 'Post replay bulk' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('replay/bulk')
   replayBulk(
     @Body() body: { channel?: string },
@@ -39,6 +50,8 @@ export class NotificationDlqController {
   }
 
   @RequirePermissions(Permission.MANAGE_NOTIFICATIONS)
+  @ApiOperation({ summary: 'Post :id abandon' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post(':id/abandon')
   abandon(
     @Param('id') id: string,

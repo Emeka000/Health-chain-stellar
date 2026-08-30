@@ -82,16 +82,16 @@ pub fn is_compatible(donor: BloodType, recipient: BloodType) -> bool {
         return true;
     }
     use BloodType::*;
-    match (donor, recipient) {
-        (OPositive,  OPositive | APositive | BPositive | ABPositive) => true,
-        (ANegative,  ANegative | APositive | ABNegative | ABPositive) => true,
-        (APositive,  APositive | ABPositive) => true,
-        (BNegative,  BNegative | BPositive | ABNegative | ABPositive) => true,
-        (BPositive,  BPositive | ABPositive) => true,
-        (ABNegative, ABNegative | ABPositive) => true,
-        (ABPositive, ABPositive) => true,
-        _ => false,
-    }
+    matches!(
+        (donor, recipient),
+        (OPositive, OPositive | APositive | BPositive | ABPositive)
+            | (ANegative, ANegative | APositive | ABNegative | ABPositive)
+            | (APositive, APositive | ABPositive)
+            | (BNegative, BNegative | BPositive | ABNegative | ABPositive)
+            | (BPositive, BPositive | ABPositive)
+            | (ABNegative, ABNegative | ABPositive)
+            | (ABPositive, ABPositive)
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -106,14 +106,21 @@ pub fn is_compatible(donor: BloodType, recipient: BloodType) -> bool {
 /// | Exact blood type   |  40     | Preserve rare compatible stock         |
 /// | Expiration urgency |  30     | FIFO — use oldest first                |
 /// | Request urgency    |  20     | Critical requests get better units     |
-/// | Proximity tier     |  10     | Same bank_id = 0 km proxy              |
 ///
 /// Higher score = better candidate.
+///
+/// Note: A "proximity tier" (+10 for same bank) was previously documented here
+/// but removed in fix #1322.  `unit.bank_id` (the blood bank's address) was
+/// compared against `request.hospital_id` (the requesting hospital's address) —
+/// two different principal types that are never equal in practice — so the bonus
+/// was dead code that silently degraded match quality without any error.  The
+/// field will be reintroduced once `BloodRequest` carries an explicit
+/// `preferred_bank_id` field populated by the requests contract.
 pub fn score_unit(
     unit: &BloodUnit,
     request_blood_type: BloodType,
     request_urgency: Urgency,
-    request_bank_id_hint: Option<&soroban_sdk::Address>,
+    _request_bank_id_hint: Option<&soroban_sdk::Address>,
     now_timestamp: u64,
 ) -> u32 {
     let mut score: u32 = 0;
@@ -124,27 +131,18 @@ pub fn score_unit(
     }
 
     // 2. Expiration urgency (FIFO) — units expiring sooner score higher
-    let secs_until_expiry = unit
-        .expiration_timestamp
-        .saturating_sub(now_timestamp);
+    let secs_until_expiry = unit.expiration_timestamp.saturating_sub(now_timestamp);
     let days_until_expiry = secs_until_expiry / 86_400;
     score += match days_until_expiry {
-        0..=3   => 30,
-        4..=7   => 25,
-        8..=14  => 18,
+        0..=3 => 30,
+        4..=7 => 25,
+        8..=14 => 18,
         15..=30 => 10,
-        _       => 4,
+        _ => 4,
     };
 
     // 3. Request urgency weight
     score += request_urgency.priority() * 5; // 5, 10, 15, or 20
-
-    // 4. Proximity — same bank as the requesting hospital hint
-    if let Some(hint) = request_bank_id_hint {
-        if &unit.bank_id == hint {
-            score += 10;
-        }
-    }
 
     score
 }
@@ -208,6 +206,9 @@ pub fn select_units(
         if unit.status != BloodStatus::Available {
             continue;
         }
+        if unit.expiration_timestamp <= now_timestamp {
+            continue;
+        }
         if unit.blood_type == request_blood_type {
             exact.push_back(unit);
         } else if is_compatible(unit.blood_type, request_blood_type) {
@@ -233,7 +234,13 @@ pub fn select_units(
         } else {
             remaining
         };
-        let s = score_unit(&unit, request_blood_type, request_urgency, bank_hint, now_timestamp);
+        let s = score_unit(
+            &unit,
+            request_blood_type,
+            request_urgency,
+            bank_hint,
+            now_timestamp,
+        );
         result.push_back(MatchedUnit {
             unit_id: unit.id,
             blood_type: unit.blood_type,
@@ -257,7 +264,13 @@ pub fn select_units(
         } else {
             remaining
         };
-        let s = score_unit(&unit, request_blood_type, request_urgency, bank_hint, now_timestamp);
+        let s = score_unit(
+            &unit,
+            request_blood_type,
+            request_urgency,
+            bank_hint,
+            now_timestamp,
+        );
         result.push_back(MatchedUnit {
             unit_id: unit.id,
             blood_type: unit.blood_type,

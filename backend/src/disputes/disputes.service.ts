@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, LessThanOrEqual, Repository } from 'typeorm';
 import { Response } from 'express';
@@ -110,21 +110,41 @@ export class DisputesService {
 
   async assign(id: string, operatorId: string): Promise<DisputeEntity> {
     const d = await this.get(id);
-    d.assignedTo = operatorId;
-    d.status = DisputeStatus.UNDER_REVIEW;
-    return this.disputeRepo.save(d);
+    if (d.status !== DisputeStatus.OPEN && d.status !== DisputeStatus.UNDER_REVIEW) {
+      throw new ConflictException(`Dispute '${id}' cannot be assigned in status '${d.status}'`);
+    }
+    const result = await this.disputeRepo.update(
+      { id, status: d.status },
+      { assignedTo: operatorId, status: DisputeStatus.UNDER_REVIEW },
+    );
+    if (!result.affected || result.affected < 1) {
+      throw new ConflictException(`Dispute '${id}' was concurrently modified`);
+    }
+    return this.get(id);
   }
 
-  async resolve(id: string, dto: ResolveDisputeDto): Promise<DisputeEntity> {
+  async resolve(id: string, dto: ResolveDisputeDto, resolvedBy: string): Promise<DisputeEntity> {
     const d = await this.get(id);
-    d.resolutionNotes = dto.resolutionNotes;
-    d.outcome = dto.outcome;
-    d.resolvedBy = dto.resolvedBy;
-    d.status = DisputeStatus.RESOLVED;
-    d.resolvedAt = new Date();
-    d.timeoutProcessedAt = d.timeoutProcessedAt ?? new Date();
-    d.timeoutDecisionReason = d.timeoutDecisionReason ?? 'manual_resolution';
-    return this.disputeRepo.save(d);
+    if (d.status === DisputeStatus.RESOLVED || d.status === DisputeStatus.CLOSED) {
+      throw new ConflictException(`Dispute '${id}' is already '${d.status}'`);
+    }
+    const now = new Date();
+    const result = await this.disputeRepo.update(
+      { id, status: d.status },
+      {
+        resolutionNotes: dto.resolutionNotes,
+        outcome: dto.outcome,
+        resolvedBy: dto.resolvedBy,
+        status: DisputeStatus.RESOLVED,
+        resolvedAt: now,
+        timeoutProcessedAt: d.timeoutProcessedAt ?? now,
+        timeoutDecisionReason: d.timeoutDecisionReason ?? 'manual_resolution',
+      },
+    );
+    if (!result.affected || result.affected < 1) {
+      throw new ConflictException(`Dispute '${id}' was concurrently modified`);
+    }
+    return this.get(id);
   }
 
   async addNote(id: string, content: string, authorId: string): Promise<DisputeNoteEntity> {

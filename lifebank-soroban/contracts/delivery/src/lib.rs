@@ -1,11 +1,42 @@
 #![no_std]
+#![deny(deprecated)]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, Env,
+    contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, Env,
 };
+
+mod request_client {
+    use soroban_sdk::{contractclient, Env};
+
+    #[contractclient(name = "RequestContractClient")]
+    #[allow(dead_code)]
+    pub trait RequestContractInterface {
+        fn get_request_counter(env: Env) -> u64;
+    }
+}
+
+use request_client::RequestContractClient;
+
+#[contractevent(topics = ["delivery", "init"], data_format = "vec")]
+pub struct DeliveryInitialized {
+    pub admin: Address,
+    pub request_contract: Address,
+}
+
+#[contractevent(topics = ["comply"], data_format = "vec")]
+pub struct ComplianceAttested {
+    pub delivery_id: u64,
+    pub compliance_hash: Bytes,
+    pub is_compliant: bool,
+}
 
 const DEFAULT_MIN_TEMPERATURE_C: i32 = 2;
 const DEFAULT_MAX_TEMPERATURE_C: i32 = 6;
+const CONTRACT_VERSION: u32 = 1;
+
+/// Persistent storage TTL constants (ledgers; one ledger ≈ 5 s on mainnet).
+const TTL_THRESHOLD: u32 = 518_400; // ~30 days
+const TTL_EXTEND_TO: u32 = 1_036_800; // ~60 days
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -14,6 +45,9 @@ pub enum Error {
     AlreadyInitialized = 700,
     NotInitialized = 701,
     DeliveryNotFound = 702,
+    Unauthorized = 703,
+    InvalidInput = 704,
+    AlreadyAttested = 705,
 }
 
 #[contracttype]
@@ -77,13 +111,21 @@ impl DeliveryContract {
         env.storage()
             .instance()
             .set(&DataKey::ProofRequirements, &proof_requirements);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
 
-        env.events().publish(
-            (symbol_short!("init"), symbol_short!("v1")),
-            (admin, request_contract),
-        );
+        DeliveryInitialized {
+            admin,
+            request_contract,
+        }
+        .publish(&env);
 
         Ok(())
+    }
+
+    pub fn version(_env: Env) -> u32 {
+        CONTRACT_VERSION
     }
 
     pub fn is_initialized(env: Env) -> bool {
@@ -125,8 +167,65 @@ impl DeliveryContract {
             .ok_or(Error::NotInitialized)
     }
 
-    /// Record a compliance attestation hash for a completed delivery.
-    /// The hash is produced off-chain by the backend after evaluating telemetry.
+    /// Update the cold-chain temperature thresholds. Admin only.
+    pub fn set_temperature_thresholds(
+        env: Env,
+        admin: Address,
+        thresholds: TemperatureThresholds,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if admin != stored {
+            return Err(Error::Unauthorized);
+        }
+        if thresholds.min_celsius > thresholds.max_celsius {
+            return Err(Error::InvalidInput);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::TemperatureThresholds, &thresholds);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        Ok(())
+    }
+
+    /// Update the proof requirements. Admin only.
+    pub fn set_proof_requirements(
+        env: Env,
+        admin: Address,
+        requirements: ProofRequirements,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if admin != stored {
+            return Err(Error::Unauthorized);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::ProofRequirements, &requirements);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        Ok(())
+    }
+
+    /// Record a compliance attestation for a completed delivery.
+    ///
+    /// This function implements an **oracle attestation pattern**: the backend
+    /// evaluates the delivery's telemetry (temperature readings, photo proof,
+    /// recipient signature, temperature log) against the configured
+    /// `TemperatureThresholds` and `ProofRequirements` off-chain, produces a
+    /// `compliance_hash` committing to that evaluation, and then calls this
+    /// function to record the result on-chain. Only the stored admin may attest.
     pub fn record_compliance_attestation(
         env: Env,
         admin: Address,
@@ -135,19 +234,39 @@ impl DeliveryContract {
         is_compliant: bool,
     ) -> Result<(), Error> {
         admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if admin != stored {
+            return Err(Error::Unauthorized);
+        }
         if !Self::is_initialized(env.clone()) {
             return Err(Error::NotInitialized);
         }
 
-        env.storage().persistent().set(
-            &DataKey::ComplianceAttestation(delivery_id),
-            &(compliance_hash.clone(), is_compliant),
-        );
+        let attestation_key = DataKey::ComplianceAttestation(delivery_id);
+        if env.storage().persistent().has(&attestation_key) {
+            return Err(Error::AlreadyAttested);
+        }
 
-        env.events().publish(
-            (symbol_short!("comply"), symbol_short!("v1")),
-            (delivery_id, compliance_hash, is_compliant),
-        );
+        env.storage()
+            .persistent()
+            .set(&attestation_key, &(compliance_hash.clone(), is_compliant));
+        env.storage()
+            .persistent()
+            .extend_ttl(&attestation_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        ComplianceAttested {
+            delivery_id,
+            compliance_hash,
+            is_compliant,
+        }
+        .publish(&env);
 
         Ok(())
     }

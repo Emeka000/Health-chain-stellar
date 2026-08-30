@@ -5,6 +5,7 @@ import "./globals.css";
 import { ToastProvider } from "../components/providers/ToastProvider";
 import { ReactQueryProvider } from "../components/providers/ReactQueryProvider";
 import { I18nProvider } from "../components/providers/I18nProvider";
+import { WalletProvider } from "../components/providers/WalletProvider";
 
 const poppins = Poppins({
   subsets: ["latin"],
@@ -48,7 +49,9 @@ export default function RootLayout({
         <Suspense fallback={null}>
           <I18nProvider>
             <ReactQueryProvider>
-              <ToastProvider>{children}</ToastProvider>
+              <WalletProvider>
+                <ToastProvider>{children}</ToastProvider>
+              </WalletProvider>
             </ReactQueryProvider>
           </I18nProvider>
         </Suspense>

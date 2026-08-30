@@ -1,21 +1,11 @@
 use soroban_sdk::{contracttype, Address};
 
 #[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq, Copy)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct TemperatureReading {
     pub temperature_celsius_x100: i32,
     pub timestamp: u64,
     pub is_violation: bool,
-}
-
-impl Default for TemperatureReading {
-    fn default() -> Self {
-        TemperatureReading {
-            temperature_celsius_x100: 0,
-            timestamp: 0,
-            is_violation: false,
-        }
-    }
 }
 
 #[contracttype]
@@ -67,6 +57,10 @@ pub enum DataKey {
     Threshold(u64),
     TempPage(u64, u32),
     TempPageLen(u64, u32),
+    /// Cursor tracking the last active (non-full) temperature page for a
+    /// unit, so `log_reading` can insert in O(1) instead of scanning from
+    /// page 0 on every call.
+    CurrentPage(u64),
     /// Tracks consecutive violation streak for a blood unit
     ConsecutiveViolationStreak(u64),
     /// Tracks if unit has been compromised (3+ consecutive violations)

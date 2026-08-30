@@ -118,6 +118,7 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @UseInterceptors(IdempotencyInterceptor)
   @Post('login')
   @HttpCode(HttpStatus.OK)

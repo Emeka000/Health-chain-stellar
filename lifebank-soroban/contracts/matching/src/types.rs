@@ -32,9 +32,9 @@ impl Urgency {
     /// Numeric priority — higher is more urgent.
     pub fn priority(self) -> u32 {
         match self {
-            Self::Critical  => 4,
-            Self::Urgent    => 3,
-            Self::Routine   => 2,
+            Self::Critical => 4,
+            Self::Urgent => 3,
+            Self::Routine => 2,
             Self::Scheduled => 1,
         }
     }
@@ -99,13 +99,23 @@ pub struct BloodRequest {
 }
 
 /// Request status — mirrors requests contract's `RequestStatus`.
+///
+/// All six variants from the source-of-truth requests contract are listed here.
+/// Soroban's `#[contracttype]` encodes fieldless enums by variant name, so an
+/// unrecognized variant causes a decode failure.  Keeping this enum in lockstep
+/// prevents cross-contract call failures for requests in `InProgress` or
+/// `Rejected` state (fixes #1319).
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RequestStatus {
     Pending,
     Approved,
+    /// Request is currently being fulfilled (units reserved/in-transit).
+    InProgress,
     Fulfilled,
     Cancelled,
+    /// Request was rejected by the blood bank or admin.
+    Rejected,
 }
 
 // ---------------------------------------------------------------------------

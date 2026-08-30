@@ -19,7 +19,7 @@ export class JwtKeyService {
   constructor(private readonly configService: ConfigService) {
     this.activeKey = {
       kid: configService.get<string>('JWT_SECRET_KID', 'key-1'),
-      secret: configService.get<string>('JWT_SECRET', 'default-secret'),
+      secret: configService.getOrThrow<string>('JWT_SECRET'),
     };
 
     const prevSecret = configService.get<string>('JWT_PREVIOUS_SECRET');

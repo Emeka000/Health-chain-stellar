@@ -24,6 +24,8 @@ import {
 } from './dto/location-history.dto';
 import { LocationHistoryService } from './location-history.service';
 
+@ApiTags('Location History')
+@ApiBearerAuth()
 @Controller('location-history')
 export class LocationHistoryController {
   constructor(
@@ -35,6 +37,8 @@ export class LocationHistoryController {
    * Save a single location fix for a rider.
    */
   @RequirePermissions(Permission.RECORD_LOCATION)
+  @ApiOperation({ summary: 'Post riders :riderId' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('riders/:riderId')
   @HttpCode(HttpStatus.CREATED)
   saveLocation(
@@ -49,6 +53,8 @@ export class LocationHistoryController {
    * Save up to 500 location fixes in one request.
    */
   @RequirePermissions(Permission.RECORD_LOCATION)
+  @ApiOperation({ summary: 'Post riders :riderId batch' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('riders/:riderId/batch')
   @HttpCode(HttpStatus.CREATED)
   batchSaveLocations(
@@ -63,6 +69,8 @@ export class LocationHistoryController {
    * Query all location history for a rider (most recent first).
    */
   @RequirePermissions(Permission.VIEW_LOCATION_HISTORY)
+  @ApiOperation({ summary: 'Get riders :riderId' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('riders/:riderId')
   getLocationsByRider(
     @Param('riderId', ParseUUIDPipe) riderId: string,
@@ -76,6 +84,8 @@ export class LocationHistoryController {
    * Get all raw location points for a delivery, chronological.
    */
   @RequirePermissions(Permission.VIEW_LOCATION_HISTORY)
+  @ApiOperation({ summary: 'Get deliveries :orderId' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('deliveries/:orderId')
   getLocationsByDelivery(
     @Param('orderId', ParseUUIDPipe) orderId: string,
@@ -89,6 +99,8 @@ export class LocationHistoryController {
    * Reconstructed and Douglas-Peucker compressed route for a delivery.
    */
   @RequirePermissions(Permission.VIEW_LOCATION_HISTORY)
+  @ApiOperation({ summary: 'Get deliveries :orderId route' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('deliveries/:orderId/route')
   reconstructRoute(
     @Param('orderId', ParseUUIDPipe) orderId: string,
@@ -102,6 +114,8 @@ export class LocationHistoryController {
    * Ordered points with derived speed and bearing for route playback.
    */
   @RequirePermissions(Permission.VIEW_LOCATION_HISTORY)
+  @ApiOperation({ summary: 'Get deliveries :orderId playback' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('deliveries/:orderId/playback')
   getPlaybackData(
     @Param('orderId', ParseUUIDPipe) orderId: string,
@@ -115,6 +129,8 @@ export class LocationHistoryController {
    * GeoJSON LineString feature for map rendering.
    */
   @RequirePermissions(Permission.VIEW_LOCATION_HISTORY)
+  @ApiOperation({ summary: 'Get deliveries :orderId visualization' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('deliveries/:orderId/visualization')
   getVisualizationData(
     @Param('orderId', ParseUUIDPipe) orderId: string,

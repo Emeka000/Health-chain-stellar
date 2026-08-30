@@ -132,7 +132,8 @@ export class UserActivityService {
   }
 
   private escapeCsv(value: string): string {
-    const escaped = value.replace(/"/g, '""');
+    const neutralized = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+    const escaped = neutralized.replace(/"/g, '""');
     return `"${escaped}"`;
   }
 }

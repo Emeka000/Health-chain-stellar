@@ -56,6 +56,8 @@ pub enum DataKey {
     RequestContract,
     InventoryContract,
     PaymentContract,
+    /// Address authorized to call flag_temperature_breach (the temperature-oracle contract).
+    TemperatureOracle,
     Workflow(u64),
     Paused,
     /// Emergency halt flag — set by emergency_halt(); blocks all in-flight

@@ -1,6 +1,7 @@
 use soroban_sdk::{contracttype, Address, Bytes, String, Symbol, Vec};
 
 pub const DEFAULT_DISPUTE_TIMEOUT_SECS: u64 = 72 * 60 * 60;
+pub const MAX_DISPUTE_TIMEOUT_SECS: u64 = 30 * 24 * 60 * 60;
 pub const HIGH_VALUE_THRESHOLD: i128 = 10_000;
 
 /// **Dispute evidence (beyond `Symbol` limits).**
@@ -346,9 +347,13 @@ impl PendingApproval {
 }
 
 impl FeeStructure {
-    /// Calculates total fees
-    pub fn total(&self) -> i128 {
-        self.service_fee + self.network_fee + self.performance_bonus + self.fixed_fee
+    /// Calculates total fees, returning Err if any intermediate sum overflows i128.
+    pub fn total(&self) -> Result<i128, PaymentError> {
+        self.service_fee
+            .checked_add(self.network_fee)
+            .and_then(|v| v.checked_add(self.performance_bonus))
+            .and_then(|v| v.checked_add(self.fixed_fee))
+            .ok_or(PaymentError::Overflow)
     }
 
     /// Validates fee structure
@@ -365,7 +370,8 @@ impl FeeStructure {
 
     /// Calculates net amount after deducting fees
     pub fn calculate_net_amount(&self, gross_amount: i128) -> Result<i128, PaymentError> {
-        let total_fees = self.total();
+        self.validate()?;
+        let total_fees = self.total()?;
         if total_fees > gross_amount {
             return Err(PaymentError::FeesExceedAmount);
         }
@@ -386,4 +392,5 @@ pub enum PaymentError {
     EscrowNotReleasable,
     InvalidMultiSigConfig,
     DuplicateApproval,
+    Overflow,
 }

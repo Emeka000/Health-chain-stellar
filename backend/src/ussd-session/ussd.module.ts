@@ -3,7 +3,9 @@ import { Module } from '@nestjs/common';
 import { OrdersModule } from '../orders/orders.module';
 import { OrdersService } from '../orders/orders.service';
 import { RedisModule } from '../redis/redis.module';
+import { UsersModule } from '../users/users.module';
 
+import { UssdAuthService } from './ussd-auth.service';
 import { UssdSessionStore } from './ussd-session.store';
 import { UssdStateMachine } from './ussd-state-machine.service';
 import { UssdController } from './ussd.controller';
@@ -40,11 +42,13 @@ class OrderServiceAdapter implements IOrderService {
   imports: [
     RedisModule,   // provides REDIS_CLIENT token for UssdSessionStore
     OrdersModule,  // provides OrdersService
+    UsersModule,   // provides UserRepository for USSD PIN authentication
   ],
   controllers: [UssdController],
   providers: [
     UssdStateMachine,
     UssdSessionStore,
+    UssdAuthService,
     {
       provide: IOrderService as unknown as string,
       useFactory: (ordersService: OrdersService) =>

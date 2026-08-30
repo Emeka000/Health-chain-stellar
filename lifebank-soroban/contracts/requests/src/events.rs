@@ -1,47 +1,63 @@
 use crate::types::{BloodRequest, RequestCreatedEvent, RequestStatus};
-use soroban_sdk::{Address, Env, Symbol};
-use soroban_sdk::{symbol_short, Address, Env, Symbol};
+use soroban_sdk::{contractevent, Address, Env};
+
+#[contractevent(topics = ["initialized"], data_format = "vec")]
+pub struct RequestsInitialized {
+    pub admin: Address,
+    pub inventory_contract: Address,
+}
+
+#[contractevent(topics = ["request_cancelled"], data_format = "vec")]
+pub struct RequestCancelled {
+    pub request_id: u64,
+    pub actor: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["request_status_updated"], data_format = "vec")]
+pub struct RequestStatusUpdated {
+    pub request_id: u64,
+    pub actor: Address,
+    pub old_status: RequestStatus,
+    pub new_status: RequestStatus,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["reservation_id_set"], data_format = "vec")]
+pub struct ReservationIdSet {
+    pub request_id: u64,
+    pub actor: Address,
+    pub reservation_id: u64,
+    pub timestamp: u64,
+}
 
 pub fn emit_initialized(env: &Env, admin: &Address, inventory_contract: &Address) {
-    env.events().publish(
-        (Symbol::new(env, "initialized"), symbol_short!("v1")),
-        (admin.clone(), inventory_contract.clone()),
-    );
+    RequestsInitialized {
+        admin: admin.clone(),
+        inventory_contract: inventory_contract.clone(),
+    }
+    .publish(env);
 }
 
 pub fn emit_request_created(env: &Env, request: &BloodRequest) {
-    env.events().publish(
-        (
-            Symbol::new(env, "request_created"),
-            request.blood_type,
-            symbol_short!("v1"),
-        ),
-        RequestCreatedEvent {
-            request_id: request.id,
-            hospital: request.hospital_id.clone(),
-            blood_type: request.blood_type,
-            quantity_ml: request.quantity_ml,
-            urgency: request.urgency.priority(),
-            timestamp: request.created_timestamp,
-        },
-    );
+    RequestCreatedEvent {
+        blood_type: request.blood_type,
+        request_id: request.id,
+        hospital: request.hospital_id.clone(),
+        quantity_ml: request.quantity_ml,
+        urgency: request.urgency.priority(),
+        timestamp: request.created_timestamp,
+    }
+    .publish(env);
 }
 
-pub fn emit_status_updated(
-    env: &Env,
-    request_id: u64,
-    old_status: RequestStatus,
-    new_status: RequestStatus,
-    updated_by: &Address,
-) {
-    env.events().publish(
-        (Symbol::new(env, "status_updated"), request_id),
-        (old_status, new_status, updated_by.clone()),
 pub fn emit_request_cancelled(env: &Env, request_id: u64, actor: &Address, timestamp: u64) {
-    env.events().publish(
-        (Symbol::new(env, "request_cancelled"), symbol_short!("v1")),
-        (request_id, actor.clone(), timestamp),
-    );
+    RequestCancelled {
+        request_id,
+        actor: actor.clone(),
+        timestamp,
+    }
+    .publish(env);
 }
 
 pub fn emit_request_status_updated(
@@ -52,11 +68,28 @@ pub fn emit_request_status_updated(
     new_status: RequestStatus,
     timestamp: u64,
 ) {
-    env.events().publish(
-        (
-            Symbol::new(env, "request_status_updated"),
-            symbol_short!("v1"),
-        ),
-        (request_id, actor.clone(), old_status, new_status, timestamp),
-    );
+    RequestStatusUpdated {
+        request_id,
+        actor: actor.clone(),
+        old_status,
+        new_status,
+        timestamp,
+    }
+    .publish(env);
+}
+
+pub fn emit_reservation_id_set(
+    env: &Env,
+    request_id: u64,
+    actor: &Address,
+    reservation_id: u64,
+    timestamp: u64,
+) {
+    ReservationIdSet {
+        request_id,
+        actor: actor.clone(),
+        reservation_id,
+        timestamp,
+    }
+    .publish(env);
 }

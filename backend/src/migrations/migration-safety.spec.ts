@@ -1,7 +1,9 @@
+import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getDataSourceToken } from '@nestjs/typeorm';
-import { MigrationPreflightService } from './migration-preflight.service';
+
 import { MigrationIntegrityService } from './migration-integrity.service';
+import { MigrationPreflightService } from './migration-preflight.service';
 import { MigrationRepairService } from './migration-repair.service';
 
 const mockDataSource = {
@@ -112,5 +114,108 @@ describe('MigrationRepairService', () => {
     mockDataSource.query.mockRejectedValue(new Error('DB error'));
     const result = await service.removeStaleMigrationRecord('StaleMig');
     expect(result.success).toBe(false);
+  });
+
+  // ── Issue #1189 — SQL injection prevention ────────────────────────────────
+
+  describe('#1189 — ensureColumnExists input validation', () => {
+    it('succeeds with a valid allow-listed definition', async () => {
+      mockDataSource.query.mockResolvedValue(undefined);
+      const result = await service.ensureColumnExists(
+        'users',
+        'email_verified',
+        'BOOLEAN',
+      );
+      expect(result.success).toBe(true);
+      expect(mockDataSource.query).toHaveBeenCalledWith(
+        expect.stringContaining('ALTER TABLE'),
+      );
+    });
+
+    it('throws BadRequestException for a table name with SQL injection payload', async () => {
+      await expect(
+        service.ensureColumnExists(
+          'users; DROP TABLE users; --',
+          'col',
+          'TEXT',
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws BadRequestException for a column name with injection characters', async () => {
+      await expect(
+        service.ensureColumnExists(
+          'users',
+          'col"; DROP TABLE users; --',
+          'TEXT',
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws BadRequestException for a table name with spaces', async () => {
+      await expect(
+        service.ensureColumnExists('user table', 'col', 'TEXT'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws BadRequestException for a column name with special characters', async () => {
+      await expect(
+        service.ensureColumnExists('users', 'col$bad', 'TEXT'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws BadRequestException for an arbitrary SQL definition not in the allow-list', async () => {
+      await expect(
+        service.ensureColumnExists(
+          'users',
+          'hack',
+          'text; DROP TABLE users; --',
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws BadRequestException for a definition with a semicolon', async () => {
+      await expect(
+        service.ensureColumnExists('blood_units', 'status', 'TEXT; SELECT 1'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('accepts valid identifiers and definitions — case-insensitive definition matching', async () => {
+      mockDataSource.query.mockResolvedValue(undefined);
+      // definition given in lower-case should still pass
+      const result = await service.ensureColumnExists(
+        'blood_units',
+        'is_active',
+        'boolean',
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it('does NOT call the database when validation fails', async () => {
+      mockDataSource.query.mockReset();
+      await expect(
+        service.ensureColumnExists('users', 'col', 'ARBITRARY STUFF'),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockDataSource.query).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['TEXT'],
+      ['VARCHAR(64)'],
+      ['INTEGER'],
+      ['BOOLEAN'],
+      ['JSONB'],
+      ['UUID'],
+      ['TIMESTAMP'],
+      ['BIGINT'],
+    ])('accepts allow-listed definition: %s', async (def) => {
+      mockDataSource.query.mockResolvedValue(undefined);
+      const result = await service.ensureColumnExists(
+        'some_table',
+        'some_col',
+        def,
+      );
+      expect(result.success).toBe(true);
+    });
   });
 });

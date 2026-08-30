@@ -6,9 +6,14 @@ import { ConfigService } from '@nestjs/config';
 import { Repository, DataSource } from 'typeorm';
 
 import { ContractEventIndexerService } from '../contract-event-indexer/contract-event-indexer.service';
+import { OrderEntity } from '../orders/entities/order.entity';
 
 import { BlockchainEvent } from './entities/blockchain-event.entity';
-import { assertSupportedContractEventSchemaVersion } from './event-schema-version';
+import {
+  UnsupportedContractEventSchemaVersionError,
+  extractPartialMetadata,
+  tryDecodeEvent,
+} from './event-schema-version';
 import { BloodUnitTrail } from './entities/blood-unit-trail.entity';
 import { IndexerStateEntity } from './entities/indexer-state.entity';
 import {
@@ -36,6 +41,7 @@ export class SorobanIndexerService {
     private readonly sorobanService: SorobanService,
     private readonly configService: ConfigService,
     private readonly dataSource: DataSource,
+    private readonly contractEventIndexer: ContractEventIndexerService,
     @InjectRepository(BloodUnitTrail)
     private readonly trailRepository: Repository<BloodUnitTrail>,
     @InjectRepository(BlockchainEvent)

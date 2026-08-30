@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
@@ -7,6 +7,33 @@ import {
   FulfillmentLegEntity,
   FulfillmentLegStatus,
 } from '../entities/fulfillment-leg.entity';
+
+export const ALLOWED_LEG_TRANSITIONS: Record<
+  FulfillmentLegStatus,
+  FulfillmentLegStatus[]
+> = {
+  [FulfillmentLegStatus.PENDING]: [
+    FulfillmentLegStatus.ALLOCATED,
+    FulfillmentLegStatus.CANCELLED,
+  ],
+  [FulfillmentLegStatus.ALLOCATED]: [
+    FulfillmentLegStatus.RIDER_ASSIGNED,
+    FulfillmentLegStatus.CANCELLED,
+    FulfillmentLegStatus.FAILED,
+  ],
+  [FulfillmentLegStatus.RIDER_ASSIGNED]: [
+    FulfillmentLegStatus.IN_TRANSIT,
+    FulfillmentLegStatus.CANCELLED,
+    FulfillmentLegStatus.FAILED,
+  ],
+  [FulfillmentLegStatus.IN_TRANSIT]: [
+    FulfillmentLegStatus.DELIVERED,
+    FulfillmentLegStatus.FAILED,
+  ],
+  [FulfillmentLegStatus.DELIVERED]: [],
+  [FulfillmentLegStatus.FAILED]: [],
+  [FulfillmentLegStatus.CANCELLED]: [],
+};
 
 export interface AllocationSource {
   bloodBankId: string;
@@ -87,8 +114,10 @@ export class OrderSplittingService {
     });
 
     if (!leg) {
-      throw new Error(`Fulfillment leg ${legId} not found`);
+      throw new NotFoundException(`Fulfillment leg ${legId} not found`);
     }
+
+    this.validateLegTransition(leg.status, status);
 
     leg.status = status;
 
@@ -136,6 +165,24 @@ export class OrderSplittingService {
       overallStatus,
       legs,
     };
+  }
+
+  private validateLegTransition(
+    from: FulfillmentLegStatus,
+    to: FulfillmentLegStatus,
+  ): void {
+    if (from === to) {
+      throw new BadRequestException(`Fulfillment leg is already in ${to} status`);
+    }
+
+    const allowed = ALLOWED_LEG_TRANSITIONS[from] ?? [];
+    if (!allowed.includes(to)) {
+      throw new BadRequestException(
+        `Invalid leg status transition from ${from} to ${to}. Allowed transitions: ${
+          allowed.join(', ') || 'none'
+        }`,
+      );
+    }
   }
 
   async handleLegFailure(

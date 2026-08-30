@@ -28,7 +28,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
     catch(exception: Error, host: ArgumentsHost): void {
         const ctx = host.switchToHttp();
-        const response = response<Response>();
+        const response = ctx.getResponse<Response>();
         const request = ctx.getRequest<Request>();
 
         // Extract or generate correlation ID

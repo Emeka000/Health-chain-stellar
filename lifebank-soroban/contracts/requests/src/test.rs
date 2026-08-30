@@ -18,7 +18,8 @@ fn create_uninitialized_contract<'a>() -> (Env, RequestContractClient<'a>, Addre
     (env, client, contract_id)
 }
 
-fn create_initialized_contract<'a>() -> (Env, RequestContractClient<'a>, Address, Address, Address) {
+fn create_initialized_contract<'a>() -> (Env, RequestContractClient<'a>, Address, Address, Address)
+{
     let (env, client, contract_id) = create_uninitialized_contract();
     let admin = Address::generate(&env);
     let inventory_contract = Address::generate(&env);
@@ -49,10 +50,8 @@ fn test_initialize_sets_admin_inventory_counter_and_metadata() {
     );
 
     let stored_admin = env.as_contract(&contract_id, || storage::get_admin(&env));
-    let stored_inventory =
-        env.as_contract(&contract_id, || storage::get_inventory_contract(&env));
-    let stored_counter =
-        env.as_contract(&contract_id, || storage::get_request_counter(&env));
+    let stored_inventory = env.as_contract(&contract_id, || storage::get_inventory_contract(&env));
+    let stored_counter = env.as_contract(&contract_id, || storage::get_request_counter(&env));
 
     assert_eq!(stored_admin, admin);
     assert_eq!(stored_inventory, inventory_contract);
@@ -287,7 +286,7 @@ fn test_partial_fulfillment_restricted_to_admin() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #309)")]
+#[should_panic(expected = "Error(Contract, #313)")]
 fn test_cancel_requires_reason() {
     let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
     let hospital = authorize_hospital(&env, &client);
@@ -304,7 +303,7 @@ fn test_cancel_requires_reason() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #309)")]
+#[should_panic(expected = "Error(Contract, #313)")]
 fn test_reject_requires_reason() {
     let (env, client, _contract_id, admin, _inventory_contract) = create_initialized_contract();
     let hospital = authorize_hospital(&env, &client);
@@ -382,3 +381,41 @@ fn test_request_history_captures_transition_rationale() {
     );
 }
 
+#[test]
+fn test_cancel_request_with_reservation_id() {
+    let (env, client, _contract_id, admin, _inventory_contract) = create_initialized_contract();
+    let hospital = authorize_hospital(&env, &client);
+    env.ledger().set_timestamp(7_000);
+    let request_id = client.create_request(
+        &hospital,
+        &BloodType::OPositive,
+        &BloodComponent::RedCells,
+        &500u32,
+        &Urgency::Urgent,
+        &8_000u64,
+    );
+
+    client.update_request_status(
+        &admin,
+        &request_id,
+        &RequestStatus::Approved,
+        &String::from_str(&env, "Approved"),
+    );
+
+    let reservation_id = 42u64;
+    client.set_reservation_id(&admin, &request_id, &reservation_id);
+
+    client.cancel_request(
+        &hospital,
+        &request_id,
+        &String::from_str(&env, "Request cancelled"),
+    );
+
+    let request = client.get_request(&request_id);
+    assert_eq!(request.status, RequestStatus::Cancelled);
+    assert_eq!(request.reservation_id, None);
+
+    let history = client.get_request_history(&request_id);
+    let cancel_entry = history.get(3).unwrap();
+    assert_eq!(cancel_entry.released_reservation, true);
+}

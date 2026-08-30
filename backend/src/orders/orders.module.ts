@@ -8,6 +8,7 @@ import { EventsModule } from '../events/events.module';
 import { FeePolicyModule } from '../fee-policy/fee-policy.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { OrganizationsModule } from '../organizations/organizations.module';
 import { SlaModule } from '../sla/sla.module';
 import { BlockchainEvent } from '../soroban/entities/blockchain-event.entity';
 import { UserActivityModule } from '../user-activity/user-activity.module';
@@ -35,6 +36,7 @@ import { OrderStateMachine } from './state-machine/order-state-machine';
     ApprovalModule,
     SlaModule,
     EventsModule,
+    OrganizationsModule,
     UserActivityModule,
   ],
   controllers: [OrdersController],
@@ -48,6 +50,11 @@ import { OrderStateMachine } from './state-machine/order-state-machine';
     OrdersGateway,
     OrderStateAuditService,
   ],
-  exports: [OrdersService, OrderStateMachine, OrderEventStoreService, OrderStateAuditService],
+  exports: [
+    OrdersService,
+    OrderStateMachine,
+    OrderEventStoreService,
+    OrderStateAuditService,
+  ],
 })
 export class OrdersModule {}

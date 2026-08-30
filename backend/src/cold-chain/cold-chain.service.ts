@@ -147,6 +147,7 @@ export class ColdChainService {
   private computeBreachDuration(samples: TemperatureSampleEntity[]): number {
     let totalMinutes = 0;
     let breachWindowStart: Date | null = null;
+    let breachWindowEnd: Date | null = null;
 
     for (const sample of samples) {
       if (sample.isExcursion) {
@@ -154,13 +155,20 @@ export class ColdChainService {
           breachWindowStart = sample.recordedAt;
         }
         // Extend window to this sample's timestamp
-        const windowEnd = sample.recordedAt;
-        totalMinutes =
-          (windowEnd.getTime() - breachWindowStart.getTime()) / 60_000;
-      } else {
-        // Safe sample — close any open breach window
+        breachWindowEnd = sample.recordedAt;
+      } else if (breachWindowStart && breachWindowEnd) {
+        // Safe sample — close the open breach window and accumulate its duration
+        totalMinutes +=
+          (breachWindowEnd.getTime() - breachWindowStart.getTime()) / 60_000;
         breachWindowStart = null;
+        breachWindowEnd = null;
       }
+    }
+
+    // Accumulate any breach window still open at the end of iteration
+    if (breachWindowStart && breachWindowEnd) {
+      totalMinutes +=
+        (breachWindowEnd.getTime() - breachWindowStart.getTime()) / 60_000;
     }
 
     return totalMinutes;

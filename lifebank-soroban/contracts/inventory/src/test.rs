@@ -74,7 +74,10 @@ fn test_register_blood_success() {
     assert_eq!(stored_unit.donor_id, Some(donor));
     // Both timestamps must derive from ledger time
     assert_eq!(stored_unit.donation_timestamp, current_time);
-    assert_eq!(stored_unit.expiration_timestamp, current_time + SHELF_LIFE_SECS);
+    assert_eq!(
+        stored_unit.expiration_timestamp,
+        current_time + SHELF_LIFE_SECS
+    );
     assert_eq!(stored_unit.status, BloodStatus::Available);
 }
 
@@ -107,15 +110,33 @@ fn test_register_blood_increments_id() {
     env.ledger().set_timestamp(current_time);
 
     // Register first unit
-    let id1 = client.register_blood(&bank, &String::from_str(&env, "SN-001"), &BloodType::APositive, &450u32, &None);
+    let id1 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-001"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     assert_eq!(id1, 1);
 
     // Register second unit
-    let id2 = client.register_blood(&bank, &String::from_str(&env, "SN-002"), &BloodType::BPositive, &450u32, &None);
+    let id2 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-002"),
+        &BloodType::BPositive,
+        &450u32,
+        &None,
+    );
     assert_eq!(id2, 2);
 
     // Register third unit
-    let id3 = client.register_blood(&bank, &String::from_str(&env, "SN-003"), &BloodType::ONegative, &450u32, &None);
+    let id3 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-003"),
+        &BloodType::ONegative,
+        &450u32,
+        &None,
+    );
     assert_eq!(id3, 3);
 }
 
@@ -195,10 +216,16 @@ fn test_register_all_blood_types() {
 
     for (i, blood_type) in blood_types.iter().enumerate() {
         let serial_strs = [
-            "SN-BT001", "SN-BT002", "SN-BT003", "SN-BT004",
-            "SN-BT005", "SN-BT006", "SN-BT007", "SN-BT008",
+            "SN-BT001", "SN-BT002", "SN-BT003", "SN-BT004", "SN-BT005", "SN-BT006", "SN-BT007",
+            "SN-BT008",
         ];
-        let id = client.register_blood(&bank, &String::from_str(&env, serial_strs[i]), &blood_type, &450u32, &None);
+        let id = client.register_blood(
+            &bank,
+            &String::from_str(&env, serial_strs[i]),
+            &blood_type,
+            &450u32,
+            &None,
+        );
 
         assert_eq!(id, (i + 1) as u64);
 
@@ -226,7 +253,13 @@ fn test_register_blood_expiry_derived_from_ledger_time() {
     // Register at ledger time 1000
     let t1 = 1000u64;
     env.ledger().set_timestamp(t1);
-    let id1 = client.register_blood(&bank, &String::from_str(&env, "SN-004"), &BloodType::APositive, &450u32, &None);
+    let id1 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-004"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     let unit1 = client.get_blood_unit(&id1);
     assert_eq!(unit1.donation_timestamp, t1);
     assert_eq!(unit1.expiration_timestamp, t1 + SHELF_LIFE_SECS);
@@ -234,7 +267,13 @@ fn test_register_blood_expiry_derived_from_ledger_time() {
     // Register at a later ledger time
     let t2 = 500_000u64;
     env.ledger().set_timestamp(t2);
-    let id2 = client.register_blood(&bank, &String::from_str(&env, "SN-005"), &BloodType::BPositive, &450u32, &None);
+    let id2 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-005"),
+        &BloodType::BPositive,
+        &450u32,
+        &None,
+    );
     let unit2 = client.get_blood_unit(&id2);
     assert_eq!(unit2.donation_timestamp, t2);
     assert_eq!(unit2.expiration_timestamp, t2 + SHELF_LIFE_SECS);
@@ -256,11 +295,23 @@ fn test_duplicate_registration_prevented() {
     env.ledger().set_timestamp(current_time);
 
     // Register first unit — gets ID 1
-    let id1 = client.register_blood(&bank, &String::from_str(&env, "SN-006"), &BloodType::APositive, &450u32, &None);
+    let id1 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-006"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     assert_eq!(id1, 1);
 
     // Register second unit — gets ID 2 (no collision)
-    let id2 = client.register_blood(&bank, &String::from_str(&env, "SN-007"), &BloodType::BPositive, &450u32, &None);
+    let id2 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-007"),
+        &BloodType::BPositive,
+        &450u32,
+        &None,
+    );
     assert_eq!(id2, 2);
 
     // Both units exist and are distinct
@@ -273,7 +324,7 @@ fn test_duplicate_registration_prevented() {
     // counter position (ID 3), as if a concurrent transaction already stored
     // a unit there before our counter increment was committed.
     env.as_contract(&contract_id, || {
-        use crate::types::{DataKey, BloodUnit, BloodStatus};
+        use crate::types::{BloodStatus, BloodUnit, DataKey};
         use soroban_sdk::Map;
 
         let rogue_unit = BloodUnit {
@@ -317,13 +368,18 @@ fn test_sequential_registration_no_id_collision() {
     // Register 10 units rapidly — simulates multiple registrations in the
     // same ledger. Each must get a unique, sequential ID.
     let serials = [
-        "SN-SEQ01", "SN-SEQ02", "SN-SEQ03", "SN-SEQ04", "SN-SEQ05",
-        "SN-SEQ06", "SN-SEQ07", "SN-SEQ08", "SN-SEQ09", "SN-SEQ10",
+        "SN-SEQ01", "SN-SEQ02", "SN-SEQ03", "SN-SEQ04", "SN-SEQ05", "SN-SEQ06", "SN-SEQ07",
+        "SN-SEQ08", "SN-SEQ09", "SN-SEQ10",
     ];
     let mut ids = soroban_sdk::Vec::new(&env);
     for j in 0..10usize {
-        let id =
-            client.register_blood(&bank, &String::from_str(&env, serials[j]), &BloodType::APositive, &450u32, &None);
+        let id = client.register_blood(
+            &bank,
+            &String::from_str(&env, serials[j]),
+            &BloodType::APositive,
+            &450u32,
+            &None,
+        );
         ids.push_back(id);
     }
 
@@ -345,12 +401,24 @@ fn test_register_blood_edge_case_quantities() {
     env.ledger().set_timestamp(current_time);
 
     // Minimum valid quantity
-    let id1 = client.register_blood(&bank, &String::from_str(&env, "SN-009"), &BloodType::APositive, &100u32, &None);
+    let id1 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-009"),
+        &BloodType::APositive,
+        &100u32,
+        &None,
+    );
     let unit1 = client.get_blood_unit(&id1);
     assert_eq!(unit1.quantity_ml, 100);
 
     // Maximum valid quantity
-    let id2 = client.register_blood(&bank, &String::from_str(&env, "SN-010"), &BloodType::BPositive, &600u32, &None);
+    let id2 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-010"),
+        &BloodType::BPositive,
+        &600u32,
+        &None,
+    );
     let unit2 = client.get_blood_unit(&id2);
     assert_eq!(unit2.quantity_ml, 600);
 }
@@ -363,7 +431,13 @@ fn test_update_status_available_to_reserved() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-011"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-011"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // Update to Reserved
     let updated_unit = client.update_status(
@@ -388,7 +462,13 @@ fn test_update_status_complete_flow() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-012"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-012"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // Available -> Reserved
     let unit = client.update_status(
@@ -427,7 +507,13 @@ fn test_update_status_invalid_available_to_delivered() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-013"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-013"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // Available -> Delivered (skipping forward — invalid)
     client.update_status(
@@ -447,7 +533,13 @@ fn test_update_status_invalid_available_to_intransit() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-014"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-014"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // Available -> InTransit (skipping Reserved — invalid)
     client.update_status(&unit_id, &BloodStatus::InTransit, &admin, &None);
@@ -462,7 +554,13 @@ fn test_update_status_invalid_reserved_to_delivered() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-015"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-015"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&unit_id, &BloodStatus::Reserved, &admin, &None);
 
     // Reserved -> Delivered (skipping InTransit — invalid)
@@ -478,7 +576,13 @@ fn test_update_status_invalid_intransit_to_available() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-016"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-016"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&unit_id, &BloodStatus::Reserved, &admin, &None);
     client.update_status(&unit_id, &BloodStatus::InTransit, &admin, &None);
 
@@ -495,7 +599,13 @@ fn test_update_status_invalid_intransit_to_reserved() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-017"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-017"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&unit_id, &BloodStatus::Reserved, &admin, &None);
     client.update_status(&unit_id, &BloodStatus::InTransit, &admin, &None);
 
@@ -512,7 +622,13 @@ fn test_update_status_invalid_delivered_to_available() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-018"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-018"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&unit_id, &BloodStatus::Reserved, &admin, &None);
     client.update_status(&unit_id, &BloodStatus::InTransit, &admin, &None);
     client.update_status(&unit_id, &BloodStatus::Delivered, &admin, &None);
@@ -530,7 +646,13 @@ fn test_update_status_invalid_delivered_to_reserved() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-019"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-019"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&unit_id, &BloodStatus::Reserved, &admin, &None);
     client.update_status(&unit_id, &BloodStatus::InTransit, &admin, &None);
     client.update_status(&unit_id, &BloodStatus::Delivered, &admin, &None);
@@ -548,7 +670,13 @@ fn test_update_status_invalid_delivered_to_intransit() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-020"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-020"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&unit_id, &BloodStatus::Reserved, &admin, &None);
     client.update_status(&unit_id, &BloodStatus::InTransit, &admin, &None);
     client.update_status(&unit_id, &BloodStatus::Delivered, &admin, &None);
@@ -566,7 +694,13 @@ fn test_update_status_invalid_expired_to_available() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-021"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-021"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&unit_id, &BloodStatus::Expired, &admin, &None);
 
     // Expired -> Available (backwards from terminal — invalid)
@@ -582,7 +716,13 @@ fn test_update_status_invalid_expired_to_reserved() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-022"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-022"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&unit_id, &BloodStatus::Expired, &admin, &None);
 
     // Expired -> Reserved (backwards from terminal — invalid)
@@ -597,7 +737,13 @@ fn test_update_status_reserved_back_to_available() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-023"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-023"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&unit_id, &BloodStatus::Reserved, &admin, &None);
 
     // Reserved -> Available (valid cancellation)
@@ -614,18 +760,36 @@ fn test_update_status_expire_from_any_non_terminal() {
     env.ledger().set_timestamp(current_time);
 
     // Available -> Expired
-    let id1 = client.register_blood(&bank, &String::from_str(&env, "SN-024"), &BloodType::APositive, &450u32, &None);
+    let id1 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-024"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     let unit1 = client.update_status(&id1, &BloodStatus::Expired, &admin, &None);
     assert_eq!(unit1.status, BloodStatus::Expired);
 
     // Reserved -> Expired
-    let id2 = client.register_blood(&bank, &String::from_str(&env, "SN-025"), &BloodType::BPositive, &450u32, &None);
+    let id2 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-025"),
+        &BloodType::BPositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id2, &BloodStatus::Reserved, &admin, &None);
     let unit2 = client.update_status(&id2, &BloodStatus::Expired, &admin, &None);
     assert_eq!(unit2.status, BloodStatus::Expired);
 
     // InTransit -> Expired
-    let id3 = client.register_blood(&bank, &String::from_str(&env, "SN-026"), &BloodType::ONegative, &450u32, &None);
+    let id3 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-026"),
+        &BloodType::ONegative,
+        &450u32,
+        &None,
+    );
     client.update_status(&id3, &BloodStatus::Reserved, &admin, &None);
     client.update_status(&id3, &BloodStatus::InTransit, &admin, &None);
     let unit3 = client.update_status(&id3, &BloodStatus::Expired, &admin, &None);
@@ -641,7 +805,13 @@ fn test_update_status_unauthorized() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-027"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-027"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     let unauthorized = Address::generate(&env);
 
@@ -667,7 +837,13 @@ fn test_update_status_expired_unit() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-028"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-028"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // Move time past expiration (ledger-computed: current_time + 35 days)
     let expiration = current_time + SHELF_LIFE_SECS;
@@ -686,7 +862,13 @@ fn test_update_status_from_terminal_delivered() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-029"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-029"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // Move to Delivered
     client.update_status(&unit_id, &BloodStatus::Reserved, &admin, &None);
@@ -707,7 +889,13 @@ fn test_mark_delivered_success() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-030"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-030"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // Set to Reserved first (should be InTransit in real scenario, but for test)
     client.update_status(&unit_id, &BloodStatus::Reserved, &admin, &None);
@@ -728,7 +916,13 @@ fn test_mark_delivered_from_available() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-031"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-031"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // Try to mark as delivered when still Available (invalid transition)
     client.mark_delivered(&unit_id, &admin, &String::from_str(&env, "Hospital A"));
@@ -744,7 +938,13 @@ fn test_mark_expired_success() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-032"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-032"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // Mark as expired from Available state (valid transition)
     let updated = client.mark_expired(&unit_id, &admin);
@@ -760,7 +960,13 @@ fn test_mark_expired_from_reserved() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-033"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-033"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // Move to Reserved
     client.update_status(&unit_id, &BloodStatus::Reserved, &admin, &None);
@@ -781,7 +987,13 @@ fn test_status_history_tracking() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-034"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-034"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // Perform status changes
     client.update_status(
@@ -836,7 +1048,13 @@ fn test_status_change_count() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-035"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-035"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // Initial count should be 0 (no changes yet)
     assert_eq!(client.get_status_change_count(&unit_id), 0);
@@ -863,9 +1081,27 @@ fn test_batch_update_status_success() {
     env.ledger().set_timestamp(current_time);
 
     // Create multiple blood units
-    let id1 = client.register_blood(&bank, &String::from_str(&env, "SN-036"), &BloodType::APositive, &450u32, &None);
-    let id2 = client.register_blood(&bank, &String::from_str(&env, "SN-037"), &BloodType::BPositive, &450u32, &None);
-    let id3 = client.register_blood(&bank, &String::from_str(&env, "SN-038"), &BloodType::ONegative, &450u32, &None);
+    let id1 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-036"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
+    let id2 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-037"),
+        &BloodType::BPositive,
+        &450u32,
+        &None,
+    );
+    let id3 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-038"),
+        &BloodType::ONegative,
+        &450u32,
+        &None,
+    );
 
     // Batch update to Reserved
     let unit_ids = vec![&env, id1, id2, id3];
@@ -892,7 +1128,13 @@ fn test_batch_update_status_single_unit() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-039"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-039"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     let unit_ids = vec![&env, unit_id];
     let count = client.batch_update_status(&unit_ids, &BloodStatus::Reserved, &admin, &None);
@@ -923,7 +1165,13 @@ fn test_batch_update_status_nonexistent_unit() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-040"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-040"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // Try batch update with one nonexistent unit
     let unit_ids = vec![&env, unit_id, 999];
@@ -939,7 +1187,13 @@ fn test_batch_update_status_unauthorized() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-041"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-041"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     let unauthorized = Address::generate(&env);
 
@@ -956,8 +1210,20 @@ fn test_batch_update_status_invalid_transition() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let id1 = client.register_blood(&bank, &String::from_str(&env, "SN-042"), &BloodType::APositive, &450u32, &None);
-    let id2 = client.register_blood(&bank, &String::from_str(&env, "SN-043"), &BloodType::BPositive, &450u32, &None);
+    let id1 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-042"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
+    let id2 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-043"),
+        &BloodType::BPositive,
+        &450u32,
+        &None,
+    );
 
     // Move id1 to Reserved
     client.update_status(&id1, &BloodStatus::Reserved, &admin, &None);
@@ -982,7 +1248,13 @@ fn test_dispose_from_expired_success() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-044"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-044"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // Expire the unit first
     client.mark_expired(&unit_id, &admin);
@@ -1009,7 +1281,13 @@ fn test_dispose_records_history() {
     let current_time = 1000u64;
     env.ledger().set_timestamp(current_time);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-045"), &BloodType::BPositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-045"),
+        &BloodType::BPositive,
+        &450u32,
+        &None,
+    );
 
     client.mark_expired(&unit_id, &admin);
     client.dispose(&unit_id, &admin, &None);
@@ -1035,7 +1313,13 @@ fn test_dispose_from_available_invalid() {
     let bank = admin.clone();
     env.ledger().set_timestamp(1000u64);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-046"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-046"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // Cannot dispose an Available unit directly (must expire first)
     client.dispose(&unit_id, &admin, &None);
@@ -1049,7 +1333,13 @@ fn test_dispose_from_reserved_invalid() {
     let bank = admin.clone();
     env.ledger().set_timestamp(1000u64);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-047"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-047"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&unit_id, &BloodStatus::Reserved, &admin, &None);
 
     // Cannot dispose a Reserved unit directly
@@ -1064,7 +1354,13 @@ fn test_transition_from_disposed_is_invalid() {
     let bank = admin.clone();
     env.ledger().set_timestamp(1000u64);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-048"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-048"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.mark_expired(&unit_id, &admin);
     client.dispose(&unit_id, &admin, &None);
 
@@ -1086,8 +1382,20 @@ fn test_batch_dispose_after_expiry() {
     let bank = admin.clone();
     env.ledger().set_timestamp(1000u64);
 
-    let id1 = client.register_blood(&bank, &String::from_str(&env, "SN-049"), &BloodType::APositive, &450u32, &None);
-    let id2 = client.register_blood(&bank, &String::from_str(&env, "SN-050"), &BloodType::BPositive, &450u32, &None);
+    let id1 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-049"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
+    let id2 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-050"),
+        &BloodType::BPositive,
+        &450u32,
+        &None,
+    );
 
     client.mark_expired(&id1, &admin);
     client.mark_expired(&id2, &admin);
@@ -1117,7 +1425,13 @@ fn test_batch_dispose_after_expiry() {
 fn test_transition_available_to_reserved_succeeds() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-051"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-051"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     let unit = client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
     assert_eq!(unit.status, BloodStatus::Reserved);
 }
@@ -1126,7 +1440,13 @@ fn test_transition_available_to_reserved_succeeds() {
 fn test_transition_available_to_expired_succeeds() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-052"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-052"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     let unit = client.update_status(&id, &BloodStatus::Expired, &admin, &None);
     assert_eq!(unit.status, BloodStatus::Expired);
 }
@@ -1135,7 +1455,13 @@ fn test_transition_available_to_expired_succeeds() {
 fn test_transition_reserved_to_intransit_succeeds() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-053"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-053"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
     let unit = client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
     assert_eq!(unit.status, BloodStatus::InTransit);
@@ -1145,7 +1471,13 @@ fn test_transition_reserved_to_intransit_succeeds() {
 fn test_transition_reserved_to_available_succeeds() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-054"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-054"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
     let unit = client.update_status(&id, &BloodStatus::Available, &admin, &None);
     assert_eq!(unit.status, BloodStatus::Available);
@@ -1155,7 +1487,13 @@ fn test_transition_reserved_to_available_succeeds() {
 fn test_transition_reserved_to_expired_succeeds() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-055"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-055"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
     let unit = client.update_status(&id, &BloodStatus::Expired, &admin, &None);
     assert_eq!(unit.status, BloodStatus::Expired);
@@ -1165,7 +1503,13 @@ fn test_transition_reserved_to_expired_succeeds() {
 fn test_transition_intransit_to_delivered_succeeds() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-056"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-056"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
     client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
     let unit = client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
@@ -1176,7 +1520,13 @@ fn test_transition_intransit_to_delivered_succeeds() {
 fn test_transition_intransit_to_expired_succeeds() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-057"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-057"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
     client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
     let unit = client.update_status(&id, &BloodStatus::Expired, &admin, &None);
@@ -1187,7 +1537,13 @@ fn test_transition_intransit_to_expired_succeeds() {
 fn test_transition_expired_to_disposed_succeeds() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-058"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-058"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Expired, &admin, &None);
     let unit = client.update_status(&id, &BloodStatus::Disposed, &admin, &None);
     assert_eq!(unit.status, BloodStatus::Disposed);
@@ -1197,7 +1553,13 @@ fn test_transition_expired_to_disposed_succeeds() {
 fn test_transition_compromised_to_disposed_succeeds() {
     let (env, admin, client, contract_id) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-059"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-059"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // Seed Compromised status directly — Available→Compromised is not a defined
     // transition, so we write it via storage to test the Compromised→Disposed path.
@@ -1220,7 +1582,13 @@ fn test_transition_delivered_to_collected_fails() {
     // "Collected" maps to Available in this contract's terminology.
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-060"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-060"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
     client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
     client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
@@ -1234,7 +1602,13 @@ fn test_transition_disposed_to_cleared_fails() {
     // "Cleared" maps to Available in this contract's terminology.
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-061"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-061"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Expired, &admin, &None);
     client.update_status(&id, &BloodStatus::Disposed, &admin, &None);
     // Disposed → Available (backwards from terminal)
@@ -1247,7 +1621,13 @@ fn test_transition_transfused_to_dispatched_fails() {
     // "Transfused" maps to Delivered; "Dispatched" maps to InTransit.
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-062"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-062"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
     client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
     client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
@@ -1260,7 +1640,13 @@ fn test_transition_transfused_to_dispatched_fails() {
 fn test_transition_delivered_to_reserved_fails() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-063"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-063"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
     client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
     client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
@@ -1272,7 +1658,13 @@ fn test_transition_delivered_to_reserved_fails() {
 fn test_transition_intransit_to_available_fails() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-064"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-064"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
     client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
     client.update_status(&id, &BloodStatus::Available, &admin, &None);
@@ -1283,7 +1675,13 @@ fn test_transition_intransit_to_available_fails() {
 fn test_transition_available_to_delivered_fails() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-065"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-065"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
 }
 
@@ -1292,7 +1690,13 @@ fn test_transition_available_to_delivered_fails() {
 fn test_transition_available_to_intransit_fails() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-066"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-066"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
 }
 
@@ -1301,7 +1705,13 @@ fn test_transition_available_to_intransit_fails() {
 fn test_transition_reserved_to_delivered_fails() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-067"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-067"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
     client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
 }
@@ -1313,7 +1723,13 @@ fn test_transition_reserved_to_delivered_fails() {
 fn test_transition_expired_to_available_fails() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-068"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-068"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Expired, &admin, &None);
     client.update_status(&id, &BloodStatus::Available, &admin, &None);
 }
@@ -1323,7 +1739,13 @@ fn test_transition_expired_to_available_fails() {
 fn test_transition_expired_to_reserved_fails() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-069"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-069"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Expired, &admin, &None);
     client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
 }
@@ -1333,7 +1755,13 @@ fn test_transition_expired_to_reserved_fails() {
 fn test_transition_expired_to_intransit_fails() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-070"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-070"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Expired, &admin, &None);
     client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
 }
@@ -1343,7 +1771,13 @@ fn test_transition_expired_to_intransit_fails() {
 fn test_transition_expired_to_delivered_fails() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-071"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-071"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Expired, &admin, &None);
     client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
 }
@@ -1353,7 +1787,13 @@ fn test_transition_expired_to_delivered_fails() {
 fn test_transition_expired_to_compromised_fails() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-072"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-072"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Expired, &admin, &None);
     client.update_status(&id, &BloodStatus::Compromised, &admin, &None);
 }
@@ -1365,7 +1805,13 @@ fn test_transition_expired_to_compromised_fails() {
 fn test_transition_disposed_to_available_fails() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-073"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-073"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Expired, &admin, &None);
     client.update_status(&id, &BloodStatus::Disposed, &admin, &None);
     client.update_status(&id, &BloodStatus::Available, &admin, &None);
@@ -1376,7 +1822,13 @@ fn test_transition_disposed_to_available_fails() {
 fn test_transition_disposed_to_reserved_fails() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-074"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-074"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Expired, &admin, &None);
     client.update_status(&id, &BloodStatus::Disposed, &admin, &None);
     client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
@@ -1387,7 +1839,13 @@ fn test_transition_disposed_to_reserved_fails() {
 fn test_transition_disposed_to_intransit_fails() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-075"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-075"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Expired, &admin, &None);
     client.update_status(&id, &BloodStatus::Disposed, &admin, &None);
     client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
@@ -1398,7 +1856,13 @@ fn test_transition_disposed_to_intransit_fails() {
 fn test_transition_disposed_to_delivered_fails() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-076"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-076"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Expired, &admin, &None);
     client.update_status(&id, &BloodStatus::Disposed, &admin, &None);
     client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
@@ -1409,7 +1873,13 @@ fn test_transition_disposed_to_delivered_fails() {
 fn test_transition_disposed_to_expired_fails() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-077"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-077"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Expired, &admin, &None);
     client.update_status(&id, &BloodStatus::Disposed, &admin, &None);
     client.update_status(&id, &BloodStatus::Expired, &admin, &None);
@@ -1420,7 +1890,13 @@ fn test_transition_disposed_to_expired_fails() {
 fn test_transition_disposed_to_compromised_fails() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-078"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-078"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
     client.update_status(&id, &BloodStatus::Expired, &admin, &None);
     client.update_status(&id, &BloodStatus::Disposed, &admin, &None);
     client.update_status(&id, &BloodStatus::Compromised, &admin, &None);
@@ -1464,7 +1940,13 @@ fn test_transition_pure_all_invalid_pairs_fails() {
     use BloodStatus::*;
 
     let all_statuses = [
-        Available, Reserved, InTransit, Delivered, Expired, Compromised, Disposed,
+        Available,
+        Reserved,
+        InTransit,
+        Delivered,
+        Expired,
+        Compromised,
+        Disposed,
     ];
 
     let valid_set = [
@@ -1499,7 +1981,6 @@ fn test_transition_pure_all_invalid_pairs_fails() {
     }
 }
 
-
 // ── Circuit breaker tests ─────────────────────────────────────────────────────
 
 #[test]
@@ -1512,7 +1993,13 @@ fn test_pause_blocks_write_functions() {
     assert!(client.is_paused());
 
     // register_blood should fail with ContractPaused (#160)
-    let result = client.try_register_blood(&admin, &String::from_str(&env, "SN-PAUSE-CHK"), &BloodType::OPositive, &450u32, &None);
+    let result = client.try_register_blood(
+        &admin,
+        &String::from_str(&env, "SN-PAUSE-CHK"),
+        &BloodType::OPositive,
+        &450u32,
+        &None,
+    );
     assert!(result.is_err());
 }
 
@@ -1522,7 +2009,13 @@ fn test_pause_allows_read_functions() {
     env.ledger().set_timestamp(1000);
 
     // Register a unit before pausing
-    let unit_id = client.register_blood(&admin, &String::from_str(&env, "SN-079"), &BloodType::OPositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-079"),
+        &BloodType::OPositive,
+        &450u32,
+        &None,
+    );
 
     // Pause
     client.pause(&admin);
@@ -1530,7 +2023,10 @@ fn test_pause_allows_read_functions() {
     // Read functions still work
     let unit = client.get_blood_unit(&unit_id);
     assert_eq!(unit.id, unit_id);
-    assert!(!client.get_status_history(&unit_id).is_empty() || client.get_status_change_count(&unit_id) == 0);
+    assert!(
+        !client.get_status_history(&unit_id).is_empty()
+            || client.get_status_change_count(&unit_id) == 0
+    );
 }
 
 #[test]
@@ -1545,7 +2041,13 @@ fn test_unpause_restores_functionality() {
     assert!(!client.is_paused());
 
     // Write should succeed after unpause
-    let unit_id = client.register_blood(&admin, &String::from_str(&env, "SN-080"), &BloodType::APositive, &300u32, &None);
+    let unit_id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-080"),
+        &BloodType::APositive,
+        &300u32,
+        &None,
+    );
     assert!(unit_id > 0);
 }
 
@@ -1567,7 +2069,13 @@ fn test_paginated_history_single_page() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
 
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-081"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-081"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // 3 transitions — all fit on page 0 (page size = 50)
     client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
@@ -1588,7 +2096,13 @@ fn test_paginated_history_full_matches_pages() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
 
-    let id = client.register_blood(&admin, &String::from_str(&env, "SN-082"), &BloodType::APositive, &450u32, &None);
+    let id = client.register_blood(
+        &admin,
+        &String::from_str(&env, "SN-082"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // 5 transitions
     client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
@@ -1614,9 +2128,24 @@ fn test_batch_register_blood_success() {
 
     let entries = vec![
         &env,
-        (String::from_str(&env, "SN-BATCH-001"), BloodType::APositive, 450u32, None::<Address>),
-        (String::from_str(&env, "SN-BATCH-002"), BloodType::BNegative, 300u32, None::<Address>),
-        (String::from_str(&env, "SN-BATCH-003"), BloodType::ONegative, 500u32, None::<Address>),
+        (
+            String::from_str(&env, "SN-BATCH-001"),
+            BloodType::APositive,
+            450u32,
+            None::<Address>,
+        ),
+        (
+            String::from_str(&env, "SN-BATCH-002"),
+            BloodType::BNegative,
+            300u32,
+            None::<Address>,
+        ),
+        (
+            String::from_str(&env, "SN-BATCH-003"),
+            BloodType::ONegative,
+            500u32,
+            None::<Address>,
+        ),
     ];
 
     let ids = client.batch_register_blood(&admin, &entries);
@@ -1658,8 +2187,18 @@ fn test_batch_register_blood_invalid_quantity_aborts_all() {
     // Second entry has invalid quantity — entire batch should fail
     let entries = vec![
         &env,
-        (String::from_str(&env, "SN-BATCH-INV1"), BloodType::APositive, 450u32, None::<Address>),
-        (String::from_str(&env, "SN-BATCH-INV2"), BloodType::BNegative, 50u32, None::<Address>), // too low
+        (
+            String::from_str(&env, "SN-BATCH-INV1"),
+            BloodType::APositive,
+            450u32,
+            None::<Address>,
+        ),
+        (
+            String::from_str(&env, "SN-BATCH-INV2"),
+            BloodType::BNegative,
+            50u32,
+            None::<Address>,
+        ), // too low
     ];
     client.batch_register_blood(&admin, &entries);
 }
@@ -1671,7 +2210,15 @@ fn test_batch_register_blood_unauthorized_bank() {
     env.ledger().set_timestamp(1000u64);
 
     let unauthorized = Address::generate(&env);
-    let entries = vec![&env, (String::from_str(&env, "SN-BATCH-UA"), BloodType::APositive, 450u32, None::<Address>)];
+    let entries = vec![
+        &env,
+        (
+            String::from_str(&env, "SN-BATCH-UA"),
+            BloodType::APositive,
+            450u32,
+            None::<Address>,
+        ),
+    ];
     client.batch_register_blood(&unauthorized, &entries);
 }
 
@@ -1683,15 +2230,16 @@ fn test_update_status_allowed_for_owner() {
     let bank = Address::generate(&env);
     client.authorize_bank(&admin, &bank, &true);
 
-    let unit_id = client.register_blood(&bank, &String::from_str(&env, "SN-083"), &BloodType::APositive, &450u32, &None);
-
-    // Bank (owner) should be able to update status even if not admin
-    let updated = client.update_status(
-        &unit_id,
-        &BloodStatus::Reserved,
+    let unit_id = client.register_blood(
         &bank,
+        &String::from_str(&env, "SN-083"),
+        &BloodType::APositive,
+        &450u32,
         &None,
     );
+
+    // Bank (owner) should be able to update status even if not admin
+    let updated = client.update_status(&unit_id, &BloodStatus::Reserved, &bank, &None);
     assert_eq!(updated.status, BloodStatus::Reserved);
 }
 
@@ -1706,7 +2254,13 @@ fn test_update_status_denied_for_non_owner_non_admin() {
     client.authorize_bank(&admin, &bank1, &true);
     client.authorize_bank(&admin, &bank2, &true);
 
-    let unit_id = client.register_blood(&bank1, &String::from_str(&env, "SN-084"), &BloodType::APositive, &450u32, &None);
+    let unit_id = client.register_blood(
+        &bank1,
+        &String::from_str(&env, "SN-084"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // Bank2 (not owner, not admin) should be denied
     client.update_status(&unit_id, &BloodStatus::Reserved, &bank2, &None);
@@ -1723,9 +2277,75 @@ fn test_reserve_blood_fails_on_mixed_ownership() {
     client.authorize_bank(&admin, &bank1, &true);
     client.authorize_bank(&admin, &bank2, &true);
 
-    let id1 = client.register_blood(&bank1, &String::from_str(&env, "SN-085"), &BloodType::APositive, &450u32, &None);
-    let id2 = client.register_blood(&bank2, &String::from_str(&env, "SN-086"), &BloodType::APositive, &450u32, &None);
+    let id1 = client.register_blood(
+        &bank1,
+        &String::from_str(&env, "SN-085"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
+    let id2 = client.register_blood(
+        &bank2,
+        &String::from_str(&env, "SN-086"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
 
     // Bank1 tries to reserve both units (but only owns one)
     client.reserve_blood(&bank1, &vec![&env, id1, id2], &123, &3600);
+}
+
+#[test]
+fn test_release_reservation_by_contract_releases_reservation() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    let bank = admin.clone();
+    let hospital = Address::generate(&env);
+
+    // Register a blood unit
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-REL-001"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
+
+    // Reserve it
+    let reservation_id = client.reserve_blood(&bank, &vec![&env, unit_id], &42, &3600);
+
+    // Verify unit is Reserved
+    let stored = client.get_blood_unit(&unit_id);
+    assert_eq!(stored.status, BloodStatus::Reserved);
+
+    // Release via release_reservation_by_contract with the authorized contract
+    let authorized_addr = Address::generate(&env);
+    // Pass env by value and authorized_addr by value (not by reference) as the
+    // function signature requires owned Env and Address (issue #1317).
+    InventoryContract::release_reservation_by_contract(env.clone(), authorized_addr, reservation_id)
+        .unwrap();
+
+    // Verify unit is Available again
+    let released = client.get_blood_unit(&unit_id);
+    assert_eq!(released.status, BloodStatus::Available);
+
+    // Reservation should be removed.
+    // `get_reservation` panics when not found; use try_get_reservation and
+    // verify an error is returned (issue #1317).
+    let result = client.try_get_reservation(&reservation_id);
+    assert!(result.is_err(), "reservation should have been removed");
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #150)")]
+fn test_release_reservation_by_contract_fails_on_unknown_reservation() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    // Try to release a non-existent reservation.
+    // Pass env and address by value, not by reference (issue #1317).
+    InventoryContract::release_reservation_by_contract(env.clone(), Address::generate(&env), 999)
+        .unwrap();
 }

@@ -139,8 +139,28 @@ fn test_set_reporting_period_monthly() {
 #[test]
 fn test_get_snapshot_not_found_returns_error() {
     let (_, _, client) = setup();
-    let result = client.try_get_snapshot(&9999u64);
+    let result = client.try_get_snapshot(&PeriodType::Daily, &9999u64);
     assert_eq!(result, Err(Ok(AnalyticsError::PeriodNotFound)));
+}
+
+#[test]
+fn test_snapshot_isolated_across_period_type_switch() {
+    let (env, _, client) = setup();
+    // At the default ledger timestamp (0), the Daily and Weekly period
+    // indices are both 0, so a key collision would blend the two buckets.
+    assert_eq!(env.ledger().timestamp(), 0);
+
+    client.record_donation();
+    let daily_snapshot = client.get_current_snapshot();
+    assert_eq!(daily_snapshot.total_donations, 1);
+
+    client.set_reporting_period(&PeriodType::Weekly);
+    client.record_donation();
+    let weekly_snapshot = client.get_current_snapshot();
+    assert_eq!(
+        weekly_snapshot.total_donations, 1,
+        "Weekly snapshot should be isolated from the Daily snapshot bucket, not blended with it"
+    );
 }
 
 #[test]
@@ -149,7 +169,7 @@ fn test_get_snapshot_returns_correct_period() {
     client.record_donation();
 
     let period_index = env.ledger().timestamp() / 86_400;
-    let snap = client.get_snapshot(&period_index);
+    let snap = client.get_snapshot(&PeriodType::Daily, &period_index);
     assert_eq!(snap.total_donations, 1);
     assert_eq!(snap.period_index, period_index);
 }

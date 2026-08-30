@@ -9,7 +9,7 @@ import {
   Query,
   Request,
 } from '@nestjs/common';
-import { ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { User } from '../auth/decorators/user.decorator';
@@ -29,6 +29,7 @@ import {
   SurgeEvaluationResult,
 } from './surge-simulation.service';
 
+@ApiTags('Surge Simulation')
 @Controller('surge-simulation')
 export class SurgeSimulationController {
   constructor(

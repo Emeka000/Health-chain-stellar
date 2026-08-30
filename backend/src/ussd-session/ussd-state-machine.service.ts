@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'crypto';
 
+import { UssdAuthService } from './ussd-auth.service';
 import {
   UssdSessionStore,
   USSD_SESSION_TTL_SECONDS,
@@ -30,7 +31,10 @@ const SESSION_TTL_MS = USSD_SESSION_TTL_SECONDS * 1000;
 export class UssdStateMachine {
   private readonly logger = new Logger(UssdStateMachine.name);
 
-  constructor(private readonly sessionStore: UssdSessionStore) {}
+  constructor(
+    private readonly sessionStore: UssdSessionStore,
+    private readonly ussdAuthService: UssdAuthService,
+  ) {}
 
   async process(
     sessionId: string,
@@ -47,10 +51,12 @@ export class UssdStateMachine {
 
     if (!session) {
       session = await this.sessionStore.createInitial(sessionId, phoneNumber);
-    }
-
-    if (session.phoneNumber !== phoneNumber) {
-      session.phoneNumber = phoneNumber;
+    } else if (session.phoneNumber !== phoneNumber) {
+      this.logger.warn(
+        `Session ${sessionId} phone number mismatch: expected ${session.phoneNumber}, got ${phoneNumber}. Terminating session.`,
+      );
+      await this.sessionStore.delete(sessionId);
+      return this.end('Session mismatch detected. Please start again.');
     }
 
     if (session.expiresAt <= Date.now()) {
@@ -179,7 +185,7 @@ export class UssdStateMachine {
         'Invalid phone number.\nEnter your registered phone number:',
       );
     }
-    session.userId = phone; // placeholder – real impl would look up user by phone
+    session.pendingLoginPhone = phone;
     session.history.push(session.step);
     session.step = UssdStep.LOGIN_PIN;
     await this.sessionStore.set(session);
@@ -196,11 +202,31 @@ export class UssdStateMachine {
     if (!/^\d{4,6}$/.test(input.trim())) {
       return this.con('Invalid PIN. Enter your 4-6 digit PIN:\n(0 to go back)');
     }
-    // TODO: replace stub with real auth service call
-    const pinValid = input.trim().length >= 4; // stub
-    if (!pinValid) {
+    if (!session.pendingLoginPhone) {
+      session.step = UssdStep.LOGIN_PHONE;
+      session.history = [];
+      await this.sessionStore.set(session);
+      return this.promptForStep(session);
+    }
+
+    const result = await this.ussdAuthService.verifyPin(
+      session.pendingLoginPhone,
+      input.trim(),
+    );
+
+    if (!result.success) {
+      if (result.reason === 'locked') {
+        session.step = UssdStep.CANCELLED;
+        await this.sessionStore.set(session);
+        return this.end(
+          'Too many failed attempts. Your account is temporarily locked. Please try again later.',
+        );
+      }
       return this.con('Incorrect PIN. Try again:\n(0 to go back)');
     }
+
+    session.userId = result.userId;
+    delete session.pendingLoginPhone;
     session.history.push(session.step);
     session.step = UssdStep.SELECT_BLOOD_TYPE;
     await this.sessionStore.set(session);

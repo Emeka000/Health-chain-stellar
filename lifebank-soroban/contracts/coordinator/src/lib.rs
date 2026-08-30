@@ -1,4 +1,5 @@
 #![no_std]
+#![deny(deprecated)]
 
 /// Cross-contract coordinator for the HealthDonor workflow.
 ///
@@ -18,13 +19,15 @@ mod test;
 pub use error::CoordinatorError;
 pub use types::{DataKey, ExcursionSummary, WorkflowRecord, WorkflowStatus};
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String, Vec};
+use soroban_sdk::{contract, contractevent, contractimpl, contracttype, Address, Env, String, Vec};
 
 /// Default workflow expiry window: 6 hours expressed in seconds.
 /// After `allocate_units` is called, if `confirm_delivery` is never invoked
 /// within this window, anyone may call `expire_workflow` to roll back the
 /// allocation and free the reserved units and escrowed payment.
 const WORKFLOW_TIMEOUT_SECS: u64 = 6 * 60 * 60;
+
+const CONTRACT_VERSION: u32 = 1;
 
 // ── Minimal interface types mirroring the domain contracts ────────────────────
 // These allow the coordinator to inspect cross-contract return values without
@@ -46,17 +49,17 @@ pub enum BloodType {
 impl BloodType {
     pub fn can_donate_to(&self, recipient: &BloodType) -> bool {
         use BloodType::*;
-        match (self, recipient) {
-            (ONegative, _) => true,
-            (OPositive, APositive | BPositive | ABPositive | OPositive) => true,
-            (ANegative, APositive | ANegative | ABPositive | ABNegative) => true,
-            (APositive, APositive | ABPositive) => true,
-            (BNegative, BPositive | BNegative | ABPositive | ABNegative) => true,
-            (BPositive, BPositive | ABPositive) => true,
-            (ABNegative, ABPositive | ABNegative) => true,
-            (ABPositive, ABPositive) => true,
-            _ => false,
-        }
+        matches!(
+            (self, recipient),
+            (ONegative, _)
+                | (OPositive, APositive | BPositive | ABPositive | OPositive)
+                | (ANegative, APositive | ANegative | ABPositive | ABNegative)
+                | (APositive, APositive | ABPositive)
+                | (BNegative, BPositive | BNegative | ABPositive | ABNegative)
+                | (BPositive, BPositive | ABPositive)
+                | (ABNegative, ABPositive | ABNegative)
+                | (ABPositive, ABPositive)
+        )
     }
 }
 
@@ -119,9 +122,10 @@ pub struct Payment {
 
 mod request_client {
     use super::BloodRequest;
-    use soroban_sdk::{contractclient, Address, Env};
+    use soroban_sdk::{contractclient, Env};
 
     #[contractclient(name = "RequestContractClient")]
+    #[allow(dead_code)]
     pub trait RequestContractInterface {
         fn get_request(env: Env, request_id: u64) -> BloodRequest;
     }
@@ -132,6 +136,7 @@ mod inventory_client {
     use soroban_sdk::{contractclient, Address, Env, String};
 
     #[contractclient(name = "InventoryContractClient")]
+    #[allow(dead_code)]
     pub trait InventoryContractInterface {
         fn get_blood_unit(env: Env, blood_unit_id: u64) -> BloodUnit;
         fn update_status(
@@ -168,6 +173,7 @@ mod payment_client {
     }
 
     #[contractclient(name = "PaymentContractClient")]
+    #[allow(dead_code)]
     pub trait PaymentContractInterface {
         fn get_payment(env: Env, payment_id: u64) -> Payment;
         fn update_status(env: Env, payment_id: u64, status: PaymentStatus);
@@ -179,44 +185,103 @@ use inventory_client::InventoryContractClient;
 use payment_client::PaymentContractClient;
 use request_client::RequestContractClient;
 
+// ── Contract events ───────────────────────────────────────────────────────────
+
+#[contractevent(topics = ["coord", "init"], data_format = "single-value")]
+pub struct CoordInitialized {
+    pub admin: Address,
+}
+
+#[contractevent(topics = ["coord", "emrghlt"], data_format = "single-value")]
+pub struct CoordEmergencyHalt {
+    pub admin: Address,
+}
+
+#[contractevent(topics = ["coord", "alloc"], data_format = "vec")]
+pub struct CoordAllocated {
+    pub request_id: u64,
+    pub unit_ids: Vec<u64>,
+    pub unit_count: u32,
+}
+
+#[contractevent(topics = ["coord", "dlvrd"], data_format = "vec")]
+pub struct CoordDelivered {
+    pub request_id: u64,
+    pub location: String,
+}
+
+#[contractevent(topics = ["coord", "settld"], data_format = "vec")]
+pub struct CoordSettled {
+    pub request_id: u64,
+    pub payment_id: u64,
+}
+
+#[contractevent(topics = ["coord", "rollbk"], data_format = "single-value")]
+pub struct CoordRolledBack {
+    pub request_id: u64,
+}
+
+#[contractevent(topics = ["coord", "expired"], data_format = "single-value")]
+pub struct CoordExpired {
+    pub request_id: u64,
+}
+
+#[contractevent(topics = ["coord", "tmp_brch"], data_format = "vec")]
+pub struct CoordTemperatureBreach {
+    pub payment_id: u64,
+    pub unit_id: u64,
+    pub timestamp: u64,
+}
+
 // ── Storage helpers ────────────────────────────────────────────────────────────
 
-fn get_admin(env: &Env) -> Address {
-    env.storage().instance().get(&DataKey::Admin).unwrap()
+fn get_admin(env: &Env) -> Result<Address, CoordinatorError> {
+    env.storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CoordinatorError::NotInitialized)
+}
+
+fn is_terminal(status: WorkflowStatus) -> bool {
+    matches!(status, WorkflowStatus::Settled | WorkflowStatus::RolledBack)
 }
 
 fn load_workflow(env: &Env, request_id: u64) -> Option<WorkflowRecord> {
     const WORKFLOW_TTL_LEDGERS: u32 = 535_680; // ~30 days at 5s/ledger
-    
     let key = DataKey::Workflow(request_id);
-    
-    // Extend TTL on every read
-    env.storage().persistent().extend_ttl(
-        &key,
-        WORKFLOW_TTL_LEDGERS,
-        WORKFLOW_TTL_LEDGERS,
-    );
-    
-    env.storage()
-        .persistent()
-        .get(&key)
+
+    let workflow: Option<WorkflowRecord> = env.storage().persistent().get(&key);
+    if let Some(wf) = &workflow {
+        // Terminal workflows are archived with a fixed short TTL at write time
+        // (see save_workflow) and must be allowed to lapse naturally — do not
+        // keep extending TTL on every read or storage grows unbounded forever.
+        if !is_terminal(wf.status) {
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, WORKFLOW_TTL_LEDGERS, WORKFLOW_TTL_LEDGERS);
+        }
+    }
+
+    workflow
 }
 
 fn save_workflow(env: &Env, wf: &WorkflowRecord) {
     const WORKFLOW_TTL_LEDGERS: u32 = 535_680; // ~30 days at 5s/ledger
-    
+    // Terminal records get a short archival TTL instead of the long
+    // auto-renewing one, so they lapse on their own instead of accumulating
+    // as permanent persistent-storage entries.
+    const TERMINAL_TTL_LEDGERS: u32 = 17_280; // ~1 day at 5s/ledger
+
     let key = DataKey::Workflow(wf.request_id);
-    
-    env.storage()
-        .persistent()
-        .set(&key, wf);
-        
-    // Extend TTL on every write
-    env.storage().persistent().extend_ttl(
-        &key,
-        WORKFLOW_TTL_LEDGERS,
-        WORKFLOW_TTL_LEDGERS,
-    );
+
+    env.storage().persistent().set(&key, wf);
+
+    let ttl = if is_terminal(wf.status) {
+        TERMINAL_TTL_LEDGERS
+    } else {
+        WORKFLOW_TTL_LEDGERS
+    };
+    env.storage().persistent().extend_ttl(&key, ttl, ttl);
 }
 
 // ── Contract ───────────────────────────────────────────────────────────────────
@@ -247,15 +312,13 @@ impl CoordinatorContract {
         env.storage()
             .instance()
             .set(&DataKey::PaymentContract, &payment_contract);
-        env.events().publish(
-            (
-                symbol_short!("coord"),
-                symbol_short!("init"),
-                symbol_short!("v1"),
-            ),
-            admin,
-        );
+        CoordInitialized { admin }.publish(&env);
         Ok(())
+    }
+
+    /// Get contract version
+    pub fn version(_env: Env) -> u32 {
+        CONTRACT_VERSION
     }
 
     /// Pause all state-mutating functions. Admin only.
@@ -338,14 +401,7 @@ impl CoordinatorContract {
             return Err(CoordinatorError::Unauthorized);
         }
         env.storage().instance().set(&DataKey::EmergencyHalt, &true);
-        env.events().publish(
-            (
-                symbol_short!("coord"),
-                symbol_short!("emrghlt"),
-                symbol_short!("v1"),
-            ),
-            admin,
-        );
+        CoordEmergencyHalt { admin }.publish(&env);
         Ok(())
     }
 
@@ -360,7 +416,9 @@ impl CoordinatorContract {
         if admin != stored {
             return Err(CoordinatorError::Unauthorized);
         }
-        env.storage().instance().set(&DataKey::EmergencyHalt, &false);
+        env.storage()
+            .instance()
+            .set(&DataKey::EmergencyHalt, &false);
         Ok(())
     }
 
@@ -370,6 +428,48 @@ impl CoordinatorContract {
             .instance()
             .get(&DataKey::EmergencyHalt)
             .unwrap_or(false)
+    }
+
+    /// Configure the address authorized to call flag_temperature_breach
+    /// (typically the temperature-oracle contract). Admin only.
+    pub fn set_temperature_oracle(
+        env: Env,
+        admin: Address,
+        oracle: Address,
+    ) -> Result<(), CoordinatorError> {
+        admin.require_auth();
+        let stored = get_admin(&env)?;
+        if admin != stored {
+            return Err(CoordinatorError::Unauthorized);
+        }
+        env.storage().instance().set(&DataKey::TemperatureOracle, &oracle);
+        Ok(())
+    }
+
+    fn require_admin(env: &Env, caller: &Address) -> Result<(), CoordinatorError> {
+        let stored = get_admin(env)?;
+        if *caller != stored {
+            return Err(CoordinatorError::Unauthorized);
+        }
+        Ok(())
+    }
+
+    /// Restricts flag_temperature_breach to the admin or the configured
+    /// temperature-oracle address, mirroring the admin check used by rollback.
+    fn require_oracle(env: &Env, caller: &Address) -> Result<(), CoordinatorError> {
+        let admin = get_admin(env)?;
+        if *caller == admin {
+            return Ok(());
+        }
+        let oracle: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TemperatureOracle)
+            .ok_or(CoordinatorError::Unauthorized)?;
+        if *caller != oracle {
+            return Err(CoordinatorError::Unauthorized);
+        }
+        Ok(())
     }
 
     /// Step 1 – Allocate inventory units to a pending request.
@@ -384,9 +484,10 @@ impl CoordinatorContract {
         caller.require_auth();
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
+        Self::require_admin(&env, &caller)?;
 
         if let Some(wf) = load_workflow(&env, request_id) {
-            if wf.status != WorkflowStatus::Pending {
+            if !is_terminal(wf.status) {
                 return Err(CoordinatorError::WorkflowAlreadyStarted);
             }
         }
@@ -405,6 +506,26 @@ impl CoordinatorContract {
 
         if request.status != RequestStatus::Pending {
             return Err(CoordinatorError::InvalidRequestState);
+        }
+
+        // Reject empty unit allocations — no units means no delivery guarantee
+        if unit_ids.len() == 0 {
+            return Err(CoordinatorError::NoUnitsSpecified);
+        }
+
+        // Verify payment is actually escrowed for this request
+        let pay_addr: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PaymentContract)
+            .unwrap();
+        let pay_client = PaymentContractClient::new(&env, &pay_addr);
+        let payment = pay_client
+            .try_get_payment(&payment_id)
+            .map_err(|_| CoordinatorError::PaymentNotFound)?
+            .map_err(|_| CoordinatorError::PaymentNotFound)?;
+        if payment.request_id != request_id {
+            return Err(CoordinatorError::PaymentRequestMismatch);
         }
 
         // Reserve each inventory unit
@@ -437,14 +558,12 @@ impl CoordinatorContract {
                 .map_err(|_| CoordinatorError::InventoryUpdateFailed)?;
         }
 
-        env.events().publish(
-            (
-                symbol_short!("coord"),
-                symbol_short!("alloc"),
-                symbol_short!("v1"),
-            ),
-            (request_id, unit_ids.clone(), unit_ids.len()),
-        );
+        CoordAllocated {
+            request_id,
+            unit_ids: unit_ids.clone(),
+            unit_count: unit_ids.len(),
+        }
+        .publish(&env);
 
         save_workflow(
             &env,
@@ -478,6 +597,7 @@ impl CoordinatorContract {
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
         Self::require_not_emergency_halted(&env)?;
+        Self::require_admin(&env, &caller)?;
 
         let mut wf = load_workflow(&env, request_id).ok_or(CoordinatorError::WorkflowNotFound)?;
 
@@ -511,14 +631,11 @@ impl CoordinatorContract {
         wf.delivery_location = Some(location.clone());
         save_workflow(&env, &wf);
 
-        env.events().publish(
-            (
-                symbol_short!("coord"),
-                symbol_short!("dlvrd"),
-                symbol_short!("v1"),
-            ),
-            (request_id, location),
-        );
+        CoordDelivered {
+            request_id,
+            location,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -533,6 +650,7 @@ impl CoordinatorContract {
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
         Self::require_not_emergency_halted(&env)?;
+        Self::require_admin(&env, &caller)?;
 
         let mut wf = load_workflow(&env, request_id).ok_or(CoordinatorError::WorkflowNotFound)?;
 
@@ -552,6 +670,10 @@ impl CoordinatorContract {
             .map_err(|_| CoordinatorError::PaymentNotFound)?
             .map_err(|_| CoordinatorError::PaymentNotFound)?;
 
+        if payment.request_id != request_id {
+            return Err(CoordinatorError::PaymentRequestMismatch);
+        }
+
         if payment.status != PaymentStatus::Locked {
             return Err(CoordinatorError::InvalidPaymentState);
         }
@@ -564,21 +686,19 @@ impl CoordinatorContract {
         wf.status = WorkflowStatus::Settled;
         save_workflow(&env, &wf);
 
-        env.events().publish(
-            (
-                symbol_short!("coord"),
-                symbol_short!("settld"),
-                symbol_short!("v1"),
-            ),
-            (request_id, wf.payment_id),
-        );
+        CoordSettled {
+            request_id,
+            payment_id: wf.payment_id,
+        }
+        .publish(&env);
 
         Ok(())
     }
 
     /// Rollback – admin only. Releases units and refunds payment.
     pub fn rollback(env: Env, request_id: u64) -> Result<(), CoordinatorError> {
-        get_admin(&env).require_auth();
+        let admin = get_admin(&env)?;
+        admin.require_auth();
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
 
@@ -586,6 +706,14 @@ impl CoordinatorContract {
 
         if wf.status == WorkflowStatus::Settled {
             return Err(CoordinatorError::CannotRollbackSettled);
+        }
+
+        // Once delivery has been confirmed, units are physically at the hospital.
+        // Releasing them back to Available here would let the same physical unit
+        // be re-allocated elsewhere while a copy is already delivered, and would
+        // improperly refund a payment for blood that was in fact delivered.
+        if wf.status == WorkflowStatus::Delivered {
+            return Err(CoordinatorError::InvalidWorkflowState);
         }
 
         let inv_addr: Address = env
@@ -614,6 +742,9 @@ impl CoordinatorContract {
             .try_get_payment(&wf.payment_id)
             .map_err(|_| CoordinatorError::PaymentNotFound)?
             .map_err(|_| CoordinatorError::PaymentNotFound)?;
+        if payment.request_id != request_id {
+            return Err(CoordinatorError::PaymentRequestMismatch);
+        }
         if payment.status == PaymentStatus::Locked {
             pay_client
                 .try_update_status(&wf.payment_id, &PaymentStatus::Refunded)
@@ -624,14 +755,7 @@ impl CoordinatorContract {
         wf.status = WorkflowStatus::RolledBack;
         save_workflow(&env, &wf);
 
-        env.events().publish(
-            (
-                symbol_short!("coord"),
-                symbol_short!("rollbk"),
-                symbol_short!("v1"),
-            ),
-            request_id,
-        );
+        CoordRolledBack { request_id }.publish(&env);
 
         Ok(())
     }
@@ -649,11 +773,9 @@ impl CoordinatorContract {
     /// - `WorkflowNotExpired`  — the expiry deadline has not yet passed
     /// - `InvalidWorkflowState`— workflow is not in the `Allocated` state
     ///   (already delivered, settled, or rolled back)
-    pub fn expire_workflow(
-        env: Env,
-        request_id: u64,
-    ) -> Result<(), CoordinatorError> {
+    pub fn expire_workflow(env: Env, request_id: u64) -> Result<(), CoordinatorError> {
         Self::require_initialized(&env)?;
+        Self::require_not_paused(&env)?;
 
         let wf = load_workflow(&env, request_id).ok_or(CoordinatorError::WorkflowNotFound)?;
 
@@ -694,6 +816,9 @@ impl CoordinatorContract {
             .try_get_payment(&wf.payment_id)
             .map_err(|_| CoordinatorError::PaymentNotFound)?
             .map_err(|_| CoordinatorError::PaymentNotFound)?;
+        if payment.request_id != request_id {
+            return Err(CoordinatorError::PaymentRequestMismatch);
+        }
         if payment.status == PaymentStatus::Locked {
             pay_client
                 .try_update_status(&wf.payment_id, &PaymentStatus::Refunded)
@@ -705,14 +830,7 @@ impl CoordinatorContract {
         expired_wf.status = WorkflowStatus::RolledBack;
         save_workflow(&env, &expired_wf);
 
-        env.events().publish(
-            (
-                symbol_short!("coord"),
-                symbol_short!("expired"),
-                symbol_short!("v1"),
-            ),
-            request_id,
-        );
+        CoordExpired { request_id }.publish(&env);
 
         Ok(())
     }
@@ -738,6 +856,7 @@ impl CoordinatorContract {
         caller.require_auth();
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
+        Self::require_oracle(&env, &caller)?;
 
         let pay_addr: Address = env
             .storage()
@@ -767,10 +886,12 @@ impl CoordinatorContract {
             .map_err(|_| CoordinatorError::PaymentFlagFailed)?;
 
         let now = env.ledger().timestamp();
-        env.events().publish(
-            (symbol_short!("coord"), symbol_short!("tmp_brch")),
-            (payment_id, excursion_summary.unit_id, now),
-        );
+        CoordTemperatureBreach {
+            payment_id,
+            unit_id: excursion_summary.unit_id,
+            timestamp: now,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -778,7 +899,11 @@ impl CoordinatorContract {
     /// Step 1 of two-step admin transfer: propose a new admin.
     /// The current admin must authorize. The new admin is stored as PendingAdmin
     /// until they call accept_admin().
-    pub fn propose_admin(env: Env, current_admin: Address, new_admin: Address) -> Result<(), CoordinatorError> {
+    pub fn propose_admin(
+        env: Env,
+        current_admin: Address,
+        new_admin: Address,
+    ) -> Result<(), CoordinatorError> {
         current_admin.require_auth();
         let stored: Address = env
             .storage()
@@ -788,7 +913,9 @@ impl CoordinatorContract {
         if current_admin != stored {
             return Err(CoordinatorError::Unauthorized);
         }
-        env.storage().instance().set(&DataKey::PendingAdmin, &new_admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
         Ok(())
     }
 
@@ -828,7 +955,11 @@ impl CoordinatorContract {
     ///
     /// # Errors
     /// * `Unauthorized` - If caller is not the admin
-    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), CoordinatorError> {
+    pub fn upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), CoordinatorError> {
         admin.require_auth();
         let stored: Address = env
             .storage()

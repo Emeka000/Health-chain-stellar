@@ -231,7 +231,8 @@ fn property_duplicate_and_invalid_request_transitions_fail_deterministically() {
     );
     assert!(matches!(duplicate, Err(Ok(Error::DuplicateRequest))));
 
-    let invalid = client(&fixture).try_update_request_status(&first_id, &RequestStatus::Fulfilled);
+    let invalid = client(&fixture)
+        .try_update_request_status(&fixture.hospital, &first_id, &RequestStatus::Fulfilled);
     assert!(matches!(invalid, Err(Ok(Error::InvalidTransition))));
     assert_eq!(
         stored_request(&fixture, first_id).status,
@@ -304,6 +305,28 @@ fn property_custody_transfer_requires_authorized_current_custodian() {
         stored_unit(&fixture, unit_id).status,
         BloodStatus::InTransit
     );
+
+    let withdraw_attempt = client(&fixture).try_withdraw_blood(
+        &fixture.hospital,
+        &unit_id,
+        &WithdrawalReason::Other,
+    );
+    assert!(matches!(
+        withdraw_attempt,
+        Err(Ok(Error::NotCurrentCustodian))
+    ));
+    assert_eq!(stored_unit(&fixture, unit_id).status, BloodStatus::InTransit);
+
+    let quarantine_attempt = client(&fixture).try_quarantine_blood(
+        &fixture.hospital,
+        &unit_id,
+        &QuarantineReason::ManualOperatorAction,
+    );
+    assert!(matches!(
+        quarantine_attempt,
+        Err(Ok(Error::NotCurrentCustodian))
+    ));
+    assert_eq!(stored_unit(&fixture, unit_id).status, BloodStatus::InTransit);
 }
 
 #[test]
@@ -376,7 +399,7 @@ fn property_fee_and_multisig_arithmetic_fail_safely_for_arbitrary_edges() {
     let fee_cases = [
         (0, 0, 0, 0, 1_000, Ok(1_000)),
         (500, 400, 100, 1, 1_000, Err(PaymentError::FeesExceedAmount)),
-        (-1, 0, 0, 0, 1_000, Ok(1_001)),
+        (-1, 0, 0, 0, 1_000, Err(PaymentError::InvalidFee)),
     ];
 
     for (service_fee, network_fee, performance_bonus, fixed_fee, gross, expected_net) in fee_cases {
@@ -388,11 +411,18 @@ fn property_fee_and_multisig_arithmetic_fail_safely_for_arbitrary_edges() {
             fixed_fee,
         };
 
-        if service_fee < 0 || network_fee < 0 || performance_bonus < 0 || fixed_fee < 0 {
-            assert_eq!(fees.validate(), Err(PaymentError::InvalidFee));
+        let expected_validation = if service_fee < 0
+            || network_fee < 0
+            || performance_bonus < 0
+            || fixed_fee < 0
+        {
+            Err(PaymentError::InvalidFee)
         } else {
-            assert_eq!(fees.calculate_net_amount(gross), expected_net);
-        }
+            Ok(())
+        };
+
+        assert_eq!(fees.validate(), expected_validation);
+        assert_eq!(fees.calculate_net_amount(gross), expected_net);
     }
 
     let signer = Address::generate(&env);

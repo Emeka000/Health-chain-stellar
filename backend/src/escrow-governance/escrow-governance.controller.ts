@@ -28,6 +28,7 @@ import {
     CreateEscrowProposalDto,
     CreateThresholdPolicyDto,
     EmergencySuspendDto,
+    MarkExecutedDto,
     RevokeSignerDto,
     SuspendSignerDto,
 } from './dto/escrow-governance.dto';
@@ -203,10 +204,10 @@ export class EscrowGovernanceController {
     @ApiOperation({ summary: 'Mark an approved proposal as executed with its on-chain tx hash' })
     markExecuted(
         @Param('id') id: string,
-        @Body('txHash') txHash: string,
+        @Body() dto: MarkExecutedDto,
         @Req() req: Request,
     ) {
         const user = (req as any).user;
-        return this.service.markExecuted(id, txHash, user.id, user.role);
+        return this.service.markExecuted(id, dto.txHash, user.id, user.role);
     }
 }

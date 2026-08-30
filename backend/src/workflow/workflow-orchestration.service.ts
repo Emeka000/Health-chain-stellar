@@ -1,14 +1,27 @@
-import { Injectable, Logger, BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+
+import { Repository } from 'typeorm';
 
 import { SorobanService } from '../blockchain/services/soroban.service';
 import { OrderEntity } from '../orders/entities/order.entity';
 import { OrderStatus } from '../orders/enums/order-status.enum';
-import { ActorRegistryService, ActorType } from '../registry/actor-registry.service';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import {
+  ActorRegistryService,
+  ActorType,
+} from '../registry/actor-registry.service';
 
-export type WorkflowStep = 'allocate' | 'confirm_delivery' | 'settle' | 'rollback';
+export type WorkflowStep =
+  | 'allocate'
+  | 'confirm_delivery'
+  | 'settle'
+  | 'rollback';
 
 @Injectable()
 export class WorkflowOrchestrationService {
@@ -36,8 +49,11 @@ export class WorkflowOrchestrationService {
     paymentId: string;
     callerAddress: string;
   }): Promise<{ jobId: string }> {
-    const order = await this.orderRepo.findOne({ where: { id: params.requestId } });
-    if (!order) throw new BadRequestException(`Order ${params.requestId} not found`);
+    const order = await this.orderRepo.findOne({
+      where: { id: params.requestId },
+    });
+    if (!order)
+      throw new BadRequestException(`Order ${params.requestId} not found`);
     if (order.status !== OrderStatus.PENDING) {
       throw new BadRequestException(
         `Order must be PENDING to allocate units, current status: ${order.status}`,
@@ -59,7 +75,9 @@ export class WorkflowOrchestrationService {
       metadata: { contractId: this.coordinatorContract },
     });
 
-    this.logger.log(`Allocation queued for request ${params.requestId}, job ${jobId}`);
+    this.logger.log(
+      `Allocation queued for request ${params.requestId}, job ${jobId}`,
+    );
     return { jobId };
   }
 
@@ -71,8 +89,11 @@ export class WorkflowOrchestrationService {
     requestId: string;
     callerAddress: string;
   }): Promise<{ jobId: string }> {
-    const order = await this.orderRepo.findOne({ where: { id: params.requestId } });
-    if (!order) throw new BadRequestException(`Order ${params.requestId} not found`);
+    const order = await this.orderRepo.findOne({
+      where: { id: params.requestId },
+    });
+    if (!order)
+      throw new BadRequestException(`Order ${params.requestId} not found`);
     if (
       order.status !== OrderStatus.IN_TRANSIT &&
       order.status !== OrderStatus.DISPATCHED
@@ -92,7 +113,9 @@ export class WorkflowOrchestrationService {
       metadata: { contractId: this.coordinatorContract },
     });
 
-    this.logger.log(`Delivery confirmation queued for request ${params.requestId}, job ${jobId}`);
+    this.logger.log(
+      `Delivery confirmation queued for request ${params.requestId}, job ${jobId}`,
+    );
     return { jobId };
   }
 
@@ -105,8 +128,11 @@ export class WorkflowOrchestrationService {
     requestId: string;
     callerAddress: string;
   }): Promise<{ jobId: string }> {
-    const order = await this.orderRepo.findOne({ where: { id: params.requestId } });
-    if (!order) throw new BadRequestException(`Order ${params.requestId} not found`);
+    const order = await this.orderRepo.findOne({
+      where: { id: params.requestId },
+    });
+    if (!order)
+      throw new BadRequestException(`Order ${params.requestId} not found`);
     if (order.status !== OrderStatus.DELIVERED) {
       throw new BadRequestException(
         `Order must be DELIVERED to settle payment, current: ${order.status}`,
@@ -123,7 +149,9 @@ export class WorkflowOrchestrationService {
       metadata: { contractId: this.coordinatorContract },
     });
 
-    this.logger.log(`Settlement queued for request ${params.requestId}, job ${jobId}`);
+    this.logger.log(
+      `Settlement queued for request ${params.requestId}, job ${jobId}`,
+    );
     return { jobId };
   }
 
@@ -131,11 +159,12 @@ export class WorkflowOrchestrationService {
    * Rollback – admin-only. Releases units and refunds payment on-chain.
    * Only allowed for orders in PENDING, CONFIRMED, DISPATCHED, or IN_TRANSIT status.
    */
-  async rollback(params: {
-    requestId: string;
-  }): Promise<{ jobId: string }> {
-    const order = await this.orderRepo.findOne({ where: { id: params.requestId } });
-    if (!order) throw new BadRequestException(`Order ${params.requestId} not found`);
+  async rollback(params: { requestId: string }): Promise<{ jobId: string }> {
+    const order = await this.orderRepo.findOne({
+      where: { id: params.requestId },
+    });
+    if (!order)
+      throw new BadRequestException(`Order ${params.requestId} not found`);
     const rollbackableStatuses = [
       OrderStatus.PENDING,
       OrderStatus.CONFIRMED,
@@ -151,11 +180,13 @@ export class WorkflowOrchestrationService {
     const jobId = await this.soroban.submitTransaction({
       contractMethod: 'rollback',
       args: [params.requestId],
-      idempotencyKey: `rollback:${params.requestId}:${Date.now()}`,
+      idempotencyKey: `rollback:${params.requestId}`,
       metadata: { contractId: this.coordinatorContract },
     });
 
-    this.logger.log(`Rollback queued for request ${params.requestId}, job ${jobId}`);
+    this.logger.log(
+      `Rollback queued for request ${params.requestId}, job ${jobId}`,
+    );
     return { jobId };
   }
 
@@ -163,7 +194,9 @@ export class WorkflowOrchestrationService {
    * Verifies that a caller address belongs to a registered hospital or blood bank.
    * Called before every sensitive on-chain write in this service.
    */
-  private async assertCallerIsRegisteredActor(callerAddress: string): Promise<void> {
+  private async assertCallerIsRegisteredActor(
+    callerAddress: string,
+  ): Promise<void> {
     const [isHospital, isBloodBank] = await Promise.all([
       this.actorRegistry.isVerifiedActor(callerAddress, ActorType.HOSPITAL),
       this.actorRegistry.isVerifiedActor(callerAddress, ActorType.BLOOD_BANK),

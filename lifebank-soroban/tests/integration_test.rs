@@ -21,8 +21,9 @@ use soroban_sdk::{
 };
 
 use coordinator_contract::{
-    BloodRequest, BloodStatus, BloodUnit, CoordinatorContract, CoordinatorContractClient,
-    CoordinatorError, Payment, PaymentStatus, RequestStatus, WorkflowRecord, WorkflowStatus,
+    BloodRequest, BloodStatus, BloodType, BloodUnit, CoordinatorContract,
+    CoordinatorContractClient, CoordinatorError, Payment, PaymentStatus, RequestStatus,
+    WorkflowRecord, WorkflowStatus,
 };
 
 // ── Mock: Requests contract ───────────────────────────────────────────────────
@@ -92,6 +93,7 @@ impl MockInventoryContract {
             &BloodUnit {
                 id,
                 status: BloodStatus::Available,
+                blood_type: coordinator_contract::BloodType::OPositive,
             },
         );
         id
@@ -119,7 +121,9 @@ impl MockInventoryContract {
             .get(&InvKey::Unit(unit_id))
             .expect("unit not found");
         unit.status = new_status;
-        env.storage().persistent().set(&InvKey::Unit(unit_id), &unit);
+        env.storage()
+            .persistent()
+            .set(&InvKey::Unit(unit_id), &unit);
         unit
     }
 
@@ -162,9 +166,14 @@ impl MockPaymentContract {
             .unwrap_or(0u64)
             + 1;
         env.storage().instance().set(&PayKey::Counter, &id);
-        env.storage()
-            .persistent()
-            .set(&PayKey::Payment(id), &Payment { id, request_id, status });
+        env.storage().persistent().set(
+            &PayKey::Payment(id),
+            &Payment {
+                id,
+                request_id,
+                status,
+            },
+        );
         id
     }
 
@@ -216,8 +225,7 @@ fn setup<'a>() -> Harness<'a> {
     MockInventoryContractClient::new(&env, &inv_id).initialize(&admin);
 
     // Initialize coordinator with all contract addresses.
-    CoordinatorContractClient::new(&env, &coord_id)
-        .initialize(&admin, &req_id, &inv_id, &pay_id);
+    CoordinatorContractClient::new(&env, &coord_id).initialize(&admin, &req_id, &inv_id, &pay_id);
 
     let coord = CoordinatorContractClient::new(&env, &coord_id);
     Harness {
@@ -231,8 +239,7 @@ fn setup<'a>() -> Harness<'a> {
 }
 
 fn seed_pending_request(h: &Harness, id: u64) {
-    MockRequestContractClient::new(&h.env, &h.req_id)
-        .seed_request(&id, &RequestStatus::Pending);
+    MockRequestContractClient::new(&h.env, &h.req_id).seed_request(&id, &RequestStatus::Pending);
 }
 
 fn seed_available_unit(h: &Harness) -> u64 {
@@ -276,8 +283,13 @@ fn test_full_allocation_to_delivery_workflow() {
     let payment_id = seed_locked_payment(&h, request_id);
 
     // ── Step 1: allocate_units ───────────────────────────────────────────────
-    h.coord
-        .allocate_units(&request_id, &units, &payment_id, &h.admin);
+    h.coord.allocate_units(
+        &request_id,
+        &units,
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
 
     // Workflow record should be Allocated.
     let wf: WorkflowRecord = h.coord.get_workflow(&request_id);
@@ -309,7 +321,11 @@ fn test_full_allocation_to_delivery_workflow() {
     );
 
     // ── Step 2: confirm_delivery ─────────────────────────────────────────────
-    h.coord.confirm_delivery(&request_id, &h.admin);
+    h.coord.confirm_delivery(
+        &request_id,
+        &h.admin,
+        &String::from_str(&h.env, "facility-a"),
+    );
 
     let wf: WorkflowRecord = h.coord.get_workflow(&request_id);
     assert_eq!(
@@ -378,8 +394,13 @@ fn test_rollback_releases_inventory_and_refunds_payment() {
     let payment_id = seed_locked_payment(&h, request_id);
 
     // Allocate first so there is a workflow record to roll back.
-    h.coord
-        .allocate_units(&request_id, &units, &payment_id, &h.admin);
+    h.coord.allocate_units(
+        &request_id,
+        &units,
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
 
     assert_eq!(get_unit(&h, unit_a).status, BloodStatus::Reserved);
     assert_eq!(get_unit(&h, unit_b).status, BloodStatus::Reserved);
@@ -439,8 +460,13 @@ fn test_rollback_with_pending_payment_does_not_refund() {
     let payment_id = MockPaymentContractClient::new(&h.env, &h.pay_id)
         .seed_payment(&request_id, &PaymentStatus::Pending);
 
-    h.coord
-        .allocate_units(&request_id, &vec![&h.env, unit_id], &payment_id, &h.admin);
+    h.coord.allocate_units(
+        &request_id,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
 
     assert_eq!(get_unit(&h, unit_id).status, BloodStatus::Reserved);
     assert_eq!(
@@ -482,8 +508,13 @@ fn test_settle_without_confirm_delivery_is_rejected() {
     let unit_id = seed_available_unit(&h);
     let payment_id = seed_locked_payment(&h, request_id);
 
-    h.coord
-        .allocate_units(&request_id, &vec![&h.env, unit_id], &payment_id, &h.admin);
+    h.coord.allocate_units(
+        &request_id,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
 
     // Skip confirm_delivery — settle must fail.
     let result = h.coord.try_settle_payment(&request_id, &h.admin);
@@ -511,9 +542,18 @@ fn test_rollback_after_settlement_is_rejected() {
     let unit_id = seed_available_unit(&h);
     let payment_id = seed_locked_payment(&h, request_id);
 
-    h.coord
-        .allocate_units(&request_id, &vec![&h.env, unit_id], &payment_id, &h.admin);
-    h.coord.confirm_delivery(&request_id, &h.admin);
+    h.coord.allocate_units(
+        &request_id,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
+    h.coord.confirm_delivery(
+        &request_id,
+        &h.admin,
+        &String::from_str(&h.env, "facility-b"),
+    );
     h.coord.settle_payment(&request_id, &h.admin);
 
     let result = h.coord.try_rollback(&request_id);

@@ -38,6 +38,11 @@ export interface EligibilityResult {
   ruleVersionId: string;
 }
 
+export interface DonorProfile {
+  dateOfBirth?: Date;
+  lastDonationDate?: Date;
+}
+
 @Injectable()
 export class DonorEligibilityService {
   constructor(
@@ -75,7 +80,11 @@ export class DonorEligibilityService {
     return createHash('sha256').update(payload).digest('hex').slice(0, 16);
   }
 
-  async checkEligibility(donorId: string, asOfDate?: Date): Promise<EligibilityResult> {
+  async checkEligibility(
+    donorId: string,
+    asOfDate?: Date,
+    profile?: DonorProfile,
+  ): Promise<EligibilityResult> {
     const now = asOfDate ?? new Date();
     const active = await this.deferralRepo.find({
       where: { donorId, isActive: true },
@@ -134,8 +143,30 @@ export class DonorEligibilityService {
 
     // Evaluate versioned rule predicates
     for (const rule of rules) {
-      const predicateTrace = this.evaluatePredicate(rule, donorId, now);
+      const predicateTrace = this.evaluatePredicate(rule, now, profile);
       trace.push(predicateTrace);
+    }
+
+    const failedPredicate = trace.find(
+      (t) =>
+        !t.passed &&
+        (t.predicateType === RulePredicateType.AGE_RANGE ||
+          t.predicateType === RulePredicateType.DONATION_INTERVAL),
+    );
+    if (failedPredicate) {
+      const nextEligibleDate =
+        failedPredicate.predicateType === RulePredicateType.DONATION_INTERVAL &&
+        profile?.lastDonationDate
+          ? this.computeNextEligibleFromDonation(profile.lastDonationDate)
+          : null;
+      return {
+        donorId,
+        status: EligibilityStatus.DEFERRED,
+        nextEligibleDate,
+        activeDeferrals: [],
+        trace,
+        ruleVersionId,
+      };
     }
 
     return { donorId, status: EligibilityStatus.ELIGIBLE, nextEligibleDate: null, activeDeferrals: [], trace, ruleVersionId };
@@ -143,8 +174,8 @@ export class DonorEligibilityService {
 
   private evaluatePredicate(
     rule: EligibilityRuleVersionEntity,
-    donorId: string,
     now: Date,
+    profile?: DonorProfile,
   ): PredicateTrace {
     const base = {
       ruleKey: rule.ruleKey,
@@ -153,8 +184,43 @@ export class DonorEligibilityService {
       ruleVersionId: rule.id,
     };
 
-    // Predicates are evaluated structurally; domain-specific checks (age, interval)
-    // require caller to pass donor profile. Here we record the rule was considered.
+    if (rule.predicateType === RulePredicateType.AGE_RANGE) {
+      if (!profile?.dateOfBirth) {
+        return {
+          ...base,
+          passed: true,
+          reason: 'Donor date of birth not provided; age check skipped',
+        };
+      }
+      const isValidAge = this.validateAge(profile.dateOfBirth);
+      return {
+        ...base,
+        passed: isValidAge,
+        reason: isValidAge
+          ? `Donor age is within the allowed range (${MIN_AGE}-${MAX_AGE})`
+          : `Donor age is outside the allowed range (${MIN_AGE}-${MAX_AGE})`,
+      };
+    }
+
+    if (rule.predicateType === RulePredicateType.DONATION_INTERVAL) {
+      if (!profile?.lastDonationDate) {
+        return {
+          ...base,
+          passed: true,
+          reason: 'Donor last-donation date not provided; interval check skipped',
+        };
+      }
+      const nextEligible = this.computeNextEligibleFromDonation(profile.lastDonationDate);
+      const passed = nextEligible <= now;
+      return {
+        ...base,
+        passed,
+        reason: passed
+          ? `Minimum ${MIN_DONATION_INTERVAL_DAYS}-day donation interval satisfied`
+          : `Donor not eligible again until ${nextEligible.toISOString()}`,
+      };
+    }
+
     return {
       ...base,
       passed: true,
@@ -162,8 +228,8 @@ export class DonorEligibilityService {
     };
   }
 
-  async assertEligible(donorId: string): Promise<void> {
-    const result = await this.checkEligibility(donorId);
+  async assertEligible(donorId: string, profile?: DonorProfile): Promise<void> {
+    const result = await this.checkEligibility(donorId, undefined, profile);
     if (result.status !== EligibilityStatus.ELIGIBLE) {
       throw new ConflictException(
         `Donor '${donorId}' is not eligible for donation (status: ${result.status}).`,
@@ -221,7 +287,10 @@ export class DonorEligibilityService {
   /** Simulate eligibility against a proposed rule version without persisting */
   async simulateEligibility(dto: SimulateEligibilityDto): Promise<EligibilityResult> {
     const asOf = dto.asOfDate ? new Date(dto.asOfDate) : new Date();
-    return this.checkEligibility(dto.donorId, asOf);
+    return this.checkEligibility(dto.donorId, asOf, {
+      dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
+      lastDonationDate: dto.lastDonationDate ? new Date(dto.lastDonationDate) : undefined,
+    });
   }
 
   async getDeferrals(donorId: string): Promise<DonorDeferralEntity[]> {

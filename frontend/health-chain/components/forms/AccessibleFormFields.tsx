@@ -1,6 +1,6 @@
 'use client';
 
-import React, { InputHTMLAttributes, ReactNode } from 'react';
+import React, { InputHTMLAttributes, ReactNode, useId } from 'react';
 
 interface AccessibleInputProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string;
@@ -21,7 +21,8 @@ interface AccessibleInputProps extends InputHTMLAttributes<HTMLInputElement> {
  */
 export const AccessibleInput = React.forwardRef<HTMLInputElement, AccessibleInputProps>(
   ({ label, error, hint, required, helpText, id, ...props }, ref) => {
-    const inputId = id || `input-${Math.random().toString(36).substr(2, 9)}`;
+    const generatedId = useId();
+    const inputId = id || generatedId;
     const errorId = error ? `${inputId}-error` : undefined;
     const hintId = hint ? `${inputId}-hint` : undefined;
 
@@ -94,7 +95,8 @@ interface AccessibleSelectProps extends InputHTMLAttributes<HTMLSelectElement> {
  */
 export const AccessibleSelect = React.forwardRef<HTMLSelectElement, AccessibleSelectProps>(
   ({ label, options, error, hint, required, placeholder, id, ...props }, ref) => {
-    const selectId = id || `select-${Math.random().toString(36).substr(2, 9)}`;
+    const generatedId = useId();
+    const selectId = id || generatedId;
     const errorId = error ? `${selectId}-error` : undefined;
     const hintId = hint ? `${selectId}-hint` : undefined;
 
@@ -163,7 +165,8 @@ interface AccessibleTextAreaProps extends InputHTMLAttributes<HTMLTextAreaElemen
  */
 export const AccessibleTextArea = React.forwardRef<HTMLTextAreaElement, AccessibleTextAreaProps>(
   ({ label, error, hint, required, id, ...props }, ref) => {
-    const textareaId = id || `textarea-${Math.random().toString(36).substr(2, 9)}`;
+    const generatedId = useId();
+    const textareaId = id || generatedId;
     const errorId = error ? `${textareaId}-error` : undefined;
     const hintId = hint ? `${textareaId}-hint` : undefined;
 
@@ -222,7 +225,8 @@ interface AccessibleCheckboxProps extends InputHTMLAttributes<HTMLInputElement> 
  */
 export const AccessibleCheckbox = React.forwardRef<HTMLInputElement, AccessibleCheckboxProps>(
   ({ label, error, hint, id, ...props }, ref) => {
-    const checkboxId = id || `checkbox-${Math.random().toString(36).substr(2, 9)}`;
+    const generatedId = useId();
+    const checkboxId = id || generatedId;
     const errorId = error ? `${checkboxId}-error` : undefined;
 
     return (

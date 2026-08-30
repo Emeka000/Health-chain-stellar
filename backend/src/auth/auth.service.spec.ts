@@ -901,6 +901,64 @@ describe('AuthService', () => {
     });
   });
 
+  describe('JWT key management', () => {
+    it('uses JwtKeyService.getActiveKey() for access token signing', async () => {
+      const user = {
+        id: 'user-1',
+        email: 'test@example.com',
+        role: 'donor',
+        passwordHash: await hashPassword('password'),
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      } as UserEntity;
+      (userRepository.findOne as jest.Mock).mockResolvedValue(user);
+      (userRepository.save as jest.Mock).mockResolvedValue(user);
+      mockJwtService.sign.mockReturnValueOnce('access-token');
+      mockJwtService.sign.mockReturnValueOnce('refresh-token');
+
+      await service.login({
+        email: 'test@example.com',
+        password: 'password',
+      });
+
+      expect(mockJwtKeyService.getActiveKey).toHaveBeenCalled();
+      // First call to sign is for access token, should use active key
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({
+          secret: 'test-secret',
+          keyid: 'key-1',
+        }),
+      );
+    });
+
+    it('access token includes keyid for key rotation support', async () => {
+      const user = {
+        id: 'user-1',
+        email: 'test@example.com',
+        role: 'donor',
+        passwordHash: await hashPassword('password'),
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      } as UserEntity;
+      (userRepository.findOne as jest.Mock).mockResolvedValue(user);
+      (userRepository.save as jest.Mock).mockResolvedValue(user);
+      mockJwtService.sign.mockReturnValueOnce('access-token');
+      mockJwtService.sign.mockReturnValueOnce('refresh-token');
+
+      await service.login({
+        email: 'test@example.com',
+        password: 'password',
+      });
+
+      // Verify keyid is present in signing options (not undefined)
+      const calls = (mockJwtService.sign as jest.Mock).mock.calls;
+      const accessTokenCall = calls[0];
+      expect(accessTokenCall[1]).toHaveProperty('keyid');
+      expect(accessTokenCall[1].keyid).toBe('key-1');
+    });
+  });
+
   describe('per-role concurrent session limits', () => {
     const makeUser = async (role: string) =>
       ({

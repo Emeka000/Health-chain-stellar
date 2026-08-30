@@ -37,7 +37,7 @@ export class MfaService {
     private readonly tfaRepo: Repository<TwoFactorAuthEntity>,
   ) {
     // Derive a 32-byte AES key from JWT_SECRET so no extra env var is needed.
-    const masterSecret = this.configService.get<string>('JWT_SECRET', 'default-secret');
+    const masterSecret = this.configService.getOrThrow<string>('JWT_SECRET');
     // Use a fixed salt derived from the master secret itself for determinism
     const salt = scryptSync('mfa-key-salt', masterSecret, 16) as Uint8Array;
     this.encryptionKey = scryptSync(masterSecret, salt, 32) as Uint8Array;
@@ -174,7 +174,7 @@ export class MfaService {
       const payload = this.jwtService.verify<{ sub: string; purpose: string }>(
         mfaToken,
         {
-          secret: this.configService.get<string>('JWT_SECRET', 'default-secret'),
+          secret: this.configService.getOrThrow<string>('JWT_SECRET'),
         },
       );
       if (payload.purpose !== 'mfa') {

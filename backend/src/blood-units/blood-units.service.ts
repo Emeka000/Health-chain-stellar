@@ -6,10 +6,10 @@ import {
   ServiceUnavailableException,
   Logger,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 
 import * as QRCode from 'qrcode';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 
 import { PermissionsService } from '../auth/permissions.service';
 import { DonorEligibilityService } from '../donor-eligibility/donor-eligibility.service';
@@ -61,12 +61,12 @@ export class BloodUnitsService {
     private readonly trailRepository: Repository<BloodUnitTrail>,
     @InjectRepository(BloodUnitEntity)
     private readonly bloodUnitRepository: Repository<BloodUnitEntity>,
-    @InjectRepository(BloodUnit)
-    private readonly inventoryRepository: Repository<BloodUnit>,
     @InjectRepository(TransferRecord)
     private readonly transferRepository: Repository<TransferRecord>,
     @InjectRepository(OrganizationEntity)
     private readonly orgRepository: Repository<OrganizationEntity>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
   ) {}
 
 
@@ -190,35 +190,52 @@ export class BloodUnitsService {
     reason?: string,
     user?: AuthenticatedUserContext,
   ) {
-    const unit = await this.inventoryRepository.findOne({
-      where: { id: unitId },
-    });
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    if (!unit) {
-      throw new NotFoundException(`Blood unit ${unitId} not found`);
+    let unit: BloodUnit;
+    let transfer: TransferRecord;
+
+    try {
+      unit = await queryRunner.manager.findOne(BloodUnit, {
+        where: { id: unitId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!unit) {
+        throw new NotFoundException(`Blood unit ${unitId} not found`);
+      }
+
+      // Must be owner org
+      if (unit.organizationId !== (user as any)?.organizationId && user?.role !== 'admin') {
+        throw new BadRequestException('Only the owner organization can initiate a transfer');
+      }
+
+      if (unit.status !== BloodStatus.AVAILABLE) {
+        throw new BadRequestException(`Unit must be AVAILABLE to transfer (current: ${unit.status})`);
+      }
+
+      unit.status = BloodStatus.IN_TRANSFER;
+      await queryRunner.manager.save(unit);
+
+      transfer = queryRunner.manager.create(TransferRecord, {
+        bloodUnitId: unitId,
+        sourceOrgId: unit.organizationId,
+        destinationOrgId,
+        reason,
+        status: TransferStatus.PENDING,
+        initiatedByUserId: user?.id,
+      });
+      await queryRunner.manager.save(transfer);
+
+      await queryRunner.commitTransaction();
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
     }
-
-    // Must be owner org
-    if (unit.organizationId !== (user as any)?.organizationId && user?.role !== 'admin') {
-      throw new BadRequestException('Only the owner organization can initiate a transfer');
-    }
-
-    if (unit.status !== BloodStatus.AVAILABLE) {
-      throw new BadRequestException(`Unit must be AVAILABLE to transfer (current: ${unit.status})`);
-    }
-
-    unit.status = BloodStatus.IN_TRANSFER;
-    await this.inventoryRepository.save(unit);
-
-    const transfer = this.transferRepository.create({
-      bloodUnitId: unitId,
-      sourceOrgId: unit.organizationId,
-      destinationOrgId,
-      reason,
-      status: TransferStatus.PENDING,
-      initiatedByUserId: user?.id,
-    });
-    await this.transferRepository.save(transfer);
 
     this.eventEmitter.emit('blood-unit.transfer.initiated', {
       unitId,
@@ -241,40 +258,59 @@ export class BloodUnitsService {
    * Closes #465
    */
   async acceptOrganizationTransfer(unitId: string, user?: AuthenticatedUserContext) {
-    const unit = await this.inventoryRepository.findOne({
-      where: { id: unitId },
-    });
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    if (!unit) {
-      throw new NotFoundException(`Blood unit ${unitId} not found`);
+    let unit: BloodUnit;
+    let transfer: TransferRecord;
+    let previousOrgId: string;
+
+    try {
+      unit = await queryRunner.manager.findOne(BloodUnit, {
+        where: { id: unitId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!unit) {
+        throw new NotFoundException(`Blood unit ${unitId} not found`);
+      }
+
+      transfer = await queryRunner.manager.findOne(TransferRecord, {
+        where: {
+          bloodUnitId: unitId,
+          status: TransferStatus.PENDING,
+        },
+        order: { createdAt: 'DESC' },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!transfer) {
+        throw new BadRequestException('No pending transfer found for this unit');
+      }
+
+      // Must be destination org
+      if (transfer.destinationOrgId !== (user as any)?.organizationId && user?.role !== 'admin') {
+        throw new BadRequestException('Only the destination organization can accept the transfer');
+      }
+
+      previousOrgId = unit.organizationId;
+      unit.organizationId = transfer.destinationOrgId;
+      unit.status = BloodStatus.AVAILABLE;
+      await queryRunner.manager.save(unit);
+
+      transfer.status = TransferStatus.ACCEPTED;
+      transfer.acceptedByUserId = user?.id || null;
+      transfer.acceptedAt = new Date();
+      await queryRunner.manager.save(transfer);
+
+      await queryRunner.commitTransaction();
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
     }
-
-    const transfer = await this.transferRepository.findOne({
-      where: {
-        bloodUnitId: unitId,
-        status: TransferStatus.PENDING,
-      },
-      order: { createdAt: 'DESC' },
-    });
-
-    if (!transfer) {
-      throw new BadRequestException('No pending transfer found for this unit');
-    }
-
-    // Must be destination org
-    if (transfer.destinationOrgId !== (user as any)?.organizationId && user?.role !== 'admin') {
-      throw new BadRequestException('Only the destination organization can accept the transfer');
-    }
-
-    const previousOrgId = unit.organizationId;
-    unit.organizationId = transfer.destinationOrgId;
-    unit.status = BloodStatus.AVAILABLE;
-    await this.inventoryRepository.save(unit);
-
-    transfer.status = TransferStatus.ACCEPTED;
-    transfer.acceptedByUserId = user?.id || null;
-    transfer.acceptedAt = new Date();
-    await this.transferRepository.save(transfer);
 
     // Update Soroban - publish custody transfer to blockchain
     try {

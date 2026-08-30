@@ -24,8 +24,8 @@ The coordinator is the integration point. It holds references to inventory, paym
 ## Prerequisites
 
 - Rust toolchain with `wasm32-unknown-unknown` target
-- Soroban CLI (`cargo install --locked soroban-cli`)
-- A funded Stellar testnet account (use `soroban keys generate` or Stellar Laboratory)
+- Stellar CLI (`cargo install --locked stellar-cli`)
+- A funded Stellar testnet account (use `stellar keys generate` or Stellar Laboratory)
 
 ```bash
 # Add the WASM target if you haven't already

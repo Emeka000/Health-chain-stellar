@@ -49,4 +49,14 @@ export class SimulateEligibilityDto {
   @IsDateString()
   @IsOptional()
   asOfDate?: string;
+
+  /** Donor date of birth (ISO string) — required to evaluate age-range rules */
+  @IsDateString()
+  @IsOptional()
+  dateOfBirth?: string;
+
+  /** Donor's last donation date (ISO string) — required to evaluate interval rules */
+  @IsDateString()
+  @IsOptional()
+  lastDonationDate?: string;
 }

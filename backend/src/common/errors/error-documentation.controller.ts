@@ -1,4 +1,5 @@
 import { Controller, Get, Query } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../auth/decorators/public.decorator';
 import { ErrorDocumentationGenerator } from './error-documentation.generator';
 import { ErrorDomain, ERROR_CODE_REGISTRY } from './error-taxonomy';
@@ -8,11 +9,15 @@ import { ErrorDomain, ERROR_CODE_REGISTRY } from './error-taxonomy';
  * 
  * Provides API endpoints for error code documentation
  */
+@ApiTags('Errors')
+@ApiBearerAuth()
 @Controller('api/v1/errors')
 export class ErrorDocumentationController {
     /**
      * Get all error codes
      */
+    @ApiOperation({ summary: 'Get codes' })
+    @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
     @Get('codes')
     @Public()
     getAllErrorCodes(@Query('domain') domain?: ErrorDomain) {
@@ -31,6 +36,8 @@ export class ErrorDocumentationController {
     /**
      * Get error code details
      */
+    @ApiOperation({ summary: 'Get codes :code' })
+    @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
     @Get('codes/:code')
     @Public()
     getErrorCodeDetails(@Query('code') code: string) {
@@ -49,6 +56,8 @@ export class ErrorDocumentationController {
     /**
      * Get error documentation in JSON format
      */
+    @ApiOperation({ summary: 'Get documentation json' })
+    @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
     @Get('documentation/json')
     @Public()
     getJSONDocumentation() {
@@ -58,6 +67,8 @@ export class ErrorDocumentationController {
     /**
      * Get error documentation in Markdown format
      */
+    @ApiOperation({ summary: 'Get documentation markdown' })
+    @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
     @Get('documentation/markdown')
     @Public()
     getMarkdownDocumentation() {
@@ -70,6 +81,8 @@ export class ErrorDocumentationController {
     /**
      * Get all error domains
      */
+    @ApiOperation({ summary: 'Get domains' })
+    @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
     @Get('domains')
     @Public()
     getAllDomains() {

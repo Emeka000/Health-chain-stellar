@@ -32,6 +32,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 
 import { Networks } from '@stellar/stellar-sdk';
+import { Horizon } from '@stellar/stellar-sdk';
 import Redis from 'ioredis';
 import { Repository } from 'typeorm';
 
@@ -78,6 +79,14 @@ interface ContractClientOptions {
   secretKey: string;
 }
 
+// Stellar StrKey addresses are 56-char base32 strings prefixed by a type byte:
+// 'C' for contract IDs, 'S' for secret (signing) keys. Placeholder values left
+// in .env (e.g. '', 'your-soroban-secret-key') never match this shape, so a
+// shape check is enough to flag an unusable config without depending on the
+// Stellar SDK's StrKey decoder.
+const STELLAR_CONTRACT_ID_PATTERN = /^C[A-Z2-7]{55}$/;
+const STELLAR_SECRET_KEY_PATTERN = /^S[A-Z2-7]{55}$/;
+
 @Injectable()
 export class SorobanService implements OnModuleInit {
   private readonly logger = new Logger(SorobanService.name);
@@ -88,6 +97,14 @@ export class SorobanService implements OnModuleInit {
   private paymentsClient: PaymentsClient | null = null;
   private requestsClient: RequestsClient | null = null;
   private temperatureClient: TemperatureClient | null = null;
+
+  // ── Additional contract clients (SDKs not yet generated) ───────────────────
+  // These will be initialized once their SDKs are available:
+  // - identityClient (SOROBAN_IDENTITY_CONTRACT_ID)
+  // - matchingClient (SOROBAN_MATCHING_CONTRACT_ID)
+  // - reputationClient (SOROBAN_REPUTATION_CONTRACT_ID)
+  // - deliveryClient (SOROBAN_DELIVERY_CONTRACT_ID)
+  // - analyticsClient (SOROBAN_ANALYTICS_CONTRACT_ID)
 
   private readonly retryConfig: RetryConfig = {
     maxRetries: 3,
@@ -117,6 +134,20 @@ export class SorobanService implements OnModuleInit {
     const network = this.configService.get<string>('SOROBAN_NETWORK', 'testnet');
     const networkPassphrase =
       network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET;
+
+    if (secretKey && !STELLAR_SECRET_KEY_PATTERN.test(secretKey)) {
+      this.logger.warn(
+        'SOROBAN_SECRET_KEY is set but is not a valid Stellar secret key ' +
+          "(expected 'S' prefix + 56 chars). Blockchain write operations will fail at runtime.",
+      );
+    }
+    const legacyContractId = this.configService.get<string>('SOROBAN_CONTRACT_ID', '');
+    if (legacyContractId && !STELLAR_CONTRACT_ID_PATTERN.test(legacyContractId)) {
+      this.logger.warn(
+        'SOROBAN_CONTRACT_ID is set but is not a valid Stellar contract address ' +
+          "(expected 'C' prefix + 56 chars). Blockchain write operations will fail at runtime.",
+      );
+    }
 
     const sharedOptions: ContractClientOptions = {
       networkPassphrase,
@@ -154,10 +185,21 @@ export class SorobanService implements OnModuleInit {
       this.temperatureClient = new TemperatureClient({ contractId: temperatureId, ...sharedOptions });
     }
 
+    // Resolve additional contract IDs (SDKs to be generated in future sprints)
+    const identityId = this.resolveContractId('SOROBAN_IDENTITY_CONTRACT_ID', 'identity');
+    const matchingId = this.resolveContractId('SOROBAN_MATCHING_CONTRACT_ID', 'matching');
+    const reputationId = this.resolveContractId('SOROBAN_REPUTATION_CONTRACT_ID', 'reputation');
+    const deliveryId = this.resolveContractId('SOROBAN_DELIVERY_CONTRACT_ID', 'delivery');
+    const analyticsId = this.resolveContractId('SOROBAN_ANALYTICS_CONTRACT_ID', 'analytics');
+
     this.logger.log(`Soroban service initialized on ${network}`);
     this.logger.log(
       `Clients ready: inventory=${!!this.inventoryClient}, coordinator=${!!this.coordinatorClient}, ` +
       `payments=${!!this.paymentsClient}, requests=${!!this.requestsClient}, temperature=${!!this.temperatureClient}`,
+    );
+    this.logger.log(
+      `Additional contracts resolved: identity=${!!identityId}, matching=${!!matchingId}, ` +
+      `reputation=${!!reputationId}, delivery=${!!deliveryId}, analytics=${!!analyticsId} (SDKs pending)`,
     );
 
     try {
@@ -171,15 +213,22 @@ export class SorobanService implements OnModuleInit {
 
   /**
    * Resolve a contract ID from env var, falling back to contracts.json.
+   * Supports both SOROBAN_* and legacy *_CONTRACT_ID naming conventions.
    * Returns an empty string if neither source has a real address.
    */
   private resolveContractId(envVar: string, contractName: string): string {
-    const fromEnv = this.configService.get<string>(envVar, '');
+    // Try the primary env var first (with SOROBAN_ prefix)
+    let fromEnv = this.configService.get<string>(envVar, '');
     if (fromEnv && fromEnv.length > 10) return fromEnv;
 
-    // Legacy single-contract env var (backward compat)
-    const legacy = this.configService.get<string>('SOROBAN_CONTRACT_ID', '');
-    if (legacy && legacy.length > 10 && contractName === 'inventory') return legacy;
+    // Fall back to legacy naming convention for backward compatibility (without SOROBAN_ prefix)
+    const legacyEnvVar = `${contractName.toUpperCase()}_CONTRACT_ID`;
+    fromEnv = this.configService.get<string>(legacyEnvVar, '');
+    if (fromEnv && fromEnv.length > 10) return fromEnv;
+
+    // Legacy single-contract env var (backward compat) — only for inventory
+    const singleLegacy = this.configService.get<string>('SOROBAN_CONTRACT_ID', '');
+    if (singleLegacy && singleLegacy.length > 10 && contractName === 'inventory') return singleLegacy;
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -588,6 +637,50 @@ export class SorobanService implements OnModuleInit {
   }
 
   // ── Dispute state ──────────────────────────────────────────────────────────
+
+  /**
+   * Verify that a Stellar transaction hash exists, is successful, and
+   * optionally matches the expected memo (Stellar text memo).
+   *
+   * Returns true when the transaction is confirmed on-chain.
+   * Returns false when the hash is not found, the transaction failed,
+   * or the memo does not match (if expectedMemo is provided).
+   *
+   * Uses the Horizon REST API so no contract SDK is required.
+   */
+  async verifyPaymentTransaction(
+    transactionHash: string,
+    expectedMemo?: string,
+  ): Promise<boolean> {
+    const network = this.configService.get<string>('SOROBAN_NETWORK', 'testnet');
+    const horizonUrl =
+      network === 'mainnet'
+        ? 'https://horizon.stellar.org'
+        : 'https://horizon-testnet.stellar.org';
+
+    try {
+      const server = new Horizon.Server(horizonUrl);
+      const tx = await server.transactions().transaction(transactionHash).call();
+      if (!tx.successful) {
+        this.logger.warn(`Transaction ${transactionHash} exists but was not successful`);
+        return false;
+      }
+      if (expectedMemo !== undefined) {
+        if (tx.memo_type !== 'text' || tx.memo !== expectedMemo) {
+          this.logger.warn(
+            `Transaction ${transactionHash} memo mismatch: expected "${expectedMemo}", got "${tx.memo}"`,
+          );
+          return false;
+        }
+      }
+      return true;
+    } catch (error) {
+      this.logger.warn(
+        `Could not verify transaction ${transactionHash}: ${(error as Error).message}`,
+      );
+      return false;
+    }
+  }
 
   async getDisputeState(
     contractDisputeId: string,

@@ -69,10 +69,7 @@ pub fn is_expired(env: &Env, unit_id: u64) -> Result<bool, Error> {
 /// passes `symbol_short!("ANON")`.
 pub fn get_units_by_donor(env: &Env, donor_id: Symbol) -> Vec<BloodUnit> {
     // Use a sentinel zero-address for global donor index
-    let sentinel = soroban_sdk::Address::from_contract_id(
-        env,
-        &soroban_sdk::BytesN::from_array(env, &[0u8; 32]),
-    );
+    let sentinel = env.current_contract_address();
     let key = DataKey::DonorUnits(sentinel, donor_id.clone());
     let ids: Vec<u64> = env
         .storage()

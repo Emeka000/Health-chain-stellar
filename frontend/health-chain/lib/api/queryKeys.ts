@@ -30,6 +30,7 @@ export const queryKeys = {
    */
   dashboard: {
     stats: ["dashboard", "stats"] as const,
+    operations: ["dashboard", "operations"] as const,
   },
 
   transparency: {

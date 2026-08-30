@@ -22,6 +22,13 @@ function isTransientError(status: number): boolean {
   return status === 429 || (status >= 500 && status <= 599);
 }
 
+/** Only safe/idempotent methods may be auto-retried; retrying POST/PATCH risks duplicate mutations */
+const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'PUT']);
+
+function isRetryableMethod(method?: string): boolean {
+  return IDEMPOTENT_METHODS.has((method ?? 'GET').toUpperCase());
+}
+
 interface RequestConfig extends RequestInit {
   skipAuth?: boolean;
   _retry?: boolean;
@@ -157,8 +164,12 @@ export async function httpClient<T = unknown>(
       }
     }
 
-    // Retry transient errors (5xx, 429) with jitter-based backoff
-    if (isTransientError(response.status) && _attempt < RETRY_MAX_ATTEMPTS) {
+    // Retry transient errors (5xx, 429) with jitter-based backoff — idempotent methods only
+    if (
+      isTransientError(response.status) &&
+      isRetryableMethod(fetchConfig.method) &&
+      _attempt < RETRY_MAX_ATTEMPTS
+    ) {
       const delay = retryDelay(_attempt);
       await new Promise((resolve) => setTimeout(resolve, delay));
       return httpClient<T>(endpoint, config, _attempt + 1);
@@ -176,8 +187,12 @@ export async function httpClient<T = unknown>(
 
     return response.text() as T;
   } catch (error) {
-    // Retry network-level failures (fetch throws) with jitter-based backoff
-    if (_attempt < RETRY_MAX_ATTEMPTS && !(error instanceof Error && error.message.startsWith('HTTP'))) {
+    // Retry network-level failures (fetch throws) with jitter-based backoff — idempotent methods only
+    if (
+      isRetryableMethod(fetchConfig.method) &&
+      _attempt < RETRY_MAX_ATTEMPTS &&
+      !(error instanceof Error && error.message.startsWith('HTTP'))
+    ) {
       const delay = retryDelay(_attempt);
       await new Promise((resolve) => setTimeout(resolve, delay));
       return httpClient<T>(endpoint, config, _attempt + 1);

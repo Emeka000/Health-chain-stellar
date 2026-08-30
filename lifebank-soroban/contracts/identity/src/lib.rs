@@ -1,8 +1,102 @@
 #![no_std]
+#![deny(deprecated)]
+
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, BytesN, Env,
-    String, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env,
+    String, Vec,
 };
+
+mod verification;
+
+mod request_client {
+    use soroban_sdk::{contractclient, contracttype, Address, Env, String, Vec};
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[contracttype]
+    pub enum RequestStatus {
+        Pending,
+        Approved,
+        InProgress,
+        Fulfilled,
+        Cancelled,
+        Rejected,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[contracttype]
+    pub enum BloodType {
+        APositive,
+        ANegative,
+        BPositive,
+        BNegative,
+        ABPositive,
+        ABNegative,
+        OPositive,
+        ONegative,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[contracttype]
+    pub enum BloodComponent {
+        WholeBlood,
+        RedCells,
+        Plasma,
+        Platelets,
+        Cryoprecipitate,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[contracttype]
+    pub enum Urgency {
+        Critical,
+        Urgent,
+        Routine,
+        Scheduled,
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    #[contracttype]
+    pub struct RequestHistoryEntry {
+        pub previous_status: RequestStatus,
+        pub is_initial_transition: bool,
+        pub new_status: RequestStatus,
+        pub actor: Address,
+        pub reason: String,
+        pub fulfilled_delta_ml: u32,
+        pub released_reservation: bool,
+        pub timestamp: u64,
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    #[contracttype]
+    pub struct BloodRequest {
+        pub id: u64,
+        pub hospital_id: Address,
+        pub blood_type: BloodType,
+        pub component: BloodComponent,
+        pub quantity_ml: u32,
+        pub urgency: Urgency,
+        pub created_timestamp: u64,
+        pub required_by_timestamp: u64,
+        pub status: RequestStatus,
+        pub assigned_units: Vec<u64>,
+        pub fulfilled_quantity_ml: u32,
+        pub reservation_id: Option<u64>,
+        pub fulfilled_by: Option<Address>,
+        pub history: Vec<RequestHistoryEntry>,
+    }
+
+    #[contractclient(name = "RequestContractClient")]
+    #[allow(dead_code)]
+    pub trait RequestContractInterface {
+        fn get_request(env: Env, request_id: u64) -> BloodRequest;
+    }
+}
+
+/// Persistent storage TTL constants (ledgers; one ledger ≈ 5 s on mainnet).
+const TTL_THRESHOLD: u32 = 518_400; // ~30 days
+const TTL_EXTEND_TO: u32 = 1_036_800; // ~60 days
+const CONTRACT_VERSION: u32 = 1;
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -26,6 +120,7 @@ pub enum Error {
     AlreadyVerified = 211,
     AlreadyUnverified = 212,
     ContractPaused = 213,
+    DeliveryAlreadyVerified = 214,
 }
 
 // ---------------------------------------------------------------------------
@@ -92,12 +187,57 @@ pub struct Organization {
     pub location_hash: BytesN<32>,
 }
 
-#[contracttype]
+#[contractevent(topics = ["org_registered"], data_format = "vec")]
 #[derive(Clone, Debug)]
 pub struct OrganizationRegistered {
     pub org_id: Address,
     pub org_type: OrgType,
     pub name: String,
+}
+
+#[contractevent(topics = ["identity", "init"], data_format = "single-value")]
+pub struct IdentityInitialized {
+    pub admin: Address,
+}
+
+#[contractevent(topics = ["org_verified"], data_format = "vec")]
+pub struct OrgVerified {
+    pub org_id: Address,
+    pub admin: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["org_unverified"], data_format = "vec")]
+pub struct OrgUnverified {
+    pub org_id: Address,
+    pub reason: String,
+}
+
+#[contractevent(topics = ["org_rated"], data_format = "vec")]
+pub struct OrgRated {
+    pub org_id: Address,
+    pub rater: Address,
+    pub rating: u32,
+}
+
+#[contractevent(topics = ["badge_awarded"], data_format = "vec")]
+pub struct BadgeAwarded {
+    pub org_id: Address,
+    pub admin: Address,
+}
+
+#[contractevent(topics = ["badge_revoked"], data_format = "vec")]
+pub struct BadgeRevoked {
+    pub org_id: Address,
+    pub badge_type: BadgeType,
+}
+
+#[contractevent(topics = ["delivery_proof"], data_format = "vec")]
+pub struct DeliveryProofRecorded {
+    pub request_id: u64,
+    pub org_id: Address,
+    pub recipient: Address,
+    pub temperature_ok: bool,
 }
 
 #[contracttype]
@@ -182,6 +322,24 @@ pub enum DataKey {
 #[contract]
 pub struct IdentityContract;
 
+impl IdentityContract {
+    /// Check whether an address has a given role.
+    fn has_role_internal(env: Env, account: Address, role: Role) -> bool {
+        let key = DataKey::AddressRoles(account);
+        let roles: Vec<RoleGrant> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(Vec::new(&env));
+        for i in 0..roles.len() {
+            if roles.get(i).unwrap().role == role {
+                return true;
+            }
+        }
+        false
+    }
+}
+
 #[contractimpl]
 impl IdentityContract {
     /// Initialize the contract with an admin
@@ -195,23 +353,20 @@ impl IdentityContract {
         env.storage().instance().set(&DataKey::OrgCounter, &0u32);
         Self::grant_role_internal(&env, admin.clone(), Role::Admin);
 
-        env.events()
-            .publish((symbol_short!("init"), symbol_short!("v1")), admin);
+        IdentityInitialized { admin }.publish(&env);
 
         Ok(())
+    }
+
+    /// Get contract version
+    pub fn version(_env: Env) -> u32 {
+        CONTRACT_VERSION
     }
 
     /// Pause all state-mutating functions. Admin only.
     pub fn pause(env: Env, admin: Address) -> Result<(), Error> {
         admin.require_auth();
-        let stored: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(Error::Unauthorized)?;
-        if admin != stored {
-            return Err(Error::Unauthorized);
-        }
+        Self::require_role(&env, &admin, Role::Admin)?;
         env.storage().instance().set(&DataKey::Paused, &true);
         Ok(())
     }
@@ -219,14 +374,7 @@ impl IdentityContract {
     /// Unpause the contract. Admin only.
     pub fn unpause(env: Env, admin: Address) -> Result<(), Error> {
         admin.require_auth();
-        let stored: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(Error::Unauthorized)?;
-        if admin != stored {
-            return Err(Error::Unauthorized);
-        }
+        Self::require_role(&env, &admin, Role::Admin)?;
         env.storage().instance().set(&DataKey::Paused, &false);
         Ok(())
     }
@@ -263,10 +411,16 @@ impl IdentityContract {
     }
 
     /// Admin-only: configure the requests contract address used by verify_interaction.
-    pub fn set_requests_contract(env: Env, admin: Address, requests_contract: Address) -> Result<(), Error> {
+    pub fn set_requests_contract(
+        env: Env,
+        admin: Address,
+        requests_contract: Address,
+    ) -> Result<(), Error> {
         admin.require_auth();
         Self::require_role(&env, &admin, Role::Admin)?;
-        env.storage().instance().set(&DataKey::RequestsContract, &requests_contract);
+        env.storage()
+            .instance()
+            .set(&DataKey::RequestsContract, &requests_contract);
         Ok(())
     }
 
@@ -295,7 +449,7 @@ impl IdentityContract {
         owner.require_auth();
         Self::require_not_paused(&env)?;
 
-        if name.len() == 0 || license_number.len() == 0 {
+        if name.is_empty() || license_number.is_empty() {
             return Err(Error::InvalidInput);
         }
 
@@ -318,13 +472,20 @@ impl IdentityContract {
             location_hash,
         };
 
+        let org_key = DataKey::Org(org_id.clone());
+        env.storage().persistent().set(&org_key, &organization);
         env.storage()
             .persistent()
-            .set(&DataKey::Org(org_id.clone()), &organization);
+            .extend_ttl(&org_key, TTL_THRESHOLD, TTL_EXTEND_TO);
         env.storage().persistent().set(&license_key, &org_id);
         env.storage()
             .persistent()
-            .set(&DataKey::Docs(org_id.clone()), &document_hashes);
+            .extend_ttl(&license_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        let docs_key = DataKey::Docs(org_id.clone());
+        env.storage().persistent().set(&docs_key, &document_hashes);
+        env.storage()
+            .persistent()
+            .extend_ttl(&docs_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         // Assign role
         let role = match org_type.clone() {
@@ -342,17 +503,18 @@ impl IdentityContract {
             .unwrap_or(Vec::new(&env));
         list.push_back(org_id.clone());
         env.storage().persistent().set(&type_key, &list);
+        env.storage()
+            .persistent()
+            .extend_ttl(&type_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         Self::increment_counter(&env, DataKey::OrgCounter);
 
-        env.events().publish(
-            (symbol_short!("org_reg"), symbol_short!("v1")),
-            OrganizationRegistered {
-                org_id: org_id.clone(),
-                org_type,
-                name,
-            },
-        );
+        OrganizationRegistered {
+            org_id: org_id.clone(),
+            org_type,
+            name,
+        }
+        .publish(&env);
 
         Ok(org_id)
     }
@@ -368,7 +530,7 @@ impl IdentityContract {
     /// Internal helper to grant a role to an address (no auth check).
     fn grant_role_internal(env: &Env, address: Address, role: Role) {
         let key = DataKey::AddressRoles(address.clone());
-        let mut roles: Vec<RoleGrant> = env
+        let roles: Vec<RoleGrant> = env
             .storage()
             .persistent()
             .get(&key)
@@ -405,6 +567,9 @@ impl IdentityContract {
         }
 
         env.storage().persistent().set(&key, &sorted);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     /// Get the primary role of an address (first role in the sorted vec, if any).
@@ -429,23 +594,12 @@ impl IdentityContract {
 
     /// Check if an address has a given role
     pub fn has_role(env: Env, account: Address, role: Role) -> bool {
-        let key = DataKey::AddressRoles(account);
-        let roles: Vec<RoleGrant> = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .unwrap_or(Vec::new(&env));
-        for i in 0..roles.len() {
-            if roles.get(i).unwrap().role == role {
-                return true;
-            }
-        }
-        false
+        Self::has_role_internal(env, account, role)
     }
 
     /// Require that an address has a given role, return Unauthorized error if not
     fn require_role(env: &Env, account: &Address, role: Role) -> Result<(), Error> {
-        if Self::has_role(env.clone(), account.clone(), role) {
+        if Self::has_role_internal(env.clone(), account.clone(), role) {
             Ok(())
         } else {
             Err(Error::Unauthorized)
@@ -516,74 +670,57 @@ impl IdentityContract {
     }
 
     /// Return up to `limit` top-rated verified organizations of the given type.
-    /// Uses a simple insertion-sort over all verified orgs.
+    /// Enforces a hard cap of 50 results; sort is O(n * take) bounded by CAP².
     pub fn get_top_rated_organizations(
         env: Env,
         org_type: OrgType,
         limit: u32,
     ) -> Vec<Organization> {
-        let all = Self::get_verified_organizations(env.clone(), org_type, 100);
+        const CAP: u32 = 50;
+        let take = limit.min(CAP);
+        let all = Self::get_verified_organizations(env.clone(), org_type, CAP);
+        let n = all.len();
 
-        // Insertion sort descending by rating
-        let mut sorted: Vec<Organization> = Vec::new(&env);
-        for i in 0..all.len() {
-            let org = all.get(i).unwrap();
-            let mut inserted = false;
-            let mut new_sorted: Vec<Organization> = Vec::new(&env);
-            for j in 0..sorted.len() {
-                let s = sorted.get(j).unwrap();
-                if !inserted && org.rating > s.rating {
-                    new_sorted.push_back(org.clone());
-                    inserted = true;
+        // Track which indices have been selected already
+        let mut selected: Vec<u32> = Vec::new(&env);
+        let mut results: Vec<Organization> = Vec::new(&env);
+
+        for _ in 0..take {
+            let mut best_rating = u32::MAX;
+            let mut best_idx = n; // sentinel = not found
+                                  // Find the highest-rated not-yet-selected entry
+            for i in 0..n {
+                let mut skip = false;
+                for k in 0..selected.len() {
+                    if selected.get(k).unwrap() == i {
+                        skip = true;
+                        break;
+                    }
                 }
-                new_sorted.push_back(s);
+                if skip {
+                    continue;
+                }
+                let r = all.get(i).unwrap().rating;
+                // We want maximum; re-use best_rating as "highest so far"
+                if best_idx == n || r > best_rating {
+                    best_rating = r;
+                    best_idx = i;
+                }
             }
-            if !inserted {
-                new_sorted.push_back(org);
-            }
-            sorted = new_sorted;
-        }
-
-        let take = limit.min(sorted.len());
-        let mut results = Vec::new(&env);
-        for i in 0..take {
-            results.push_back(sorted.get(i).unwrap());
+            if best_idx == n {
+                break;
+            } // no more candidates
+            selected.push_back(best_idx);
+            results.push_back(all.get(best_idx).unwrap());
         }
         results
     }
 
     /// Verify an organization (admin only)
     pub fn verify_organization(env: Env, admin: Address, org_id: Address) -> Result<(), Error> {
-        admin.require_auth();
-        Self::require_not_paused(&env)?;
-        Self::require_role(&env, &admin, Role::Admin)?;
-
-        let org_key = DataKey::Org(org_id.clone());
-        let mut organization: Organization = env
-            .storage()
-            .persistent()
-            .get(&org_key)
-            .ok_or(Error::OrganizationNotFound)?;
-
-        if organization.verified {
-            return Err(Error::AlreadyVerified);
-        }
-
-        // Update organization
-        organization.verified = true;
-        organization.verified_timestamp = Some(env.ledger().timestamp());
-        env.storage().persistent().set(&org_key, &organization);
-
-        // Store verifier
-        let verifier_key = DataKey::OrgVerifier(org_id.clone());
-        env.storage().persistent().set(&verifier_key, &admin);
-
-        // Emit event
-        env.events().publish(
-            (Symbol::new(&env, "org_verified"), symbol_short!("v1")),
-            (org_id, admin, env.ledger().timestamp()),
-        );
-
+        <verification::VerificationImpl as verification::VerificationTrait>::verify_organization(
+            env, admin, org_id,
+        )?;
         Ok(())
     }
 
@@ -594,35 +731,9 @@ impl IdentityContract {
         org_id: Address,
         reason: String,
     ) -> Result<(), Error> {
-        admin.require_auth();
-        Self::require_not_paused(&env)?;
-        Self::require_role(&env, &admin, Role::Admin)?;
-
-        let org_key = DataKey::Org(org_id.clone());
-        let mut organization: Organization = env
-            .storage()
-            .persistent()
-            .get(&org_key)
-            .ok_or(Error::OrganizationNotFound)?;
-
-        if !organization.verified {
-            return Err(Error::AlreadyUnverified);
-        }
-
-        organization.verified = false;
-        organization.verified_timestamp = None;
-        env.storage().persistent().set(&org_key, &organization);
-
-        // Store reason
-        let reason_key = DataKey::OrgUnverifyReason(org_id.clone());
-        env.storage().persistent().set(&reason_key, &reason);
-
-        // Emit event
-        env.events().publish(
-            (Symbol::new(&env, "org_unverified"), symbol_short!("v1")),
-            (org_id, reason),
-        );
-
+        <verification::VerificationImpl as verification::VerificationTrait>::unverify_organization(
+            env, admin, org_id, reason,
+        )?;
         Ok(())
     }
 
@@ -641,11 +752,10 @@ impl IdentityContract {
         rater.require_auth();
         Self::require_not_paused(&env)?;
 
-        if rating < 1 || rating > 5 {
+        if !(1..=5).contains(&rating) {
             return Err(Error::InvalidRating);
         }
 
-        // Verify interaction (stub — wire to request contract in production)
         Self::verify_interaction(env.clone(), rater.clone(), org_id.clone(), request_id)?;
 
         // Prevent duplicate rating for this request
@@ -667,9 +777,15 @@ impl IdentityContract {
         organization.rating = (total_rating + rating) / organization.total_ratings;
 
         env.storage().persistent().set(&org_key, &organization);
+        env.storage()
+            .persistent()
+            .extend_ttl(&org_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         // Mark as rated
         env.storage().persistent().set(&rated_key, &true);
+        env.storage()
+            .persistent()
+            .extend_ttl(&rated_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         // Store rating record
         let record = RatingRecord {
@@ -679,14 +795,18 @@ impl IdentityContract {
             request_id,
             timestamp: env.ledger().timestamp(),
         };
+        let rating_key = DataKey::RatingRecord(request_id, rater.clone());
+        env.storage().persistent().set(&rating_key, &record);
         env.storage()
             .persistent()
-            .set(&DataKey::RatingRecord(request_id, rater.clone()), &record);
+            .extend_ttl(&rating_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
-        env.events().publish(
-            (symbol_short!("rated"), symbol_short!("v1")),
-            (org_id, rater, rating),
-        );
+        OrgRated {
+            org_id,
+            rater,
+            rating,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -698,22 +818,48 @@ impl IdentityContract {
             .get(&DataKey::RatingRecord(request_id, rater))
     }
 
-    /// Verify that `rater` had a completed interaction with `org_id` on `request_id`.
-    /// Requires a requests contract to be configured via set_requests_contract(); fails closed otherwise.
+    /// Verify that `rater` had a completed interaction for `request_id`.
+    /// Fails closed unless the configured requests contract confirms the request
+    /// belongs to the rater and is fully completed.
     fn verify_interaction(
         env: Env,
-        _rater: Address,
-        _org_id: Address,
-        _request_id: u64,
+        rater: Address,
+        org_id: Address,
+        request_id: u64,
     ) -> Result<(), Error> {
-        // Fail closed: rating is disabled until the requests contract address is configured.
-        let _requests_contract: Address = env
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::Org(org_id.clone()))
+        {
+            return Err(Error::OrganizationNotFound);
+        }
+
+        let requests_contract: Address = env
             .storage()
             .instance()
             .get(&DataKey::RequestsContract)
             .ok_or(Error::Unauthorized)?;
-        // Full cross-contract verification (hospital_id == rater, status == Fulfilled)
-        // requires wiring RequestsClient once the requests contract WASM is available.
+
+        let requests_client = request_client::RequestContractClient::new(&env, &requests_contract);
+        let request = requests_client
+            .try_get_request(&request_id)
+            .map_err(|_| Error::Unauthorized)?
+            .map_err(|_| Error::Unauthorized)?;
+
+        if request.hospital_id != rater {
+            return Err(Error::Unauthorized);
+        }
+
+        if request.status != request_client::RequestStatus::Fulfilled {
+            return Err(Error::Unauthorized);
+        }
+
+        // The rated org must be the one that actually fulfilled this request.
+        if request.fulfilled_by != Some(org_id) {
+            return Err(Error::Unauthorized);
+        }
+
         Ok(())
     }
 
@@ -730,16 +876,7 @@ impl IdentityContract {
     ) -> Result<(), Error> {
         admin.require_auth();
         Self::require_not_paused(&env)?;
-
-        // Verify caller is admin
-        let stored_admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(Error::Unauthorized)?;
-        if admin != stored_admin {
-            return Err(Error::Unauthorized);
-        }
+        Self::require_role(&env, &admin, Role::Admin)?;
 
         // Org must exist
         if !env
@@ -773,11 +910,11 @@ impl IdentityContract {
         };
         badges.push_back(record);
         env.storage().persistent().set(&badges_key, &badges);
+        env.storage()
+            .persistent()
+            .extend_ttl(&badges_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
-        env.events().publish(
-            (symbol_short!("badge"), symbol_short!("v1")),
-            (org_id, admin),
-        );
+        BadgeAwarded { org_id, admin }.publish(&env);
 
         Ok(())
     }
@@ -791,15 +928,7 @@ impl IdentityContract {
     ) -> Result<(), Error> {
         admin.require_auth();
         Self::require_not_paused(&env)?;
-
-        let stored_admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(Error::Unauthorized)?;
-        if admin != stored_admin {
-            return Err(Error::Unauthorized);
-        }
+        Self::require_role(&env, &admin, Role::Admin)?;
 
         let badges_key = DataKey::OrgBadges(org_id.clone());
         let badges: Vec<BadgeRecord> = env
@@ -824,6 +953,12 @@ impl IdentityContract {
         }
 
         env.storage().persistent().set(&badges_key, &new_badges);
+        env.storage()
+            .persistent()
+            .extend_ttl(&badges_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        BadgeRevoked { org_id, badge_type }.publish(&env);
+
         Ok(())
     }
 
@@ -865,6 +1000,23 @@ impl IdentityContract {
             return Err(Error::OrganizationNotFound);
         }
 
+        // Verifier must be an authorized courier (Rider), the recipient who
+        // received the delivery, or the org that dispatched it. This prevents
+        // an arbitrary, unrelated address from fabricating a delivery proof.
+        let is_authorized = Self::has_role_internal(env.clone(), verifier.clone(), Role::Rider)
+            || verifier == recipient
+            || verifier == org_id;
+        if !is_authorized {
+            return Err(Error::Unauthorized);
+        }
+
+        // A delivery proof for this request must not already exist; overwriting
+        // a previously recorded proof requires an explicit correction path.
+        let delivery_key = DataKey::Delivery(request_id);
+        if env.storage().persistent().has(&delivery_key) {
+            return Err(Error::DeliveryAlreadyVerified);
+        }
+
         let now = env.ledger().timestamp();
 
         let proof = DeliveryProof {
@@ -878,14 +1030,18 @@ impl IdentityContract {
             verified_at: Some(now),
         };
 
+        env.storage().persistent().set(&delivery_key, &proof);
         env.storage()
             .persistent()
-            .set(&DataKey::Delivery(request_id), &proof);
+            .extend_ttl(&delivery_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
-        env.events().publish(
-            (symbol_short!("delivery"), symbol_short!("v1")),
-            (request_id, org_id, recipient, temperature_ok),
-        );
+        DeliveryProofRecorded {
+            request_id,
+            org_id,
+            recipient,
+            temperature_ok,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -909,17 +1065,25 @@ impl IdentityContract {
     }
 }
 
+#[cfg(test)]
 #[contract]
 pub struct AccessControlContract;
 
+#[cfg(test)]
 #[contractimpl]
 impl AccessControlContract {
     /// Initialize the contract with an administrator
-    pub fn initialize(env: Env, admin: Address) {
+    pub fn ac_initialize(env: Env, admin: Address) {
         if env.storage().persistent().has(&DataKey::Admin) {
             panic!("Already initialized");
         }
+        // Require the supplied admin address to sign this transaction so that
+        // an attacker cannot front-run initialization and claim admin rights.
+        admin.require_auth();
         env.storage().persistent().set(&DataKey::Admin, &admin);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Admin, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     /// Grant a role to an address with optional expiry
@@ -951,6 +1115,9 @@ impl AccessControlContract {
         roles = Self::insert_sorted(&env, roles, new_grant);
 
         env.storage().persistent().set(&key, &roles);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     /// Revoke a role from an address
@@ -975,12 +1142,15 @@ impl AccessControlContract {
                 env.storage().persistent().remove(&key);
             } else {
                 env.storage().persistent().set(&key, &roles);
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
             }
         }
     }
 
     /// Check if an address has a specific non-expired role
-    pub fn has_role(env: Env, address: Address, role: Role) -> bool {
+    pub fn ac_has_role(env: Env, address: Address, role: Role) -> bool {
         Self::cleanup_expired_roles_internal(&env, &address);
 
         let key = DataKey::AddressRoles(address);
@@ -1054,6 +1224,9 @@ impl AccessControlContract {
                     env.storage().persistent().remove(&key);
                 } else {
                     env.storage().persistent().set(&key, &new_roles);
+                    env.storage()
+                        .persistent()
+                        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
                 }
             }
 
@@ -1120,6 +1293,9 @@ impl AccessControlContract {
         }
         scopes.push_back(scope);
         env.storage().persistent().set(&key, &scopes);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     /// Revoke a permission scope from an address. Admin only.
@@ -1145,6 +1321,9 @@ impl AccessControlContract {
                 }
             }
             env.storage().persistent().set(&key, &new_scopes);
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         }
     }
 
@@ -1176,4 +1355,3 @@ impl AccessControlContract {
 }
 
 mod test;
-mod verification;

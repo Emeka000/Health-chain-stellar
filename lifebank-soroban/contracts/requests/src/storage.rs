@@ -2,6 +2,10 @@ use crate::error::ContractError;
 use crate::types::{BloodRequest, ContractMetadata, DataKey};
 use soroban_sdk::{Address, Env, String};
 
+/// Persistent storage TTL constants (ledgers; one ledger ≈ 5 s on mainnet).
+const TTL_THRESHOLD: u32 = 518_400; // ~30 days
+const TTL_EXTEND_TO: u32 = 1_036_800; // ~60 days
+
 pub fn is_initialized(env: &Env) -> bool {
     env.storage()
         .instance()
@@ -46,7 +50,9 @@ pub fn get_inventory_contract(env: &Env) -> Address {
 }
 
 pub fn set_request_counter(env: &Env, value: u64) {
-    env.storage().instance().set(&DataKey::RequestCounter, &value);
+    env.storage()
+        .instance()
+        .set(&DataKey::RequestCounter, &value);
 }
 
 pub fn get_request_counter(env: &Env) -> u64 {
@@ -66,9 +72,11 @@ pub fn increment_request_counter(env: &Env) -> u64 {
 /// Instance storage has a fixed size budget; using persistent storage
 /// prevents instance bloat as the number of authorized hospitals grows.
 pub fn authorize_hospital(env: &Env, hospital: &Address) {
+    let key = DataKey::AuthorizedHospital(hospital.clone());
+    env.storage().persistent().set(&key, &true);
     env.storage()
         .persistent()
-        .set(&DataKey::AuthorizedHospital(hospital.clone()), &true);
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn revoke_hospital(env: &Env, hospital: &Address) {
@@ -115,6 +123,7 @@ pub fn revoke_rider(env: &Env, rider: &Address) {
         .remove(&DataKey::AuthorizedRider(rider.clone()));
 }
 
+#[allow(dead_code)]
 pub fn is_rider_authorized(env: &Env, rider: &Address) -> bool {
     env.storage()
         .instance()
@@ -123,13 +132,17 @@ pub fn is_rider_authorized(env: &Env, rider: &Address) -> bool {
 }
 
 pub fn set_request(env: &Env, request: &BloodRequest) {
+    let key = DataKey::Request(request.id);
+    env.storage().persistent().set(&key, request);
     env.storage()
         .persistent()
-        .set(&DataKey::Request(request.id), request);
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn get_request(env: &Env, request_id: u64) -> Option<BloodRequest> {
-    env.storage().persistent().get(&DataKey::Request(request_id))
+    env.storage()
+        .persistent()
+        .get(&DataKey::Request(request_id))
 }
 
 pub fn set_metadata(env: &Env, metadata: &ContractMetadata) {
@@ -148,4 +161,28 @@ pub fn default_metadata(env: &Env) -> ContractMetadata {
         name: String::from_str(env, "Blood Request Management"),
         version: 1,
     }
+}
+
+/// Append a request ID to a hospital's request index.
+pub fn append_to_hospital_requests(env: &Env, hospital: &Address, request_id: u64) {
+    let key = DataKey::HospitalRequestIds(hospital.clone());
+    let mut ids: soroban_sdk::Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+    ids.push_back(request_id);
+    env.storage().persistent().set(&key, &ids);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+}
+
+/// Retrieve all request IDs for a hospital.
+pub fn get_hospital_request_ids(env: &Env, hospital: &Address) -> soroban_sdk::Vec<u64> {
+    let key = DataKey::HospitalRequestIds(hospital.clone());
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| soroban_sdk::Vec::new(env))
 }

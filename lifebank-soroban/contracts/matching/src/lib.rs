@@ -1,4 +1,5 @@
 #![no_std]
+#![deny(deprecated)]
 
 mod error;
 mod matching;
@@ -8,13 +9,29 @@ mod types;
 mod test;
 
 pub use error::MatchingError;
-pub use matching::{compatible_donor_types, is_compatible, score_unit, select_units, sort_by_expiration};
+pub use matching::{
+    compatible_donor_types, is_compatible, score_unit, select_units, sort_by_expiration,
+};
 pub use types::{
     BloodComponent, BloodRequest, BloodStatus, BloodType, BloodUnit, DataKey, MatchKind,
     MatchResult, MatchedUnit, RequestStatus, Urgency,
 };
 
 use soroban_sdk::{contract, contractclient, contractimpl, Address, Env, Vec};
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/// Maximum number of candidate blood units to consider in a single match.
+/// Protects against O(n²) sorting and unbounded gas costs when inventory is large.
+/// Threshold chosen to stay within per-transaction compute limits with safety margin.
+const MAX_MATCH_CANDIDATES: usize = 500;
+
+/// Maximum number of request IDs accepted by `match_multiple_requests`.
+/// Enforces an explicit, graceful error instead of letting the transaction hit
+/// the instruction limit with an opaque failure.
+const MAX_BATCH_SIZE: u32 = 50;
 
 // ---------------------------------------------------------------------------
 // Cross-contract client interfaces
@@ -36,6 +53,8 @@ pub trait RequestsContractInterface {
 // ---------------------------------------------------------------------------
 // Contract
 // ---------------------------------------------------------------------------
+
+const CONTRACT_VERSION: u32 = 1;
 
 #[contract]
 pub struct MatchingContract;
@@ -66,6 +85,10 @@ impl MatchingContract {
         env.storage().instance().set(&DataKey::Initialized, &true);
 
         Ok(())
+    }
+
+    pub fn version(_env: Env) -> u32 {
+        CONTRACT_VERSION
     }
 
     /// Pause all state-mutating functions. Admin only.
@@ -132,12 +155,22 @@ impl MatchingContract {
     ///    c. Within each tier, applies FIFO (oldest expiration first).
     ///    d. Supports partial matching — returns whatever is available.
     /// 5. Return a `MatchResult` with scores and partial-fulfillment flag.
-    pub fn match_request(
-        env: Env,
+    pub fn match_request(env: Env, request_id: u64) -> Result<MatchResult, MatchingError> {
+        let excluded: Vec<u64> = Vec::new(&env);
+        Self::match_request_excluding(&env, request_id, &excluded)
+    }
+
+    /// Same matching algorithm as `match_request`, but drops any candidate
+    /// unit whose id is present in `excluded`. Used by `match_multiple_requests`
+    /// so units already assigned earlier in the same batch cannot be
+    /// double-allocated to a later request in that batch.
+    fn match_request_excluding(
+        env: &Env,
         request_id: u64,
+        excluded: &Vec<u64>,
     ) -> Result<MatchResult, MatchingError> {
-        Self::require_initialized(&env)?;
-        Self::require_not_paused(&env)?;
+        Self::require_initialized(env)?;
+        Self::require_not_paused(env)?;
 
         // Load request
         let req_addr: Address = env
@@ -145,7 +178,7 @@ impl MatchingContract {
             .instance()
             .get(&DataKey::RequestsContract)
             .unwrap();
-        let req_client = RequestsContractClient::new(&env, &req_addr);
+        let req_client = RequestsContractClient::new(env, &req_addr);
         let request = req_client
             .try_get_request(&request_id)
             .map_err(|_| MatchingError::RequestNotFound)?
@@ -161,30 +194,38 @@ impl MatchingContract {
             .instance()
             .get(&DataKey::InventoryContract)
             .unwrap();
-        let inv_client = InventoryContractClient::new(&env, &inv_addr);
+        let inv_client = InventoryContractClient::new(env, &inv_addr);
 
-        let compatible_types =
-            compatible_donor_types(&env, request.blood_type);
+        let compatible_types = compatible_donor_types(env, request.blood_type);
 
-        let mut candidates: Vec<BloodUnit> = Vec::new(&env);
+        let mut candidates: Vec<BloodUnit> = Vec::new(env);
         for i in 0..compatible_types.len() {
             let bt = compatible_types.get(i).unwrap();
             let unit_ids = inv_client
                 .try_get_units_by_blood_type(&bt)
-                .unwrap_or(Ok(Vec::new(&env)))
-                .unwrap_or(Vec::new(&env));
+                .unwrap_or(Ok(Vec::new(env)))
+                .unwrap_or(Vec::new(env));
 
             for j in 0..unit_ids.len() {
+                if candidates.len() >= MAX_MATCH_CANDIDATES.try_into().unwrap() {
+                    break;
+                }
                 let uid = unit_ids.get(j).unwrap();
+                if excluded.contains(uid) {
+                    continue;
+                }
                 if let Ok(Ok(unit)) = inv_client.try_get_blood_unit(&uid) {
                     candidates.push_back(unit);
                 }
+            }
+            if candidates.len() >= MAX_MATCH_CANDIDATES.try_into().unwrap() {
+                break;
             }
         }
 
         let now = env.ledger().timestamp();
         let matched = select_units(
-            &env,
+            env,
             candidates,
             request.blood_type,
             request.urgency,
@@ -219,14 +260,19 @@ impl MatchingContract {
     /// Within the same urgency level, requests with an earlier
     /// `required_by_timestamp` are processed first.
     ///
-    /// Uses insertion sort — O(n log n) average for nearly-sorted inputs,
-    /// acceptable for the small batches expected in practice (≤50 requests).
+    /// Uses insertion sort — O(n²) worst-case but acceptable for batches up to
+    /// `MAX_BATCH_SIZE`. Callers that exceed `MAX_BATCH_SIZE` receive
+    /// `MatchingError::BatchTooLarge` rather than hitting the instruction limit.
     pub fn match_multiple_requests(
         env: Env,
         request_ids: Vec<u64>,
     ) -> Result<Vec<MatchResult>, MatchingError> {
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
+
+        if request_ids.len() > MAX_BATCH_SIZE {
+            return Err(MatchingError::BatchTooLarge);
+        }
 
         let req_addr: Address = env
             .storage()
@@ -235,14 +281,27 @@ impl MatchingContract {
             .unwrap();
         let req_client = RequestsContractClient::new(&env, &req_addr);
 
-        // Load all requests in one pass
+        // Load all requests in one pass, skipping any that cannot be loaded
+        // or are no longer Pending rather than aborting the whole batch
+        // (issue #1321). A single stale or missing request ID must not
+        // discard results for every other valid request in the batch.
         let mut requests: Vec<BloodRequest> = Vec::new(&env);
         for i in 0..request_ids.len() {
             let rid = request_ids.get(i).unwrap();
-            let req = req_client
+            // Skip requests that don't exist or can't be loaded.
+            let req = match req_client
                 .try_get_request(&rid)
-                .map_err(|_| MatchingError::RequestNotFound)?
-                .map_err(|_| MatchingError::RequestNotFound)?;
+                .ok()
+                .and_then(|r| r.ok())
+            {
+                Some(r) => r,
+                None => continue,
+            };
+            // Skip requests that are no longer Pending (e.g. cancelled or
+            // approved concurrently between submission and execution).
+            if req.status != RequestStatus::Pending {
+                continue;
+            }
             requests.push_back(req);
         }
 
@@ -271,10 +330,23 @@ impl MatchingContract {
             }
         }
 
+        // Track units already assigned earlier in this batch so a later
+        // request in the same call cannot be matched to the same unit as an
+        // earlier one (each sub-match otherwise sees inventory as untouched).
+        let mut assigned: Vec<u64> = Vec::new(&env);
         let mut results: Vec<MatchResult> = Vec::new(&env);
         for i in 0..requests.len() {
             let req = requests.get(i).unwrap();
-            let result = Self::match_request(env.clone(), req.id)?;
+            // Skip individual requests that fail to match (e.g. the request
+            // transitioned away from Pending between the load pass above and
+            // this execution pass) instead of aborting the entire batch.
+            let result = match Self::match_request_excluding(&env, req.id, &assigned) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            for j in 0..result.matched_units.len() {
+                assigned.push_back(result.matched_units.get(j).unwrap().unit_id);
+            }
             results.push_back(result);
         }
 
@@ -289,11 +361,7 @@ impl MatchingContract {
     }
 
     /// Check whether `donor` can donate to `recipient`.
-    pub fn check_compatibility(
-        _env: Env,
-        donor: BloodType,
-        recipient: BloodType,
-    ) -> bool {
+    pub fn check_compatibility(_env: Env, donor: BloodType, recipient: BloodType) -> bool {
         is_compatible(donor, recipient)
     }
 

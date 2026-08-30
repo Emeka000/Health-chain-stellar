@@ -60,9 +60,8 @@ export class StorageService {
     this.uploadDir = this.configService.get<string>('UPLOAD_DIR', './uploads');
     this.s3Bucket = this.configService.get<string>('S3_BUCKET', '');
     this.s3Region = this.configService.get<string>('AWS_REGION', 'us-east-1');
-    this.localSignSecret = this.configService.get<string>(
+    this.localSignSecret = this.configService.getOrThrow<string>(
       'LOCAL_SIGN_SECRET',
-      'change-me-in-production',
     );
 
     if (this.storageType === 's3') {

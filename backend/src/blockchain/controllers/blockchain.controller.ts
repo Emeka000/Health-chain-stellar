@@ -14,26 +14,34 @@ import {
   UnauthorizedException,
   ConflictException,
   Req,
-  Query,
   Header,
 } from '@nestjs/common';
-
 import { ConfigService } from '@nestjs/config';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
+
 import { Request } from 'express';
 
-import { BlockchainCallbackDto } from '../dto/blockchain-callback.dto';
-import { AdminGuard } from '../guards/admin.guard';
 import { RequireAdminScope } from '../decorators/require-admin-scope.decorator';
+import { BlockchainCallbackDto } from '../dto/blockchain-callback.dto';
+import { SubmitTransactionDto } from '../dto/submit-transaction.dto';
 import { AdminScope } from '../enums/admin-scope.enum';
+import { AdminGuard } from '../guards/admin.guard';
+import { BlockchainHealthService } from '../services/blockchain-health.service';
 import { DlqReplayAuditService } from '../services/dlq-replay-audit.service';
+import { FailedSorobanTxService } from '../services/failed-soroban-tx.service';
+import { QueueMetricsService } from '../services/queue-metrics.service';
 import { SorobanService } from '../services/soroban.service';
+import { Public } from '../../auth/decorators/public.decorator';
 
-import type {
-  SorobanTxJob,
-  QueueMetrics,
-  SorobanTxResult,
-} from '../types/soroban-tx.types';
+import type { QueueMetrics, SorobanTxResult } from '../types/soroban-tx.types';
 
+@ApiTags('Blockchain')
+@ApiBearerAuth()
 @Controller('blockchain')
 export class BlockchainController {
   private readonly logger = new Logger(BlockchainController.name);
@@ -57,10 +65,14 @@ export class BlockchainController {
    * @returns Job ID for status tracking
    * @throws 400 if idempotency key already exists (duplicate submission)
    */
+  @ApiOperation({ summary: 'Post submit transaction' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('submit-transaction')
+  @UseGuards(AdminGuard)
+  @RequireAdminScope(AdminScope.ADMIN_FULL)
   @HttpCode(HttpStatus.ACCEPTED)
   async submitTransaction(
-    @Body() job: SorobanTxJob,
+    @Body() job: SubmitTransactionDto,
   ): Promise<{ jobId: string }> {
     const jobId = await this.sorobanService.submitTransaction(job);
     return { jobId };
@@ -118,7 +130,10 @@ export class BlockchainController {
     }
   }
 
+  @ApiOperation({ summary: 'Post webhook callback' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('webhook/callback')
+  @Public()
   @HttpCode(HttpStatus.OK)
   async processCallback(
     @Body() callback: BlockchainCallbackDto,
@@ -178,6 +193,8 @@ export class BlockchainController {
    * @returns Queue metrics
    * @throws 403 if not authenticated as admin
    */
+  @ApiOperation({ summary: 'Get queue status' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('queue/status')
   @UseGuards(AdminGuard)
   @RequireAdminScope(AdminScope.READ_METRICS)
@@ -194,6 +211,8 @@ export class BlockchainController {
    * @param jobId - Job ID to check
    * @returns Job status or null if not found
    */
+  @ApiOperation({ summary: 'Get job :jobId' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('job/:jobId')
   @HttpCode(HttpStatus.OK)
   async getJobStatus(
@@ -211,6 +230,8 @@ export class BlockchainController {
    * @returns Detailed metrics object
    * @throws 403 if not authenticated as admin
    */
+  @ApiOperation({ summary: 'Get metrics' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('metrics')
   @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.OK)
@@ -228,6 +249,8 @@ export class BlockchainController {
    * @returns Plain-text Prometheus metrics
    * @throws 403 if not authenticated as admin
    */
+  @ApiOperation({ summary: 'Get metrics prometheus' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('metrics/prometheus')
   @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.OK)
@@ -306,6 +329,8 @@ export class BlockchainController {
    * @returns Replay summary with counts and per-job errors
    * @throws 403 if not authenticated as admin
    */
+  @ApiOperation({ summary: 'Post admin retry failed' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('admin/retry-failed')
   @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.OK)
@@ -325,9 +350,6 @@ export class BlockchainController {
 
     for (const record of failed) {
       try {
-        const job =
-          record.payload as unknown as import('../types/soroban-tx.types').SorobanTxJob;
-
         // Resubmit via DLQ replay (clears idempotency key internally)
         await this.sorobanService.replayDlqJobs({ batchSize: 1 });
 
@@ -370,6 +392,8 @@ export class BlockchainController {
    *
    * @throws 403 if not authenticated as admin
    */
+  @ApiOperation({ summary: 'Get admin replay audits' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('admin/replay-audits')
   @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.OK)
@@ -388,6 +412,8 @@ export class BlockchainController {
    *
    * @throws 403 if not authenticated as admin
    */
+  @ApiOperation({ summary: 'Get admin health' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('admin/health')
   @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.OK)

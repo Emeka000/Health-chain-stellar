@@ -310,24 +310,26 @@ export class TransparencyService {
 
     const orderRows = await this.orderRepo
       .createQueryBuilder('o')
-      .select('o.delivery_address', 'region')
+      .select(`COALESCE(o.city, o.state, o.country, 'Unknown')`, 'region')
       .addSelect('COUNT(*)', 'count')
       .where('o.status = :status', { status: OrderStatus.DELIVERED })
-      .andWhere('o.delivery_address IS NOT NULL')
-      .groupBy('o.delivery_address')
+      .groupBy('region')
       .orderBy('count', 'DESC')
       .limit(10)
       .getRawMany<{ region: string; count: string }>();
 
     for (const row of orderRows) {
       const key = row.region ?? 'Unknown';
+      const count = parseInt(row.count, 10);
+      // Apply low-count suppression to geographicCoverage buckets
+      if (count < LOW_COUNT_THRESHOLD) continue;
       const existing = regionMap.get(key);
       if (existing) {
-        existing.fulfilledRequests += parseInt(row.count, 10);
+        existing.fulfilledRequests += count;
       } else {
         regionMap.set(key, {
           region: key,
-          fulfilledRequests: parseInt(row.count, 10),
+          fulfilledRequests: count,
           verifiedPartners: 0,
         });
       }

@@ -77,58 +77,83 @@ export class BloodInventoryQueryService {
     };
   }
 
-  async getStatistics(bankId?: string): Promise<InventoryStatistics> {
+  async getStatistics(bankId: string): Promise<InventoryStatistics> {
     const policy = await this.policyCenterService.getActivePolicySnapshot();
     const now = new Date();
     const soonThreshold = new Date(
       now.getTime() + policy.rules.inventory.expiringSoonHours * 60 * 60 * 1000,
     );
 
-    const qb = this.bloodUnitRepository.createQueryBuilder('u');
-    if (bankId) {
-      qb.where('u.organizationId = :bankId', { bankId });
-    }
+    const statusRows: { status: BloodStatus; count: string }[] =
+      await this.bloodUnitRepository
+        .createQueryBuilder('u')
+        .select('u.status', 'status')
+        .addSelect('COUNT(*)', 'count')
+        .where('u.organizationId = :bankId', { bankId })
+        .groupBy('u.status')
+        .getRawMany();
 
-    const units = await qb.getMany();
+    const byBloodTypeRows: { bloodType: BloodType; count: string }[] =
+      await this.bloodUnitRepository
+        .createQueryBuilder('u')
+        .select('u.bloodType', 'bloodType')
+        .addSelect('COUNT(*)', 'count')
+        .where('u.organizationId = :bankId', { bankId })
+        .groupBy('u.bloodType')
+        .getRawMany();
+
+    const byComponentRows: { component: string; count: string }[] =
+      await this.bloodUnitRepository
+        .createQueryBuilder('u')
+        .select('u.component', 'component')
+        .addSelect('COUNT(*)', 'count')
+        .where('u.organizationId = :bankId', { bankId })
+        .groupBy('u.component')
+        .getRawMany();
+
+    const totals: { total: string; totalVolumeMl: string | null } =
+      await this.bloodUnitRepository
+        .createQueryBuilder('u')
+        .select('COUNT(*)', 'total')
+        .addSelect('SUM(u.volumeMl)', 'totalVolumeMl')
+        .where('u.organizationId = :bankId', { bankId })
+        .getRawOne();
+
+    const expiringSoonCount: { count: string } | undefined =
+      await this.bloodUnitRepository
+        .createQueryBuilder('u')
+        .select('COUNT(*)', 'count')
+        .where('u.organizationId = :bankId', { bankId })
+        .andWhere('u.status = :status', { status: BloodStatus.AVAILABLE })
+        .andWhere('u.expiresAt > :now', { now })
+        .andWhere('u.expiresAt <= :soonThreshold', { soonThreshold })
+        .getRawOne();
 
     const byBloodType: Record<string, number> = {};
+    for (const row of byBloodTypeRows) {
+      byBloodType[row.bloodType] = Number(row.count);
+    }
+
     const byComponent: Record<string, number> = {};
-    let available = 0;
-    let reserved = 0;
-    let inTransit = 0;
-    let expired = 0;
-    let expiringSoon = 0;
-    let totalVolumeMl = 0;
+    for (const row of byComponentRows) {
+      byComponent[row.component] = Number(row.count);
+    }
 
-    for (const unit of units) {
-      byBloodType[unit.bloodType] = (byBloodType[unit.bloodType] ?? 0) + 1;
-      byComponent[unit.component] = (byComponent[unit.component] ?? 0) + 1;
-      totalVolumeMl += unit.volumeMl;
-
-      if (unit.status === BloodStatus.AVAILABLE) available++;
-      else if (unit.status === BloodStatus.RESERVED) reserved++;
-      else if (unit.status === BloodStatus.IN_TRANSIT) inTransit++;
-      else if (unit.status === BloodStatus.EXPIRED) expired++;
-
-      if (
-        unit.status === BloodStatus.AVAILABLE &&
-        unit.expiresAt > now &&
-        unit.expiresAt <= soonThreshold
-      ) {
-        expiringSoon++;
-      }
+    const statusCounts: Record<string, number> = {};
+    for (const row of statusRows) {
+      statusCounts[row.status] = Number(row.count);
     }
 
     return {
-      total: units.length,
-      available,
-      reserved,
-      inTransit,
-      expired,
-      expiringSoon,
+      total: Number(totals?.total ?? 0),
+      available: statusCounts[BloodStatus.AVAILABLE] ?? 0,
+      reserved: statusCounts[BloodStatus.RESERVED] ?? 0,
+      inTransit: statusCounts[BloodStatus.IN_TRANSIT] ?? 0,
+      expired: statusCounts[BloodStatus.EXPIRED] ?? 0,
+      expiringSoon: Number(expiringSoonCount?.count ?? 0),
       byBloodType,
       byComponent,
-      totalVolumeMl,
+      totalVolumeMl: Number(totals?.totalVolumeMl ?? 0),
       policyVersionRef: policy.policyVersionId,
     };
   }

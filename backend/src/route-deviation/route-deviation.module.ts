@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { JwtModule } from '@nestjs/jwt';
 
 import { IncidentReviewsModule } from '../incident-reviews/incident-reviews.module';
 import { RedisModule } from '../redis/redis.module';
@@ -22,6 +24,15 @@ import { TriageAutomationService } from './triage-automation.service';
     ]),
     IncidentReviewsModule,
     RedisModule,
+    ConfigModule,
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.get<string>('JWT_SECRET'),
+        signOptions: { expiresIn: '1d' },
+      }),
+    }),
   ],
   controllers: [RouteDeviationController],
   providers: [

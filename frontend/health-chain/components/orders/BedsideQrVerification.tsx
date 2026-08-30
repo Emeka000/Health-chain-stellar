@@ -23,7 +23,11 @@ export default function BedsideQrVerification({ orderId, scannedBy }: Props) {
     setError(null);
     try {
       const res = await verifyQr({ qrPayload: qrInput, orderId, scannedBy });
-      setResult(res);
+      if (res.verified) {
+        setResult(res);
+      } else {
+        setError(`Unit mismatch — ${res.unitNumber} does not match this order.`);
+      }
     } catch (err: any) {
       setError(err?.message ?? "Verification failed — unit does not match order.");
     } finally {
