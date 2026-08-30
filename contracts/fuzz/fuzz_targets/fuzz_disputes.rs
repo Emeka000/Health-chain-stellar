@@ -347,7 +347,11 @@ fuzz_target!(|input: FuzzInput| {
 
             DisputeOperation::ProcessExpiredDisputes => {
                 let stats_before: PaymentStats = client.get_payment_stats();
-                let result = client.process_expired_disputes();
+                let mut dispute_ids = soroban_sdk::Vec::new(&env);
+                for (dispute_id, _) in dispute_to_payment.iter() {
+                    dispute_ids.push_back(*dispute_id);
+                }
+                let result = client.process_expired_disputes(&dispute_ids);
 
                 if result > 0 {
                     let stats_after: PaymentStats = client.get_payment_stats();

@@ -305,6 +305,28 @@ fn property_custody_transfer_requires_authorized_current_custodian() {
         stored_unit(&fixture, unit_id).status,
         BloodStatus::InTransit
     );
+
+    let withdraw_attempt = client(&fixture).try_withdraw_blood(
+        &fixture.hospital,
+        &unit_id,
+        &WithdrawalReason::Other,
+    );
+    assert!(matches!(
+        withdraw_attempt,
+        Err(Ok(Error::NotCurrentCustodian))
+    ));
+    assert_eq!(stored_unit(&fixture, unit_id).status, BloodStatus::InTransit);
+
+    let quarantine_attempt = client(&fixture).try_quarantine_blood(
+        &fixture.hospital,
+        &unit_id,
+        &QuarantineReason::ManualOperatorAction,
+    );
+    assert!(matches!(
+        quarantine_attempt,
+        Err(Ok(Error::NotCurrentCustodian))
+    ));
+    assert_eq!(stored_unit(&fixture, unit_id).status, BloodStatus::InTransit);
 }
 
 #[test]

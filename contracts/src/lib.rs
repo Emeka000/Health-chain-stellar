@@ -1784,8 +1784,14 @@ impl HealthChainContract {
 
         let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
 
-        // Verify caller is the current custodian (owning bank or recipient hospital)
-        if unit.bank_id != caller && unit.recipient_hospital != Some(caller.clone()) {
+        // While a unit is in transit, only the originating bank remains the
+        // current custodian until the recipient confirms the transfer. This
+        // prevents a destination hospital from discarding an unconfirmed transfer.
+        if unit.status == BloodStatus::InTransit {
+            if unit.bank_id != caller {
+                return Err(Error::NotCurrentCustodian);
+            }
+        } else if unit.bank_id != caller && unit.recipient_hospital != Some(caller.clone()) {
             return Err(Error::NotCurrentCustodian);
         }
 
@@ -1854,8 +1860,13 @@ impl HealthChainContract {
 
         let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
 
-        // Verify caller is the current custodian (owning bank or recipient hospital)
-        if unit.bank_id != caller && unit.recipient_hospital != Some(caller.clone()) {
+        // While a unit is in transit, only the originating bank remains the
+        // current custodian until the recipient confirms the transfer.
+        if unit.status == BloodStatus::InTransit {
+            if unit.bank_id != caller {
+                return Err(Error::NotCurrentCustodian);
+            }
+        } else if unit.bank_id != caller && unit.recipient_hospital != Some(caller.clone()) {
             return Err(Error::NotCurrentCustodian);
         }
 
@@ -2842,8 +2853,30 @@ impl HealthChainContract {
 
         env.storage().persistent().set(&MULTISIG_CONFIG, &config);
 
-        let empty: Map<u64, PendingApproval> = Map::new(&env);
-        env.storage().persistent().set(&PENDING_APPROVALS, &empty);
+        let mut pending_approvals: Map<u64, PendingApproval> = env
+            .storage()
+            .persistent()
+            .get(&PENDING_APPROVALS)
+            .unwrap_or(Map::new(&env));
+
+        for payment_id in pending_approvals.keys() {
+            let mut approval = pending_approvals.get(payment_id).unwrap();
+            let mut valid_approvals: Vec<Address> = Vec::new(&env);
+
+            for i in 0..approval.approvals.len() {
+                let signer = approval.approvals.get(i).unwrap();
+                if config.is_signer(&signer) {
+                    valid_approvals.push_back(signer);
+                }
+            }
+
+            approval.approvals = valid_approvals;
+            pending_approvals.set(payment_id, approval);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&PENDING_APPROVALS, &pending_approvals);
         Ok(())
     }
 
@@ -3172,7 +3205,14 @@ impl HealthChainContract {
     }
 
     /// Permissionless cleanup for disputes that exceeded their arbitration deadline.
-    pub fn process_expired_disputes(env: Env) -> Result<u32, Error> {
+    ///
+    /// Only a bounded batch of dispute IDs is processed per call to keep costs
+    /// predictable and prevent unbounded scans of historical disputes.
+    pub fn process_expired_disputes(env: Env, dispute_ids: Vec<u64>) -> Result<u32, Error> {
+        if dispute_ids.len() > MAX_BATCH_SIZE {
+            return Err(Error::BatchSizeExceeded);
+        }
+
         let current_time = env.ledger().timestamp();
         let mut disputes: Map<u64, Dispute> = env
             .storage()
@@ -3199,8 +3239,13 @@ impl HealthChainContract {
         let mut stats = Self::get_payment_stats(env.clone());
         let mut processed = 0u32;
 
-        for dispute_id in disputes.keys() {
-            let mut dispute = disputes.get(dispute_id).unwrap();
+        for i in 0..dispute_ids.len() {
+            let dispute_id = dispute_ids.get(i).unwrap();
+            let mut dispute = match disputes.get(dispute_id) {
+                Some(dispute) => dispute,
+                None => continue,
+            };
+
             if dispute.status != DisputeStatus::Open {
                 continue;
             }
@@ -3238,9 +3283,15 @@ impl HealthChainContract {
             dispute.resolved_at = Some(current_time);
             disputes.set(dispute_id, dispute.clone());
 
-            stats.count_auto_refunded += 1;
-            stats.total_auto_refunded += refund_amount;
-            processed += 1;
+            stats.count_auto_refunded = stats
+                .count_auto_refunded
+                .checked_add(1)
+                .ok_or(Error::ArithmeticError)?;
+            stats.total_auto_refunded = stats
+                .total_auto_refunded
+                .checked_add(refund_amount)
+                .ok_or(Error::ArithmeticError)?;
+            processed = processed.checked_add(1).ok_or(Error::ArithmeticError)?;
 
             env.events().publish(
                 (
@@ -3608,8 +3659,22 @@ impl HealthChainContract {
             return Err(Error::InvalidStatus);
         }
 
-        if request.reserved_unit_ids.len() > 0 && request.reserved_unit_ids != unit_ids {
-            return Err(Error::InvalidStatus);
+        if request.reserved_unit_ids.len() > 0 {
+            for i in 0..unit_ids.len() {
+                let unit_id = unit_ids.get(i).unwrap();
+                let mut is_reserved = false;
+
+                for j in 0..request.reserved_unit_ids.len() {
+                    if request.reserved_unit_ids.get(j).unwrap() == unit_id {
+                        is_reserved = true;
+                        break;
+                    }
+                }
+
+                if !is_reserved {
+                    return Err(Error::InvalidStatus);
+                }
+            }
         }
 
         // Validate delivery quantity before mutating any unit or request state.
@@ -3670,8 +3735,25 @@ impl HealthChainContract {
 
         env.storage().persistent().set(&BLOOD_UNITS, &units);
 
-        // Update request
+        // Update request while preserving any still-reserved, undelivered units.
         let old_status = request.status;
+        let mut remaining_reserved_unit_ids = vec![&env];
+        for i in 0..request.reserved_unit_ids.len() {
+            let reserved_id = request.reserved_unit_ids.get(i).unwrap();
+            let mut is_delivered = false;
+
+            for j in 0..unit_ids.len() {
+                if unit_ids.get(j).unwrap() == reserved_id {
+                    is_delivered = true;
+                    break;
+                }
+            }
+
+            if !is_delivered {
+                remaining_reserved_unit_ids.push_back(reserved_id);
+            }
+        }
+
         request.status = if delivered_quantity == request.quantity_ml {
             RequestStatus::Fulfilled
         } else {
@@ -3683,7 +3765,11 @@ impl HealthChainContract {
         } else {
             None
         };
-        request.reserved_unit_ids = unit_ids.clone();
+        request.reserved_unit_ids = if request.status == RequestStatus::Fulfilled {
+            vec![&env]
+        } else {
+            remaining_reserved_unit_ids
+        };
 
         requests.set(request_id, request.clone());
         env.storage().persistent().set(&REQUESTS, &requests);
@@ -6710,6 +6796,70 @@ mod test {
         let unit2 = client.get_blood_unit(&unit_id_2);
         assert_eq!(unit2.status, BloodStatus::Delivered);
         assert!(unit2.delivery_timestamp.is_some());
+    }
+
+    #[test]
+    fn test_fulfill_request_partial_keeps_remaining_reserved_units() {
+        let env = Env::default();
+        let (contract_id, _, hospital, client) = setup_contract_with_hospital(&env);
+
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (7 * 86400);
+
+        let unit_id_1 = client.register_blood(
+            &bank,
+            &BloodType::APositive,
+            &BloodComponent::WholeBlood,
+            &250,
+            &expiration,
+            &Some(symbol_short!("donor1")),
+        );
+        let unit_id_2 = client.register_blood(
+            &bank,
+            &BloodType::APositive,
+            &BloodComponent::WholeBlood,
+            &250,
+            &expiration,
+            &Some(symbol_short!("donor2")),
+        );
+
+        client.allocate_blood(&bank, &unit_id_1, &hospital);
+        client.allocate_blood(&bank, &unit_id_2, &hospital);
+
+        let request_id = client.create_request(
+            &hospital,
+            &BloodType::APositive,
+            &500,
+            &UrgencyLevel::Urgent,
+            &(current_time + 3600),
+            &String::from_str(&env, "Ward C"),
+        );
+
+        let unit_ids = vec![&env, unit_id_1, unit_id_2];
+        env.mock_all_auths();
+        client.approve_request(&bank, &request_id, &unit_ids);
+
+        let partial_delivery = vec![&env, unit_id_1];
+        client.fulfill_request(&bank, &request_id, &partial_delivery);
+
+        let request: BloodRequest = env.as_contract(&contract_id, || {
+            let requests: Map<u64, BloodRequest> =
+                env.storage().persistent().get(&REQUESTS).unwrap();
+            requests.get(request_id).unwrap()
+        });
+
+        assert_eq!(request.status, RequestStatus::InProgress);
+        assert_eq!(request.fulfilled_quantity_ml, 250);
+        assert_eq!(request.reserved_unit_ids.len(), 1);
+        assert_eq!(request.reserved_unit_ids.get(0).unwrap(), unit_id_2);
+
+        let remaining_unit = client.get_blood_unit(&unit_id_2);
+        assert_eq!(remaining_unit.status, BloodStatus::Reserved);
+        assert_eq!(remaining_unit.recipient_hospital, Some(hospital.clone()));
     }
 
     #[test]
