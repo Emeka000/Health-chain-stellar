@@ -6,6 +6,7 @@ import {
   Patch,
   Post,
   Query,
+  Request,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
@@ -17,6 +18,8 @@ import {
 } from './dto/readiness.dto';
 import { ReadinessEntityType, ReadinessItemKey } from './enums/readiness.enum';
 import { ReadinessService } from './readiness.service';
+import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
+import { Permission } from '../auth/enums/permission.enum';
 
 @ApiTags('Readiness')
 @ApiBearerAuth()
@@ -24,8 +27,7 @@ import { ReadinessService } from './readiness.service';
 export class ReadinessController {
   constructor(private readonly service: ReadinessService) {}
 
-  @ApiOperation({ summary: 'Create a readiness checklist' })
-  @ApiResponse({ status: 201, description: 'Checklist created' })
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Post()
   create(@Body() dto: CreateChecklistDto) {
     return this.service.createChecklist(dto);
@@ -38,8 +40,7 @@ export class ReadinessController {
     return this.service.listChecklists(query);
   }
 
-  @ApiOperation({ summary: 'Update checklist item dependencies' })
-  @ApiResponse({ status: 201, description: 'Dependencies updated' })
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Post('dependencies')
   updateDependencies(
     @Body()
@@ -82,26 +83,26 @@ export class ReadinessController {
     return this.service.getChecklistByEntity(type, entityId);
   }
 
-  @ApiOperation({ summary: 'Update a checklist item' })
-  @ApiResponse({ status: 200, description: 'Item updated' })
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Patch(':id/items/:itemKey')
   updateItem(
     @Param('id') id: string,
     @Param('itemKey') itemKey: ReadinessItemKey,
     @Body() dto: UpdateReadinessItemDto,
-    @Query('userId') userId: string = 'system',
+    @Request() req: any,
   ) {
+    const userId = req.user.id;
     return this.service.updateItem(id, itemKey, userId, dto);
   }
 
-  @ApiOperation({ summary: 'Sign off on a readiness checklist' })
-  @ApiResponse({ status: 201, description: 'Sign-off recorded' })
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Post(':id/sign-off')
   signOff(
     @Param('id') id: string,
     @Body() dto: SignOffDto,
-    @Query('userId') userId: string = 'system',
+    @Request() req: any,
   ) {
+    const userId = req.user.id;
     return this.service.signOff(id, userId, dto);
   }
 
