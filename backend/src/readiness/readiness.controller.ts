@@ -6,6 +6,7 @@ import {
   Patch,
   Post,
   Query,
+  Request,
 } from '@nestjs/common';
 
 import {
@@ -16,11 +17,14 @@ import {
 } from './dto/readiness.dto';
 import { ReadinessEntityType, ReadinessItemKey } from './enums/readiness.enum';
 import { ReadinessService } from './readiness.service';
+import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
+import { Permission } from '../auth/enums/permission.enum';
 
 @Controller('api/v1/readiness')
 export class ReadinessController {
   constructor(private readonly service: ReadinessService) {}
 
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Post()
   create(@Body() dto: CreateChecklistDto) {
     return this.service.createChecklist(dto);
@@ -31,6 +35,7 @@ export class ReadinessController {
     return this.service.listChecklists(query);
   }
 
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Post('dependencies')
   updateDependencies(
     @Body()
@@ -65,23 +70,26 @@ export class ReadinessController {
     return this.service.getChecklistByEntity(type, entityId);
   }
 
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Patch(':id/items/:itemKey')
   updateItem(
     @Param('id') id: string,
     @Param('itemKey') itemKey: ReadinessItemKey,
     @Body() dto: UpdateReadinessItemDto,
-    // In production this comes from JWT; using header for simplicity
-    @Query('userId') userId: string = 'system',
+    @Request() req: any,
   ) {
+    const userId = req.user.id;
     return this.service.updateItem(id, itemKey, userId, dto);
   }
 
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Post(':id/sign-off')
   signOff(
     @Param('id') id: string,
     @Body() dto: SignOffDto,
-    @Query('userId') userId: string = 'system',
+    @Request() req: any,
   ) {
+    const userId = req.user.id;
     return this.service.signOff(id, userId, dto);
   }
 
