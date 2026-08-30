@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThan, In } from 'typeorm';
+import { Repository, LessThan, In, Not } from 'typeorm';
 
 import { RetentionPolicyEntity, DataCategory, RetentionAction } from './entities/retention-policy.entity';
 import { DataRedactionEntity, RedactionStatus, SensitiveFieldType } from './entities/data-redaction.entity';
@@ -286,7 +286,7 @@ export class SensitiveDataService {
             entitiesNeedingRedaction = await this.bloodUnitRepository.find({
               where: {
                 createdAt: LessThan(cutoffDate),
-                id: existingEntityIds.length > 0 ? { $nin: existingEntityIds } : undefined,
+                id: existingEntityIds.length > 0 ? Not(In(existingEntityIds)) : undefined,
               } as any,
               select: ['id'],
             });
@@ -296,7 +296,7 @@ export class SensitiveDataService {
             entitiesNeedingRedaction = await this.riderRepository.find({
               where: {
                 createdAt: LessThan(cutoffDate),
-                id: existingEntityIds.length > 0 ? { $nin: existingEntityIds } : undefined,
+                id: existingEntityIds.length > 0 ? Not(In(existingEntityIds)) : undefined,
               } as any,
               select: ['id'],
             });
@@ -306,7 +306,7 @@ export class SensitiveDataService {
             entitiesNeedingRedaction = await this.organizationRepository.find({
               where: {
                 createdAt: LessThan(cutoffDate),
-                id: existingEntityIds.length > 0 ? { $nin: existingEntityIds } : undefined,
+                id: existingEntityIds.length > 0 ? Not(In(existingEntityIds)) : undefined,
               } as any,
               select: ['id'],
             });
@@ -316,7 +316,7 @@ export class SensitiveDataService {
             entitiesNeedingRedaction = await this.locationHistoryRepository.find({
               where: {
                 createdAt: LessThan(cutoffDate),
-                id: existingEntityIds.length > 0 ? { $nin: existingEntityIds } : undefined,
+                id: existingEntityIds.length > 0 ? Not(In(existingEntityIds)) : undefined,
               } as any,
               select: ['id'],
             });
