@@ -290,7 +290,7 @@ fn property_custody_transfer_requires_authorized_current_custodian() {
     let withdraw_attempt = client(&fixture).try_withdraw_blood(
         &fixture.hospital,
         &unit_id,
-        &WithdrawalReason::Other,
+        &crate::WithdrawalReason::Other,
     );
     assert!(matches!(
         withdraw_attempt,

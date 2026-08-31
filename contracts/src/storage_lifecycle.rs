@@ -149,9 +149,11 @@ pub fn bump_persistent<K>(env: &Env, key: &K)
 where
     K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
 {
-    env.storage()
-        .persistent()
-        .extend_ttl(key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+    if env.storage().persistent().has(key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+    }
 }
 
 /// Bump TTL for all per-unit storage keys associated with `unit_id`.
@@ -230,9 +232,7 @@ pub fn bump_all_registries(env: &Env) {
         PAYMENT_STATS,
         MULTISIG_CONFIG,
     ] {
-        env.storage()
-            .persistent()
-            .extend_ttl(key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+        bump_persistent(env, key);
     }
 
     // Bump all StatusUnits variants — these are fixed and enumerable.

@@ -11,7 +11,7 @@ use crate::{
 };
 
 use soroban_sdk::{
-    symbol_short,
+    symbol_short, vec as soroban_vec,
     testutils::{Address as _, Events, Ledger},
     vec, Address, Bytes, Env, Map, String, Symbol, TryFromVal,
 };
@@ -578,7 +578,7 @@ fn no_refund_before_deadline() {
     let payment_id = client.create_payment(&1, &payer, &payee, &2_000, &asset, &default_fee_structure(&env), &admin);
     move_payment_to_disputed_ready_state(&env, &contract_id, payment_id);
 
-    client.raise_dispute(
+    let dispute_id = client.raise_dispute(
         &payment_id,
         &raiser,
         &String::from_str(&env, "waiting_case"),
@@ -800,7 +800,7 @@ fn non_disputed_payments_are_ignored() {
     assert_eq!(client.get_dispute_timeout(), DEFAULT_DISPUTE_TIMEOUT_SECS);
 
     let _payment_id = client.create_payment(&1, &payer, &payee, &1_500, &asset, &default_fee_structure(&env), &admin);
-    let dispute_ids = Vec::new(&env);
+    let dispute_ids = soroban_sdk::vec![&env];
     assert_eq!(client.process_expired_disputes(&dispute_ids), 0);
     assert_eq!(client.get_payment_stats(), PaymentStats::new());
 }
