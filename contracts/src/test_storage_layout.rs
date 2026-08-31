@@ -6,7 +6,9 @@
 
 #[test]
 fn test_initiate_transfer_populates_unit_custody_events_index() {
-    use crate::{BloodComponent, BloodType, DataKey, HealthChainContract, HealthChainContractClient};
+    use crate::{
+        BloodComponent, BloodType, DataKey, HealthChainContract, HealthChainContractClient,
+    };
     use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
 
     let env = Env::default();

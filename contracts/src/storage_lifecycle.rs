@@ -76,7 +76,7 @@ use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol, Vec};
 
 use crate::{
     BloodStatus, BloodUnit, CustodyEvent, CustodyStatus, DataKey, Error, StatusChangeEvent,
-    HISTORY, NEXT_ID, NEXT_REQUEST_ID, PAYMENT_STATS, MULTISIG_CONFIG,
+    HISTORY, MULTISIG_CONFIG, NEXT_ID, NEXT_REQUEST_ID, PAYMENT_STATS,
 };
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -197,9 +197,11 @@ pub fn bump_rent_for_unit(env: &Env, unit_id: u64, unit: Option<&BloodUnit>) {
         // DonorUnits global cross-bank index (sentinel = current contract address).
         let sentinel = env.current_contract_address();
         let global_donor_key = DataKey::DonorUnits(sentinel, u.donor_id.clone());
-        env.storage()
-            .persistent()
-            .extend_ttl(&global_donor_key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+        env.storage().persistent().extend_ttl(
+            &global_donor_key,
+            MIN_TTL_LEDGERS,
+            EXTENDED_TTL_LEDGERS,
+        );
 
         // HospitalUnits index — only present after allocation.
         if let Some(ref hospital) = u.recipient_hospital {
@@ -226,12 +228,7 @@ pub fn bump_rent_for_unit(env: &Env, unit_id: u64, unit: Option<&BloodUnit>) {
 /// HospitalUnits, StatusUnits) keys.
 pub fn bump_all_registries(env: &Env) {
     // Bump shared singleton/config keys (counters, stats, multisig config).
-    for key in &[
-        NEXT_ID,
-        NEXT_REQUEST_ID,
-        PAYMENT_STATS,
-        MULTISIG_CONFIG,
-    ] {
+    for key in &[NEXT_ID, NEXT_REQUEST_ID, PAYMENT_STATS, MULTISIG_CONFIG] {
         bump_persistent(env, key);
     }
 
@@ -250,7 +247,6 @@ pub fn bump_all_registries(env: &Env) {
             .persistent()
             .extend_ttl(&key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
     }
-
 }
 
 // ── Archival helpers ───────────────────────────────────────────────────────────
@@ -403,7 +399,11 @@ pub fn archive_custody_events(env: &Env, unit_id: u64) -> Result<bool, Error> {
     for i in 0..event_ids.len() {
         let event_id = event_ids.get(i).unwrap();
         let record_key = DataKey::CustodyRecord(event_id.clone());
-        if let Some(event) = env.storage().persistent().get::<DataKey, CustodyEvent>(&record_key) {
+        if let Some(event) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, CustodyEvent>(&record_key)
+        {
             match event.status {
                 CustodyStatus::Confirmed => confirmed += 1,
                 CustodyStatus::Cancelled => cancelled += 1,
