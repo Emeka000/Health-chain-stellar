@@ -135,10 +135,8 @@ export class OrderNotificationListener {
     );
 
     try {
-      // Send notification - would need to fetch order details to get hospitalId
-      // For now, we'll use a generic approach
       await this.notificationsService.send({
-        recipientId: event.orderId, // This should be resolved to hospitalId in production
+        recipientId: event.hospitalId,
         channels: [NotificationChannel.SMS, NotificationChannel.IN_APP],
         templateKey: 'order.delivered',
         variables: {
