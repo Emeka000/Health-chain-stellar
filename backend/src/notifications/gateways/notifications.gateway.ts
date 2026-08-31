@@ -1,4 +1,6 @@
 import { Logger } from '@nestjs/common';
+import { OnEvent } from '@nestjs/event-emitter';
+import { JwtService } from '@nestjs/jwt';
 import {
   WebSocketGateway,
   WebSocketServer,
@@ -7,14 +9,24 @@ import {
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
 
-import { OnEvent } from '@nestjs/event-emitter';
 import { Server, Socket } from 'socket.io';
+
+interface OrderStatusPayload {
+  orderId: string;
+  newStatus: string;
+}
+
+interface BloodRequestStatusPayload {
+  requestId: string;
+  newStatus: string;
+}
 
 @WebSocketGateway({
   namespace: '/notifications',
   cors: {
-    origin: '*',
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
     methods: ['GET', 'POST'],
+    credentials: true,
   },
 })
 export class NotificationsGateway
@@ -25,19 +37,67 @@ export class NotificationsGateway
 
   private readonly logger = new Logger(NotificationsGateway.name);
 
-  afterInit(_server: Server): void {
+  constructor(private readonly jwtService: JwtService) {}
+
+  afterInit(): void {
     this.logger.log('NotificationsGateway WebSocket server initialized');
   }
 
-  handleConnection(client: Socket): void {
-    const recipientId = client.handshake.query.recipientId as string;
-    if (recipientId) {
-      client.join(`recipient_${recipientId}`);
+  async handleConnection(client: Socket): Promise<void> {
+    const rawAuthToken = client.handshake.auth?.token as unknown;
+    const rawQueryToken = client.handshake.query?.token as unknown;
+    const rawHeader = client.handshake.headers?.authorization as unknown;
+
+    const token: string | undefined =
+      typeof rawAuthToken === 'string'
+        ? rawAuthToken
+        : typeof rawQueryToken === 'string'
+          ? rawQueryToken
+          : typeof rawHeader === 'string' && rawHeader.startsWith('Bearer ')
+            ? rawHeader.substring(7)
+            : undefined;
+
+    if (!token) {
+      this.logger.warn(
+        `Notifications WS rejected: no token (socket=${client.id})`,
+      );
+      client.emit('error', { reason: 'Authentication token required' });
+      client.disconnect(true);
+      return;
+    }
+
+    try {
+      const payload: Record<string, unknown> =
+        await this.jwtService.verifyAsync<Record<string, unknown>>(token);
+      const sub = typeof payload.sub === 'string' ? payload.sub : undefined;
+      const userId =
+        typeof payload.userId === 'string' ? payload.userId : undefined;
+      const recipientId = sub ?? userId;
+
+      if (!recipientId) {
+        this.logger.warn(
+          `Notifications WS rejected: missing recipientId claim in token (socket=${client.id})`,
+        );
+        client.emit('error', { reason: 'Invalid token payload' });
+        client.disconnect(true);
+        return;
+      }
+
+      await client.join(`recipient_${recipientId}`);
+      client.emit('connected', {
+        message: 'Authenticated',
+        recipientId,
+        timestamp: new Date().toISOString(),
+      });
       this.logger.log(
         `Client ${client.id} connected and joined room recipient_${recipientId}`,
       );
-    } else {
-      this.logger.log(`Client ${client.id} connected without recipientId`);
+    } catch (error) {
+      this.logger.warn(
+        `Notifications WS rejected: invalid token (socket=${client.id}): ${(error as Error).message}`,
+      );
+      client.emit('error', { reason: 'Invalid or expired token' });
+      client.disconnect(true);
     }
   }
 
@@ -49,13 +109,15 @@ export class NotificationsGateway
    * Listen to Order status updates and notify recipient.
    */
   @OnEvent('order.status.updated')
-  handleOrderStatusUpdated(payload: any) {
-    this.logger.log(`WS Notification [Order]: ${payload.orderId} -> ${payload.newStatus}`);
+  handleOrderStatusUpdated(payload: OrderStatusPayload): void {
+    const orderId = payload.orderId;
+    const newStatus = payload.newStatus;
+    this.logger.log(`WS Notification [Order]: ${orderId} -> ${newStatus}`);
     this.server.emit('blood-request.status-changed', {
-       type: 'ORDER',
-       id: payload.orderId,
-       newStatus: payload.newStatus,
-       timestamp: new Date()
+      type: 'ORDER',
+      id: orderId,
+      newStatus,
+      timestamp: new Date(),
     });
   }
 
@@ -63,21 +125,24 @@ export class NotificationsGateway
    * Listen to BloodRequest status updates and notify recipient.
    */
   @OnEvent('blood-request.status.updated')
-  handleBloodRequestStatusUpdated(payload: any) {
-    this.logger.log(`WS Notification [BloodRequest]: ${payload.requestId} -> ${payload.newStatus}`);
+  handleBloodRequestStatusUpdated(payload: BloodRequestStatusPayload): void {
+    const requestId = payload.requestId;
+    const newStatus = payload.newStatus;
+    this.logger.log(
+      `WS Notification [BloodRequest]: ${requestId} -> ${newStatus}`,
+    );
     this.server.emit('blood-request.status-changed', {
-       type: 'BLOOD_REQUEST',
-       id: payload.requestId,
-       newStatus: payload.newStatus,
-       timestamp: new Date()
+      type: 'BLOOD_REQUEST',
+      id: requestId,
+      newStatus,
+      timestamp: new Date(),
     });
   }
 
-  emitToRecipient(recipientId: string, payload: any): void {
+  emitToRecipient(recipientId: string, payload: Record<string, unknown>): void {
     this.server
       .to(`recipient_${recipientId}`)
       .emit('notification.new', payload);
     this.logger.log(`Emitted notification.new to recipient_${recipientId}`);
   }
 }
-
