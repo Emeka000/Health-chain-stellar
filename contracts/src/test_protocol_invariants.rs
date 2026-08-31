@@ -88,54 +88,35 @@ fn stored_unit(fixture: &ProtocolFixture, unit_id: u64) -> BloodUnit {
 
 fn stored_request(fixture: &ProtocolFixture, request_id: u64) -> BloodRequest {
     fixture.env.as_contract(&fixture.contract_id, || {
-        let requests: Map<u64, BloodRequest> =
-            fixture.env.storage().persistent().get(&REQUESTS).unwrap();
-        requests.get(request_id).unwrap()
+        fixture.env.storage().persistent().get::<crate::DataKey, crate::BloodRequest>(&crate::DataKey::Request(request_id)).unwrap()
     })
 }
 
 fn force_unit_quantity(fixture: &ProtocolFixture, unit_id: u64, quantity: u32) {
     fixture.env.as_contract(&fixture.contract_id, || {
-        let mut units: Map<u64, BloodUnit> = fixture
-            .env
-            .storage()
-            .persistent()
-            .get(&BLOOD_UNITS)
-            .unwrap();
-        let mut unit = units.get(unit_id).unwrap();
+        let mut unit = fixture.env.storage().persistent().get::<crate::DataKey, crate::BloodUnit>(&crate::DataKey::Unit(unit_id)).unwrap();
         unit.quantity = quantity;
-        units.set(unit_id, unit);
-        fixture.env.storage().persistent().set(&BLOOD_UNITS, &units);
+        fixture.env.storage().persistent().set(&crate::DataKey::Unit(unit_id), &unit);
     });
 }
 
 fn escrow_payment(fixture: &ProtocolFixture, payment_id: u64, approver: &Address) {
     fixture.env.as_contract(&fixture.contract_id, || {
-        let mut payments: Map<u64, Payment> =
-            fixture.env.storage().persistent().get(&PAYMENTS).unwrap();
-        let mut payment = payments.get(payment_id).unwrap();
+        let mut payment = fixture.env.storage().persistent().get::<crate::DataKey, crate::payments::Payment>(&crate::DataKey::Payment(payment_id)).unwrap();
         payment.status = PaymentStatus::Escrowed;
-        payments.set(payment_id, payment);
-        fixture.env.storage().persistent().set(&PAYMENTS, &payments);
+        fixture.env.storage().persistent().set(&crate::DataKey::Payment(payment_id), &payment);
 
-        let mut escrows: Map<u64, EscrowAccount> = fixture
-            .env
-            .storage()
-            .persistent()
-            .get(&ESCROW_ACCOUNTS)
-            .unwrap();
-        let mut escrow = escrows.get(payment_id).unwrap();
+        let mut escrow = fixture.env.storage().persistent().get::<crate::DataKey, crate::payments::EscrowAccount>(&crate::DataKey::EscrowAccount(payment_id)).unwrap();
         escrow.release_conditions = ReleaseConditions {
             medical_records_verified: true,
             min_timestamp: 0,
             authorized_approver: Some(approver.clone()),
         };
-        escrows.set(payment_id, escrow);
+        fixture.env.storage().persistent().set(&crate::DataKey::EscrowAccount(payment_id), &escrow);
         fixture
             .env
             .storage()
             .persistent()
-            .set(&ESCROW_ACCOUNTS, &escrows);
     });
 }
 
@@ -349,9 +330,8 @@ fn property_completed_payments_are_terminal_and_cannot_reenter_escrow() {
     ));
 
     fixture.env.as_contract(&fixture.contract_id, || {
-        let payments: Map<u64, Payment> =
-            fixture.env.storage().persistent().get(&PAYMENTS).unwrap();
-        let payment = payments.get(payment_id).unwrap();
+        
+        let payment = fixture.env.storage().persistent().get::<crate::DataKey, crate::payments::Payment>(&crate::DataKey::Payment(payment_id)).unwrap();
         assert_eq!(payment.status, PaymentStatus::Completed);
         assert!(payment.is_terminal());
         assert!(!payment.can_transition_to(PaymentStatus::Escrowed));
