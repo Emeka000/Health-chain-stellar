@@ -10,7 +10,7 @@
 
 use soroban_sdk::{symbol_short, vec, Address, Env, Map, Symbol, Vec};
 
-use crate::{BloodStatus, BloodUnit, DataKey, Error, BLOOD_UNITS};
+use crate::{BloodStatus, BloodUnit, DataKey, Error};
 
 // ── READ ──────────────────────────────────────────────────────────────────────
 
@@ -18,13 +18,8 @@ use crate::{BloodStatus, BloodUnit, DataKey, Error, BLOOD_UNITS};
 ///
 /// Returns `Err(Error::UnitNotFound)` when the ID does not exist in storage.
 pub fn get_unit(env: &Env, unit_id: u64) -> Result<BloodUnit, Error> {
-    let units: Map<u64, BloodUnit> = env
-        .storage()
-        .persistent()
-        .get(&BLOOD_UNITS)
-        .unwrap_or(Map::new(env));
 
-    units.get(unit_id).ok_or(Error::UnitNotFound)
+    env.storage().persistent().get(&DataKey::Unit(unit_id)).ok_or(Error::UnitNotFound)
 }
 
 /// Return all blood units registered by a specific blood bank.
@@ -38,15 +33,10 @@ pub fn get_units_by_bank(env: &Env, bank_id: Address) -> Vec<BloodUnit> {
         .get(&key)
         .unwrap_or(Vec::new(env));
 
-    let units: Map<u64, BloodUnit> = env
-        .storage()
-        .persistent()
-        .get(&BLOOD_UNITS)
-        .unwrap_or(Map::new(env));
 
     let mut result = vec![env];
     for id in ids.iter() {
-        if let Some(unit) = units.get(id) {
+        if let Some(unit) = env.storage().persistent().get::<DataKey, BloodUnit>(&DataKey::Unit(id)) {
             result.push_back(unit);
         }
     }
@@ -77,15 +67,10 @@ pub fn get_units_by_donor(env: &Env, donor_id: Symbol) -> Vec<BloodUnit> {
         .get(&key)
         .unwrap_or(Vec::new(env));
 
-    let units: Map<u64, BloodUnit> = env
-        .storage()
-        .persistent()
-        .get(&BLOOD_UNITS)
-        .unwrap_or(Map::new(env));
 
     let mut result = vec![env];
     for id in ids.iter() {
-        if let Some(unit) = units.get(id) {
+        if let Some(unit) = env.storage().persistent().get::<DataKey, BloodUnit>(&DataKey::Unit(id)) {
             if unit.donor_id == symbol_short!("ANON") && donor_id != symbol_short!("ANON") {
                 continue;
             }
