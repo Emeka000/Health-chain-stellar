@@ -242,6 +242,13 @@ fn get_admin(env: &Env) -> Result<Address, CoordinatorError> {
         .ok_or(CoordinatorError::NotInitialized)
 }
 
+fn get_contract_address(env: &Env, key: &DataKey) -> Result<Address, CoordinatorError> {
+    env.storage()
+        .instance()
+        .get(key)
+        .ok_or(CoordinatorError::NotInitialized)
+}
+
 fn is_terminal(status: WorkflowStatus) -> bool {
     matches!(status, WorkflowStatus::Settled | WorkflowStatus::RolledBack)
 }
@@ -493,11 +500,7 @@ impl CoordinatorContract {
         }
 
         // Verify request is Pending
-        let req_addr: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::RequestContract)
-            .unwrap();
+        let req_addr: Address = get_contract_address(&env, &DataKey::RequestContract)?;
         let req_client = RequestContractClient::new(&env, &req_addr);
         let request = req_client
             .try_get_request(&request_id)
@@ -514,11 +517,7 @@ impl CoordinatorContract {
         }
 
         // Verify payment is actually escrowed for this request
-        let pay_addr: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::PaymentContract)
-            .unwrap();
+        let pay_addr: Address = get_contract_address(&env, &DataKey::PaymentContract)?;
         let pay_client = PaymentContractClient::new(&env, &pay_addr);
         let payment = pay_client
             .try_get_payment(&payment_id)
@@ -529,11 +528,7 @@ impl CoordinatorContract {
         }
 
         // Reserve each inventory unit
-        let inv_addr: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::InventoryContract)
-            .unwrap();
+        let inv_addr: Address = get_contract_address(&env, &DataKey::InventoryContract)?;
         let inv_client = InventoryContractClient::new(&env, &inv_addr);
         let inv_admin = inv_client.get_admin();
 
@@ -605,11 +600,7 @@ impl CoordinatorContract {
             return Err(CoordinatorError::InvalidWorkflowState);
         }
 
-        let inv_addr: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::InventoryContract)
-            .unwrap();
+        let inv_addr: Address = get_contract_address(&env, &DataKey::InventoryContract)?;
         let inv_client = InventoryContractClient::new(&env, &inv_addr);
         let inv_admin = inv_client.get_admin();
 
@@ -658,11 +649,7 @@ impl CoordinatorContract {
             return Err(CoordinatorError::DeliveryNotConfirmed);
         }
 
-        let pay_addr: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::PaymentContract)
-            .unwrap();
+        let pay_addr: Address = get_contract_address(&env, &DataKey::PaymentContract)?;
         let pay_client = PaymentContractClient::new(&env, &pay_addr);
 
         let payment = pay_client
@@ -716,11 +703,7 @@ impl CoordinatorContract {
             return Err(CoordinatorError::InvalidWorkflowState);
         }
 
-        let inv_addr: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::InventoryContract)
-            .unwrap();
+        let inv_addr: Address = get_contract_address(&env, &DataKey::InventoryContract)?;
         let inv_client = InventoryContractClient::new(&env, &inv_addr);
         let inv_admin = inv_client.get_admin();
 
@@ -732,11 +715,7 @@ impl CoordinatorContract {
                 .map_err(|_| CoordinatorError::InventoryUpdateFailed)?;
         }
 
-        let pay_addr: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::PaymentContract)
-            .unwrap();
+        let pay_addr: Address = get_contract_address(&env, &DataKey::PaymentContract)?;
         let pay_client = PaymentContractClient::new(&env, &pay_addr);
         let payment = pay_client
             .try_get_payment(&wf.payment_id)
@@ -790,11 +769,7 @@ impl CoordinatorContract {
         // Reuse the existing rollback logic to release units and refund payment.
         // We call `get_admin` only to satisfy the inventory client's admin
         // parameter — the coordinator itself is authorised to update inventory.
-        let inv_addr: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::InventoryContract)
-            .unwrap();
+        let inv_addr: Address = get_contract_address(&env, &DataKey::InventoryContract)?;
         let inv_client = InventoryContractClient::new(&env, &inv_addr);
         let inv_admin = inv_client.get_admin();
 
@@ -806,11 +781,7 @@ impl CoordinatorContract {
                 .map_err(|_| CoordinatorError::InventoryUpdateFailed)?;
         }
 
-        let pay_addr: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::PaymentContract)
-            .unwrap();
+        let pay_addr: Address = get_contract_address(&env, &DataKey::PaymentContract)?;
         let pay_client = PaymentContractClient::new(&env, &pay_addr);
         let payment = pay_client
             .try_get_payment(&wf.payment_id)
@@ -858,11 +829,7 @@ impl CoordinatorContract {
         Self::require_not_paused(&env)?;
         Self::require_oracle(&env, &caller)?;
 
-        let pay_addr: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::PaymentContract)
-            .unwrap();
+        let pay_addr: Address = get_contract_address(&env, &DataKey::PaymentContract)?;
         let pay_client = PaymentContractClient::new(&env, &pay_addr);
 
         let payment = pay_client
