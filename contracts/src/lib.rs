@@ -4395,7 +4395,12 @@ impl HealthChainContract {
         Ok(())
     }
 
-    /// Add a blood unit to inventory (legacy function for testing)
+    /// Add a blood unit to inventory (legacy function for testing).
+    ///
+    /// Test-only: this entrypoint has no auth check and no validation, so it
+    /// must never be compiled into a deployed contract. Real unit creation
+    /// goes through `registry_write::register_unit`.
+    #[cfg(test)]
     pub fn add_blood_unit(
         env: Env,
         blood_type: BloodType,
