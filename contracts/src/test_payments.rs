@@ -13,7 +13,7 @@ use crate::{
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger},
-    vec, Address, Bytes, Env, Map, String, Symbol, TryFromVal,
+    vec as soroban_vec, vec, Address, Bytes, Env, Map, String, Symbol, TryFromVal,
 };
 
 fn default_fee_structure(env: &Env) -> FeeStructure {
@@ -474,7 +474,9 @@ fn transaction_metadata_is_valid() {
     assert_eq!(metadata.tags.len(), 1);
 }
 
-fn setup_dispute_contract(env: &Env) -> (soroban_sdk::Address, HealthChainContractClient<'_>, Address) {
+fn setup_dispute_contract(
+    env: &Env,
+) -> (soroban_sdk::Address, HealthChainContractClient<'_>, Address) {
     env.mock_all_auths();
     let contract_id = env.register(HealthChainContract, ());
     let client = HealthChainContractClient::new(env, &contract_id);
@@ -485,11 +487,15 @@ fn setup_dispute_contract(env: &Env) -> (soroban_sdk::Address, HealthChainContra
 
 fn move_payment_to_disputed_ready_state(env: &Env, contract_id: &Address, payment_id: u64) {
     env.as_contract(contract_id, || {
-        let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
-        let mut payment = payments.get(payment_id).unwrap();
+        let mut payment = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::Payment>(&crate::DataKey::Payment(payment_id))
+            .unwrap();
         payment.status = PaymentStatus::Escrowed;
-        payments.set(payment_id, payment);
-        env.storage().persistent().set(&PAYMENTS, &payments);
+        env.storage()
+            .persistent()
+            .set(&crate::DataKey::Payment(payment_id), &payment);
     });
 }
 
@@ -503,7 +509,15 @@ fn auto_refund_after_timeout() {
     let raiser = Address::generate(&env);
 
     client.set_dispute_timeout(&10);
-    let payment_id = client.create_payment(&1, &payer, &payee, &5_000, &asset, &default_fee_structure(&env), &admin);
+    let payment_id = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &5_000,
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
     move_payment_to_disputed_ready_state(&env, &contract_id, payment_id);
 
     let dispute_id = client.raise_dispute(
@@ -552,17 +566,27 @@ fn auto_refund_after_timeout() {
     assert_eq!(event.amount, 5_000);
 
     env.as_contract(&contract_id, || {
-        let payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
-        let payment = payments.get(payment_id).unwrap();
+        let payment = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::Payment>(&crate::DataKey::Payment(payment_id))
+            .unwrap();
         assert_eq!(payment.status, PaymentStatus::Refunded);
 
-        let disputes: Map<u64, Dispute> = env.storage().persistent().get(&DISPUTES).unwrap();
-        let dispute = disputes.get(dispute_id).unwrap();
+        let dispute = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::Dispute>(&crate::DataKey::Dispute(dispute_id))
+            .unwrap();
         assert_eq!(dispute.status, DisputeStatus::ResolvedInFavorOfPayer);
 
-        let metadata: Map<u64, DisputeMetadata> =
-            env.storage().persistent().get(&DISPUTE_METADATA).unwrap();
-        let dispute_metadata = metadata.get(dispute_id).unwrap();
+        let dispute_metadata = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::DisputeMetadata>(
+                &crate::DataKey::DisputeMetadata(dispute_id),
+            )
+            .unwrap();
         assert!(dispute_metadata.dispute_deadline > dispute.raised_at);
 
         let stats: PaymentStats = env.storage().persistent().get(&PAYMENT_STATS).unwrap();
@@ -581,10 +605,18 @@ fn no_refund_before_deadline() {
     let raiser = Address::generate(&env);
 
     client.set_dispute_timeout(&10);
-    let payment_id = client.create_payment(&1, &payer, &payee, &2_000, &asset, &default_fee_structure(&env), &admin);
+    let payment_id = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &2_000,
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
     move_payment_to_disputed_ready_state(&env, &contract_id, payment_id);
 
-    client.raise_dispute(
+    let dispute_id = client.raise_dispute(
         &payment_id,
         &raiser,
         &String::from_str(&env, "waiting_case"),
@@ -659,18 +691,22 @@ fn satisfy_escrow_conditions(
     approver: &Address,
 ) {
     env.as_contract(contract_id, || {
-        let mut escrow_accounts: Map<u64, EscrowAccount> =
-            env.storage().persistent().get(&ESCROW_ACCOUNTS).unwrap();
-        let mut escrow = escrow_accounts.get(payment_id).unwrap();
+        let mut escrow = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::EscrowAccount>(&crate::DataKey::EscrowAccount(
+                payment_id,
+            ))
+            .unwrap();
         escrow.release_conditions = ReleaseConditions {
             medical_records_verified: true,
             min_timestamp: 0,
             authorized_approver: Some(approver.clone()),
         };
-        escrow_accounts.set(payment_id, escrow);
         env.storage()
             .persistent()
-            .set(&ESCROW_ACCOUNTS, &escrow_accounts);
+            .set(&crate::DataKey::EscrowAccount(payment_id), &escrow);
+        env.storage().persistent()
     });
 }
 
@@ -688,14 +724,26 @@ fn low_value_release_keeps_single_admin_flow() {
     let asset = Address::generate(&env);
 
     client.initialize(&admin);
-    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset, &default_fee_structure(&env), &admin);
+    let payment_id = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &(HIGH_VALUE_THRESHOLD - 1),
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
 
     env.as_contract(&contract_id, || {
-        let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
-        let mut payment = payments.get(payment_id).unwrap();
+        let mut payment = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::Payment>(&crate::DataKey::Payment(payment_id))
+            .unwrap();
         payment.status = PaymentStatus::Escrowed;
-        payments.set(payment_id, payment);
-        env.storage().persistent().set(&PAYMENTS, &payments);
+        env.storage()
+            .persistent()
+            .set(&crate::DataKey::Payment(payment_id), &payment);
     });
 
     // Satisfy escrow conditions before proposing release.
@@ -704,8 +752,11 @@ fn low_value_release_keeps_single_admin_flow() {
     assert!(client.propose_release(&payment_id, &admin));
 
     env.as_contract(&contract_id, || {
-        let payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
-        let payment = payments.get(payment_id).unwrap();
+        let payment = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::Payment>(&crate::DataKey::Payment(payment_id))
+            .unwrap();
         assert_eq!(payment.status, PaymentStatus::Completed);
         assert!(payment.escrow_released_at.is_some());
     });
@@ -721,7 +772,15 @@ fn manual_resolution_prevents_refund() {
     let raiser = Address::generate(&env);
 
     client.set_dispute_timeout(&10);
-    let payment_id = client.create_payment(&1, &payer, &payee, &3_000, &asset, &default_fee_structure(&env), &admin);
+    let payment_id = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &3_000,
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
     move_payment_to_disputed_ready_state(&env, &contract_id, payment_id);
 
     let dispute_id = client.raise_dispute(
@@ -759,14 +818,26 @@ fn high_value_release_requires_threshold_votes_and_prevents_duplicates() {
 
     client.initialize(&admin);
     client.configure_multisig(&vec![&env, signer_one.clone(), signer_two.clone()], &2);
-    let payment_id = client.create_payment(&1, &payer, &payee, &HIGH_VALUE_THRESHOLD, &asset, &default_fee_structure(&env), &admin);
+    let payment_id = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &HIGH_VALUE_THRESHOLD,
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
 
     env.as_contract(&contract_id, || {
-        let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
-        let mut payment = payments.get(payment_id).unwrap();
+        let mut payment = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::Payment>(&crate::DataKey::Payment(payment_id))
+            .unwrap();
         payment.status = PaymentStatus::Escrowed;
-        payments.set(payment_id, payment);
-        env.storage().persistent().set(&PAYMENTS, &payments);
+        env.storage()
+            .persistent()
+            .set(&crate::DataKey::Payment(payment_id), &payment);
     });
 
     // Satisfy escrow conditions for both signers before voting.
@@ -774,9 +845,13 @@ fn high_value_release_requires_threshold_votes_and_prevents_duplicates() {
     assert!(!client.propose_release(&payment_id, &signer_one));
 
     env.as_contract(&contract_id, || {
-        let approvals: Map<u64, PendingApproval> =
-            env.storage().persistent().get(&PENDING_APPROVALS).unwrap();
-        let approval = approvals.get(payment_id).unwrap();
+        let approval = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::PendingApproval>(
+                &crate::DataKey::PendingApprovalRecord(payment_id),
+            )
+            .unwrap();
         assert_eq!(approval.approvals.len(), 1);
         assert!(!approval.executed);
     });
@@ -789,8 +864,11 @@ fn high_value_release_requires_threshold_votes_and_prevents_duplicates() {
     assert!(client.propose_release(&payment_id, &signer_two));
 
     env.as_contract(&contract_id, || {
-        let payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
-        let payment = payments.get(payment_id).unwrap();
+        let payment = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::Payment>(&crate::DataKey::Payment(payment_id))
+            .unwrap();
         assert_eq!(payment.status, PaymentStatus::Completed);
 
         let stats: PaymentStats = env
@@ -800,9 +878,13 @@ fn high_value_release_requires_threshold_votes_and_prevents_duplicates() {
             .unwrap_or(PaymentStats::new());
         assert_eq!(stats.count_auto_refunded, 0);
         assert_eq!(stats.total_auto_refunded, 0);
-        let approvals: Map<u64, PendingApproval> =
-            env.storage().persistent().get(&PENDING_APPROVALS).unwrap();
-        let approval = approvals.get(payment_id).unwrap();
+        let approval = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::PendingApproval>(
+                &crate::DataKey::PendingApprovalRecord(payment_id),
+            )
+            .unwrap();
         assert!(approval.executed);
         assert_eq!(approval.approvals.len(), 2);
     });
@@ -818,8 +900,16 @@ fn non_disputed_payments_are_ignored() {
 
     assert_eq!(client.get_dispute_timeout(), DEFAULT_DISPUTE_TIMEOUT_SECS);
 
-    let _payment_id = client.create_payment(&1, &payer, &payee, &1_500, &asset, &default_fee_structure(&env), &admin);
-    let dispute_ids = Vec::new(&env);
+    let _payment_id = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &1_500,
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
+    let dispute_ids = soroban_sdk::vec![&env];
     assert_eq!(client.process_expired_disputes(&dispute_ids), 0);
     assert_eq!(client.get_payment_stats(), PaymentStats::new());
 }
@@ -837,14 +927,26 @@ fn escrow_conditions_block_release_when_unmet() {
     let asset = Address::generate(&env);
 
     client.initialize(&admin);
-    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset, &default_fee_structure(&env), &admin);
+    let payment_id = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &(HIGH_VALUE_THRESHOLD - 1),
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
 
     env.as_contract(&contract_id, || {
-        let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
-        let mut payment = payments.get(payment_id).unwrap();
+        let mut payment = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::Payment>(&crate::DataKey::Payment(payment_id))
+            .unwrap();
         payment.status = PaymentStatus::Escrowed;
-        payments.set(payment_id, payment);
-        env.storage().persistent().set(&PAYMENTS, &payments);
+        env.storage()
+            .persistent()
+            .set(&crate::DataKey::Payment(payment_id), &payment);
     });
 
     // Default conditions: medical_records_verified=false — release must be blocked.
@@ -868,28 +970,44 @@ fn escrow_conditions_block_release_before_min_timestamp() {
     let asset = Address::generate(&env);
 
     client.initialize(&admin);
-    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset, &default_fee_structure(&env), &admin);
+    let payment_id = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &(HIGH_VALUE_THRESHOLD - 1),
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
 
     env.as_contract(&contract_id, || {
-        let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
-        let mut payment = payments.get(payment_id).unwrap();
+        let mut payment = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::Payment>(&crate::DataKey::Payment(payment_id))
+            .unwrap();
         payment.status = PaymentStatus::Escrowed;
-        payments.set(payment_id, payment);
-        env.storage().persistent().set(&PAYMENTS, &payments);
+        env.storage()
+            .persistent()
+            .set(&crate::DataKey::Payment(payment_id), &payment);
 
         // Set conditions: verified but min_timestamp in the future.
-        let mut escrow_accounts: Map<u64, EscrowAccount> =
-            env.storage().persistent().get(&ESCROW_ACCOUNTS).unwrap();
-        let mut escrow = escrow_accounts.get(payment_id).unwrap();
+        let mut escrow = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::EscrowAccount>(&crate::DataKey::EscrowAccount(
+                payment_id,
+            ))
+            .unwrap();
         escrow.release_conditions = ReleaseConditions {
             medical_records_verified: true,
             min_timestamp: 9_999_999,
             authorized_approver: Some(admin.clone()),
         };
-        escrow_accounts.set(payment_id, escrow);
         env.storage()
             .persistent()
-            .set(&ESCROW_ACCOUNTS, &escrow_accounts);
+            .set(&crate::DataKey::EscrowAccount(payment_id), &escrow);
+        env.storage().persistent()
     });
 
     // Ledger timestamp is 0 < 9_999_999 — must be blocked.
@@ -911,28 +1029,44 @@ fn escrow_conditions_block_release_wrong_approver() {
     let asset = Address::generate(&env);
 
     client.initialize(&admin);
-    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset, &default_fee_structure(&env), &admin);
+    let payment_id = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &(HIGH_VALUE_THRESHOLD - 1),
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
 
     env.as_contract(&contract_id, || {
-        let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
-        let mut payment = payments.get(payment_id).unwrap();
+        let mut payment = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::Payment>(&crate::DataKey::Payment(payment_id))
+            .unwrap();
         payment.status = PaymentStatus::Escrowed;
-        payments.set(payment_id, payment);
-        env.storage().persistent().set(&PAYMENTS, &payments);
+        env.storage()
+            .persistent()
+            .set(&crate::DataKey::Payment(payment_id), &payment);
 
         // Conditions require `other` as approver, but admin will call.
-        let mut escrow_accounts: Map<u64, EscrowAccount> =
-            env.storage().persistent().get(&ESCROW_ACCOUNTS).unwrap();
-        let mut escrow = escrow_accounts.get(payment_id).unwrap();
+        let mut escrow = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::EscrowAccount>(&crate::DataKey::EscrowAccount(
+                payment_id,
+            ))
+            .unwrap();
         escrow.release_conditions = ReleaseConditions {
             medical_records_verified: true,
             min_timestamp: 0,
             authorized_approver: Some(other.clone()),
         };
-        escrow_accounts.set(payment_id, escrow);
         env.storage()
             .persistent()
-            .set(&ESCROW_ACCOUNTS, &escrow_accounts);
+            .set(&crate::DataKey::EscrowAccount(payment_id), &escrow);
+        env.storage().persistent()
     });
 
     let result = client.try_propose_release(&payment_id, &admin);
@@ -955,14 +1089,26 @@ fn escrow_conditions_allow_release_when_all_met() {
     let asset = Address::generate(&env);
 
     client.initialize(&admin);
-    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset, &default_fee_structure(&env), &admin);
+    let payment_id = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &(HIGH_VALUE_THRESHOLD - 1),
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
 
     env.as_contract(&contract_id, || {
-        let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
-        let mut payment = payments.get(payment_id).unwrap();
+        let mut payment = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::Payment>(&crate::DataKey::Payment(payment_id))
+            .unwrap();
         payment.status = PaymentStatus::Escrowed;
-        payments.set(payment_id, payment);
-        env.storage().persistent().set(&PAYMENTS, &payments);
+        env.storage()
+            .persistent()
+            .set(&crate::DataKey::Payment(payment_id), &payment);
     });
 
     satisfy_escrow_conditions(&env, &contract_id, payment_id, &admin);
@@ -970,9 +1116,14 @@ fn escrow_conditions_allow_release_when_all_met() {
     assert!(client.propose_release(&payment_id, &admin));
 
     env.as_contract(&contract_id, || {
-        let payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
         assert_eq!(
-            payments.get(payment_id).unwrap().status,
+            env.storage()
+                .persistent()
+                .get::<crate::DataKey, crate::payments::Payment>(&crate::DataKey::Payment(
+                    payment_id
+                ))
+                .unwrap()
+                .status,
             PaymentStatus::Completed
         );
     });
@@ -991,12 +1142,24 @@ fn escrow_conditions_stored_at_payment_creation() {
     let asset = Address::generate(&env);
 
     client.initialize(&admin);
-    let payment_id = client.create_payment(&1, &payer, &payee, &500, &asset, &default_fee_structure(&env), &admin);
+    let payment_id = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &500,
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
 
     env.as_contract(&contract_id, || {
-        let escrow_accounts: Map<u64, EscrowAccount> =
-            env.storage().persistent().get(&ESCROW_ACCOUNTS).unwrap();
-        let escrow = escrow_accounts.get(payment_id).unwrap();
+        let escrow = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::EscrowAccount>(&crate::DataKey::EscrowAccount(
+                payment_id,
+            ))
+            .unwrap();
         assert_eq!(escrow.payment_id, payment_id);
         assert_eq!(escrow.locked_amount, 500);
         assert!(!escrow.release_conditions.medical_records_verified);
@@ -1055,11 +1218,15 @@ fn configure_multisig_preserves_valid_in_flight_pending_approvals() {
     );
 
     env.as_contract(&contract_id, || {
-        let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
-        let mut payment = payments.get(payment_id).unwrap();
+        let mut payment = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::Payment>(&crate::DataKey::Payment(payment_id))
+            .unwrap();
         payment.status = PaymentStatus::Escrowed;
-        payments.set(payment_id, payment);
-        env.storage().persistent().set(&PAYMENTS, &payments);
+        env.storage()
+            .persistent()
+            .set(&crate::DataKey::Payment(payment_id), &payment);
     });
 
     satisfy_escrow_conditions(&env, &contract_id, payment_id, &signer_one);
@@ -1069,12 +1236,13 @@ fn configure_multisig_preserves_valid_in_flight_pending_approvals() {
     client.configure_multisig(&vec![&env, signer_one.clone(), signer_three.clone()], &2);
 
     env.as_contract(&contract_id, || {
-        let approvals: Map<u64, PendingApproval> = env
+        let approval = env
             .storage()
             .persistent()
-            .get(&PENDING_APPROVALS)
+            .get::<crate::DataKey, crate::payments::PendingApproval>(
+                &crate::DataKey::PendingApprovalRecord(payment_id),
+            )
             .unwrap();
-        let approval = approvals.get(payment_id).unwrap();
         assert_eq!(approval.approvals.len(), 1);
         assert!(approval.approvals.contains(signer_one.clone()));
     });
@@ -1091,15 +1259,8 @@ fn test_create_payment_fails_with_tampered_fee_payload() {
     let mut tampered_fee = default_fee_structure(&env);
     tampered_fee.service_fee = -100; // Invalid negative fee
 
-    let result = client.try_create_payment(
-        &1,
-        &payer,
-        &payee,
-        &5_000,
-        &asset,
-        &tampered_fee,
-        &admin,
-    );
+    let result =
+        client.try_create_payment(&1, &payer, &payee, &5_000, &asset, &tampered_fee, &admin);
 
     assert!(result.is_err());
     // Soroban sdk client returns Result<Result<T, E>, ...>
