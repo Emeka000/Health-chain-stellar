@@ -1355,3 +1355,190 @@ fn test_fee_arithmetic_overflow_boundary() {
     assert_eq!(fee.total(), Err(PaymentError::Overflow));
     assert_eq!(fee.calculate_net_amount(1_000), Err(PaymentError::Overflow));
 }
+
+// ======================================================
+// Security: issue #1400 — fee-structuring multisig bypass
+// ======================================================
+
+/// A caller should NOT be able to inflate fees so that the net `payment.amount`
+/// falls under HIGH_VALUE_THRESHOLD while the gross/locked amount is far above it.
+/// `create_payment` must reject the fee payload with `FeesExceedCap`.
+#[test]
+fn test_create_payment_rejects_fee_structuring_attack() {
+    let env = Env::default();
+    let (_, client, admin) = setup_dispute_contract(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    // Gross amount well above threshold; attacker loads ~90% fees so
+    // net would land at 2_000 — just under HIGH_VALUE_THRESHOLD (10_000).
+    let gross = 20_000_i128;
+    let attack_fee = FeeStructure {
+        policy_id: Symbol::new(&env, "attack_policy"),
+        service_fee: 9_000,
+        network_fee: 9_000,
+        performance_bonus: 0,
+        fixed_fee: 0,
+    };
+
+    let result =
+        client.try_create_payment(&1, &payer, &payee, &gross, &asset, &attack_fee, &admin);
+
+    assert!(result.is_err(), "fee-structuring attack must be rejected");
+    if let Err(Ok(e)) = result {
+        assert_eq!(
+            e,
+            crate::Error::FeesExceedCap,
+            "expected FeesExceedCap, got {:?}",
+            e
+        );
+    }
+}
+
+/// Fees exactly at the cap (50 % of gross) must be accepted.
+#[test]
+fn test_create_payment_accepts_fees_at_cap_boundary() {
+    let env = Env::default();
+    let (_, client, admin) = setup_dispute_contract(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    // 50 % of 1_000 = 500 — exactly at MAX_FEE_BPS boundary.
+    let gross = 1_000_i128;
+    let boundary_fee = FeeStructure {
+        policy_id: Symbol::new(&env, "boundary_policy"),
+        service_fee: 500,
+        network_fee: 0,
+        performance_bonus: 0,
+        fixed_fee: 0,
+    };
+
+    let result =
+        client.try_create_payment(&1, &payer, &payee, &gross, &asset, &boundary_fee, &admin);
+
+    assert!(
+        result.is_ok(),
+        "fees exactly at cap should be accepted; got {:?}",
+        result
+    );
+}
+
+/// Fees one unit above the cap (> 50 % of gross) must be rejected.
+#[test]
+fn test_create_payment_rejects_fees_one_unit_above_cap() {
+    let env = Env::default();
+    let (_, client, admin) = setup_dispute_contract(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    // 501 / 1000 > 50 % — should be rejected.
+    let gross = 1_000_i128;
+    let over_cap_fee = FeeStructure {
+        policy_id: Symbol::new(&env, "overcap_policy"),
+        service_fee: 501,
+        network_fee: 0,
+        performance_bonus: 0,
+        fixed_fee: 0,
+    };
+
+    let result =
+        client.try_create_payment(&1, &payer, &payee, &gross, &asset, &over_cap_fee, &admin);
+
+    assert!(result.is_err(), "fees above cap must be rejected");
+    if let Err(Ok(e)) = result {
+        assert_eq!(e, crate::Error::FeesExceedCap);
+    }
+}
+
+/// `EscrowAccount` must be persisted by `create_payment` so that
+/// `propose_release` can load it and gate the multisig threshold against the
+/// gross `locked_amount`.  Before this fix the escrow struct was built but
+/// never written to storage, making any `propose_release` call fail with
+/// `PaymentNotFound` on the escrow key.
+#[test]
+fn test_create_payment_persists_escrow_with_gross_locked_amount() {
+    let env = Env::default();
+    let (contract_id, client, admin) = setup_dispute_contract(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    let gross = 5_000_i128;
+    let fee = FeeStructure {
+        policy_id: Symbol::new(&env, "default_fee_policy"),
+        service_fee: 200,
+        network_fee: 0,
+        performance_bonus: 0,
+        fixed_fee: 0,
+    };
+
+    let payment_id = client.create_payment(&1, &payer, &payee, &gross, &asset, &fee, &admin);
+
+    env.as_contract(&contract_id, || {
+        let escrow = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::EscrowAccount>(
+                &crate::DataKey::EscrowAccount(payment_id),
+            )
+            .expect("EscrowAccount must be stored by create_payment");
+
+        assert_eq!(
+            escrow.locked_amount, gross,
+            "locked_amount must equal gross amount, not net"
+        );
+        assert_eq!(escrow.payment_id, payment_id);
+    });
+}
+
+/// `validate_fee_cap` unit tests — exercised directly on `FeeStructure`
+/// without going through the contract client.
+#[test]
+fn fee_structure_validate_fee_cap_passes_when_fees_are_within_limit() {
+    let env = Env::default();
+    let fee = FeeStructure {
+        policy_id: Symbol::new(&env, "p"),
+        service_fee: 100,
+        network_fee: 50,
+        performance_bonus: 0,
+        fixed_fee: 0,
+    };
+    // 150 / 10_000 = 1.5 % << 50 %
+    assert!(fee.validate_fee_cap(10_000).is_ok());
+}
+
+#[test]
+fn fee_structure_validate_fee_cap_fails_when_fees_exceed_limit() {
+    let env = Env::default();
+    let fee = FeeStructure {
+        policy_id: Symbol::new(&env, "p"),
+        service_fee: 6_000,
+        network_fee: 0,
+        performance_bonus: 0,
+        fixed_fee: 0,
+    };
+    // 6_000 / 10_000 = 60 % > 50 %
+    assert_eq!(
+        fee.validate_fee_cap(10_000),
+        Err(PaymentError::FeesExceedCap)
+    );
+}
+
+#[test]
+fn fee_structure_validate_fee_cap_fails_on_zero_gross() {
+    let env = Env::default();
+    let fee = FeeStructure {
+        policy_id: Symbol::new(&env, "p"),
+        service_fee: 0,
+        network_fee: 0,
+        performance_bonus: 0,
+        fixed_fee: 0,
+    };
+    assert_eq!(
+        fee.validate_fee_cap(0),
+        Err(PaymentError::InvalidAmount)
+    );
+}
