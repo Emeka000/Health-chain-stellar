@@ -79,6 +79,8 @@ pub enum Error {
     PageNotFound = 35,
     /// No stored health record exists for this patient.
     RecordNotFound = 36,
+    /// evidence_digest is not a valid 32-byte SHA-256 digest.
+    InvalidEvidenceDigest = 37,
 }
 
 // Alias for issue/docs terminology.
@@ -3204,7 +3206,7 @@ impl HealthChainContract {
         // evidence_ref_chunks reconstruction against evidence_digest is off-chain only;
         // enforce a valid SHA-256 digest size to reject trivially invalid submissions.
         if evidence_digest.len() != 32 {
-            return Err(Error::InvalidFeePayload);
+            return Err(Error::InvalidEvidenceDigest);
         }
 
         let mut payment: crate::payments::Payment = env
@@ -3212,6 +3214,12 @@ impl HealthChainContract {
             .persistent()
             .get(&DataKey::Payment(payment_id))
             .ok_or(Error::PaymentNotFound)?;
+
+        let mut payment = payments.get(payment_id).ok_or(Error::PaymentNotFound)?;
+
+        if raised_by != payment.payer && raised_by != payment.payee {
+            return Err(Error::Unauthorized);
+        }
 
         if !payment.can_transition_to(PaymentStatus::Disputed) {
             return Err(Error::InvalidTransition);
