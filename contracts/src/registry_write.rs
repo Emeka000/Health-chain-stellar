@@ -6,14 +6,12 @@
 //! The public contract entry-points in `lib.rs` delegate to these free functions.
 //!
 //! ## Storage Write Audit (PR checklist)
-//! - [x] `register_unit`          — writes BLOOD_UNITS, NEXT_ID, BankUnits index, DonorUnits index, StatusUnits index
-//! - [x] `update_status`          — writes BLOOD_UNITS, StatusUnits index
-//! - [x] `expire_unit`            — 1 read + 1 write of BLOOD_UNITS, StatusUnits index
-//! - [x] `expire_unit_in_map`     — pure in-memory mutation; no storage I/O (used by batch)
-//! - [x] `check_and_expire_batch` — 1 read + N in-memory mutations + 1 write of BLOOD_UNITS
-//! - [x] `allocate_blood` (lib.rs) — writes HospitalUnits index on allocation; deindex on cancel_allocation
+//! - [x] `register_unit`          — writes DataKey::Unit(id), NEXT_ID, BankUnits index, DonorUnits index, StatusUnits index
+//! - [x] `update_status`          — writes DataKey::Unit(id), StatusUnits index
+//! - [x] `expire_unit`            — 1 read + 1 write of DataKey::Unit(id), StatusUnits index
+//! - [x] `check_and_expire_batch` — N individual reads + writes of DataKey::Unit(id)
 
-use soroban_sdk::{symbol_short, Address, Env, Map, Symbol, Vec};
+use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
 use crate::{
     constants::{
@@ -21,8 +19,8 @@ use crate::{
         MIN_SHELF_LIFE_DAYS, SECONDS_PER_DAY,
     },
     get_next_id, index_bank_unit, index_blood_type_unit, index_donor_unit, record_status_change,
-    reindex_status, BloodComponent, BloodRegisteredEvent, BloodStatus, BloodType, BloodUnit, Error,
-    BLOOD_UNITS,
+    reindex_status, BloodComponent, BloodRegisteredEvent, BloodStatus, BloodType, BloodUnit,
+    DataKey, Error,
 };
 
 // ── WRITE ─────────────────────────────────────────────────────────────────────
@@ -77,14 +75,10 @@ pub fn register_unit(
         delivery_timestamp: None,
     };
 
-    let mut units: Map<u64, BloodUnit> = env
-        .storage()
+    // Per-record storage: write individual unit
+    env.storage()
         .persistent()
-        .get(&BLOOD_UNITS)
-        .unwrap_or(Map::new(env));
-
-    units.set(unit_id, blood_unit);
-    env.storage().persistent().set(&BLOOD_UNITS, &units);
+        .set(&DataKey::Unit(unit_id), &blood_unit);
 
     // Maintain bank and donor indexes
     index_bank_unit(env, &bank_id, unit_id);
@@ -146,18 +140,19 @@ pub fn update_status(
     new_status: BloodStatus,
     actor: Address,
 ) -> Result<(), Error> {
-    let mut units: Map<u64, BloodUnit> = env
+    // Per-record storage: read individual unit
+    let mut unit: BloodUnit = env
         .storage()
         .persistent()
-        .get(&BLOOD_UNITS)
-        .unwrap_or(Map::new(env));
+        .get(&DataKey::Unit(unit_id))
+        .ok_or(Error::UnitNotFound)?;
 
-    let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
     let old_status = unit.status;
 
     unit.status = new_status;
-    units.set(unit_id, unit);
-    env.storage().persistent().set(&BLOOD_UNITS, &units);
+    env.storage()
+        .persistent()
+        .set(&DataKey::Unit(unit_id), &unit);
 
     // Maintain status index
     reindex_status(env, unit_id, old_status, new_status);
@@ -169,43 +164,14 @@ pub fn update_status(
 
 /// Force mark a blood unit as expired.
 ///
-/// Loads the full `BLOOD_UNITS` map, delegates the mutation to
-/// [`expire_unit_in_map`], then writes the map back.  Use this for
-/// single-unit expiry; for bulk expiry prefer [`check_and_expire_batch`]
-/// which amortises the storage round-trip across all units.
+/// Reads the individual unit record, checks expiry, and persists the change.
+/// For bulk expiry prefer [`check_and_expire_batch`].
 pub fn expire_unit(env: &Env, unit_id: u64) -> Result<(), Error> {
-    let mut units: Map<u64, BloodUnit> = env
+    let mut unit: BloodUnit = env
         .storage()
         .persistent()
-        .get(&BLOOD_UNITS)
-        .unwrap_or(Map::new(env));
-
-    let expired = expire_unit_in_map(env, unit_id, &mut units)?;
-
-    // Only persist if something actually changed.
-    if expired {
-        env.storage().persistent().set(&BLOOD_UNITS, &units);
-    }
-
-    Ok(())
-}
-
-/// Mutate a single entry inside an already-loaded `units` map.
-///
-/// Returns `Ok(true)` when the unit was transitioned to `Expired`,
-/// `Ok(false)` when it was already `Expired` (no-op), and
-/// `Err` when the unit does not exist or has not yet passed its expiry date.
-///
-/// This function performs **no storage I/O** — the caller is responsible for
-/// loading the map beforehand and persisting it afterwards.  Keeping I/O out
-/// of the hot loop in [`check_and_expire_batch`] reduces the per-batch cost
-/// from O(n) reads/writes to a single read + single write.
-fn expire_unit_in_map(
-    env: &Env,
-    unit_id: u64,
-    units: &mut Map<u64, BloodUnit>,
-) -> Result<bool, Error> {
-    let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
+        .get(&DataKey::Unit(unit_id))
+        .ok_or(Error::UnitNotFound)?;
 
     let current_time = env.ledger().timestamp();
     if current_time < unit.expiration_date {
@@ -214,12 +180,14 @@ fn expire_unit_in_map(
 
     if unit.status == BloodStatus::Expired {
         // Already expired — nothing to do, not an error.
-        return Ok(false);
+        return Ok(());
     }
 
     let old_status = unit.status;
     unit.status = BloodStatus::Expired;
-    units.set(unit_id, unit);
+    env.storage()
+        .persistent()
+        .set(&DataKey::Unit(unit_id), &unit);
 
     // Keep the status index and history in sync.
     reindex_status(env, unit_id, old_status, BloodStatus::Expired);
@@ -231,46 +199,53 @@ fn expire_unit_in_map(
         env.current_contract_address(),
     );
 
-    Ok(true)
+    Ok(())
 }
 
 /// Batch check and expire units.
 ///
-/// Loads `BLOOD_UNITS` **once**, mutates each requested unit in-memory via
-/// [`expire_unit_in_map`], then writes the map back **once**.  This reduces
-/// the storage cost from O(n) reads + O(n) writes (the old per-unit loop) to
-/// a single read + single write regardless of batch size.
+/// Processes each unit individually via per-record storage (#1394).
+/// Each unit is read and written independently — no monolithic map.
 pub fn check_and_expire_batch(env: &Env, unit_ids: Vec<u64>) -> Result<Vec<u64>, Error> {
     if unit_ids.len() > MAX_BATCH_EXPIRY_SIZE {
         return Err(Error::BatchSizeExceeded);
     }
 
-    // Single read for the entire batch.
-    let mut units: Map<u64, BloodUnit> = env
-        .storage()
-        .persistent()
-        .get(&BLOOD_UNITS)
-        .unwrap_or(Map::new(env));
-
     let mut expired_ids = Vec::new(env);
-    let mut any_changed = false;
 
     for i in 0..unit_ids.len() {
         let unit_id = unit_ids.get(i).unwrap();
-        match expire_unit_in_map(env, unit_id, &mut units) {
-            Ok(true) => {
-                expired_ids.push_back(unit_id);
-                any_changed = true;
-            }
-            // Ok(false) = already expired, skip silently.
-            // Err(_)    = not yet expired or not found, skip silently.
-            _ => {}
-        }
-    }
+        // Read individual unit
+        let mut unit: BloodUnit = match env.storage().persistent().get(&DataKey::Unit(unit_id)) {
+            Some(u) => u,
+            None => continue,
+        };
 
-    // Single write — only when at least one unit changed.
-    if any_changed {
-        env.storage().persistent().set(&BLOOD_UNITS, &units);
+        let current_time = env.ledger().timestamp();
+        if current_time < unit.expiration_date {
+            continue;
+        }
+
+        if unit.status == BloodStatus::Expired {
+            continue;
+        }
+
+        let old_status = unit.status;
+        unit.status = BloodStatus::Expired;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Unit(unit_id), &unit);
+
+        reindex_status(env, unit_id, old_status, BloodStatus::Expired);
+        record_status_change(
+            env,
+            unit_id,
+            old_status,
+            BloodStatus::Expired,
+            env.current_contract_address(),
+        );
+
+        expired_ids.push_back(unit_id);
     }
 
     Ok(expired_ids)

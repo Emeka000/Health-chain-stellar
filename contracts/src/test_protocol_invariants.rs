@@ -88,54 +88,66 @@ fn stored_unit(fixture: &ProtocolFixture, unit_id: u64) -> BloodUnit {
 
 fn stored_request(fixture: &ProtocolFixture, request_id: u64) -> BloodRequest {
     fixture.env.as_contract(&fixture.contract_id, || {
-        let requests: Map<u64, BloodRequest> =
-            fixture.env.storage().persistent().get(&REQUESTS).unwrap();
-        requests.get(request_id).unwrap()
+        fixture
+            .env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::BloodRequest>(&crate::DataKey::Request(request_id))
+            .unwrap()
     })
 }
 
 fn force_unit_quantity(fixture: &ProtocolFixture, unit_id: u64, quantity: u32) {
     fixture.env.as_contract(&fixture.contract_id, || {
-        let mut units: Map<u64, BloodUnit> = fixture
+        let mut unit = fixture
             .env
             .storage()
             .persistent()
-            .get(&BLOOD_UNITS)
+            .get::<crate::DataKey, crate::BloodUnit>(&crate::DataKey::Unit(unit_id))
             .unwrap();
-        let mut unit = units.get(unit_id).unwrap();
         unit.quantity = quantity;
-        units.set(unit_id, unit);
-        fixture.env.storage().persistent().set(&BLOOD_UNITS, &units);
+        fixture
+            .env
+            .storage()
+            .persistent()
+            .set(&crate::DataKey::Unit(unit_id), &unit);
     });
 }
 
 fn escrow_payment(fixture: &ProtocolFixture, payment_id: u64, approver: &Address) {
     fixture.env.as_contract(&fixture.contract_id, || {
-        let mut payments: Map<u64, Payment> =
-            fixture.env.storage().persistent().get(&PAYMENTS).unwrap();
-        let mut payment = payments.get(payment_id).unwrap();
-        payment.status = PaymentStatus::Escrowed;
-        payments.set(payment_id, payment);
-        fixture.env.storage().persistent().set(&PAYMENTS, &payments);
-
-        let mut escrows: Map<u64, EscrowAccount> = fixture
+        let mut payment = fixture
             .env
             .storage()
             .persistent()
-            .get(&ESCROW_ACCOUNTS)
+            .get::<crate::DataKey, crate::payments::Payment>(&crate::DataKey::Payment(payment_id))
             .unwrap();
-        let mut escrow = escrows.get(payment_id).unwrap();
+        payment.status = PaymentStatus::Escrowed;
+        fixture
+            .env
+            .storage()
+            .persistent()
+            .set(&crate::DataKey::Payment(payment_id), &payment);
+
+        let mut escrow = fixture
+            .env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::EscrowAccount>(&crate::DataKey::EscrowAccount(
+                payment_id,
+            ))
+            .unwrap();
         escrow.release_conditions = ReleaseConditions {
             medical_records_verified: true,
             min_timestamp: 0,
             authorized_approver: Some(approver.clone()),
         };
-        escrows.set(payment_id, escrow);
         fixture
             .env
             .storage()
             .persistent()
-            .set(&ESCROW_ACCOUNTS, &escrows);
+            .set(&crate::DataKey::EscrowAccount(payment_id), &escrow);
+        fixture.env.storage().persistent()
     });
 }
 
@@ -231,8 +243,11 @@ fn property_duplicate_and_invalid_request_transitions_fail_deterministically() {
     );
     assert!(matches!(duplicate, Err(Ok(Error::DuplicateRequest))));
 
-    let invalid = client(&fixture)
-        .try_update_request_status(&fixture.hospital, &first_id, &RequestStatus::Fulfilled);
+    let invalid = client(&fixture).try_update_request_status(
+        &fixture.hospital,
+        &first_id,
+        &RequestStatus::Fulfilled,
+    );
     assert!(matches!(invalid, Err(Ok(Error::InvalidTransition))));
     assert_eq!(
         stored_request(&fixture, first_id).status,
@@ -309,13 +324,16 @@ fn property_custody_transfer_requires_authorized_current_custodian() {
     let withdraw_attempt = client(&fixture).try_withdraw_blood(
         &fixture.hospital,
         &unit_id,
-        &WithdrawalReason::Other,
+        &crate::WithdrawalReason::Other,
     );
     assert!(matches!(
         withdraw_attempt,
         Err(Ok(Error::NotCurrentCustodian))
     ));
-    assert_eq!(stored_unit(&fixture, unit_id).status, BloodStatus::InTransit);
+    assert_eq!(
+        stored_unit(&fixture, unit_id).status,
+        BloodStatus::InTransit
+    );
 
     let quarantine_attempt = client(&fixture).try_quarantine_blood(
         &fixture.hospital,
@@ -326,7 +344,10 @@ fn property_custody_transfer_requires_authorized_current_custodian() {
         quarantine_attempt,
         Err(Ok(Error::NotCurrentCustodian))
     ));
-    assert_eq!(stored_unit(&fixture, unit_id).status, BloodStatus::InTransit);
+    assert_eq!(
+        stored_unit(&fixture, unit_id).status,
+        BloodStatus::InTransit
+    );
 }
 
 #[test]
@@ -337,8 +358,15 @@ fn property_completed_payments_are_terminal_and_cannot_reenter_escrow() {
     let asset = Address::generate(&fixture.env);
 
     let fee_payload = default_fee_structure(&fixture.env);
-    let payment_id =
-        client(&fixture).create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset, &fee_payload, &fixture.admin);
+    let payment_id = client(&fixture).create_payment(
+        &1,
+        &payer,
+        &payee,
+        &(HIGH_VALUE_THRESHOLD - 1),
+        &asset,
+        &fee_payload,
+        &fixture.admin,
+    );
     escrow_payment(&fixture, payment_id, &fixture.admin);
     assert!(client(&fixture).propose_release(&payment_id, &fixture.admin));
 
@@ -349,9 +377,12 @@ fn property_completed_payments_are_terminal_and_cannot_reenter_escrow() {
     ));
 
     fixture.env.as_contract(&fixture.contract_id, || {
-        let payments: Map<u64, Payment> =
-            fixture.env.storage().persistent().get(&PAYMENTS).unwrap();
-        let payment = payments.get(payment_id).unwrap();
+        let payment = fixture
+            .env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, crate::payments::Payment>(&crate::DataKey::Payment(payment_id))
+            .unwrap();
         assert_eq!(payment.status, PaymentStatus::Completed);
         assert!(payment.is_terminal());
         assert!(!payment.can_transition_to(PaymentStatus::Escrowed));
@@ -411,15 +442,12 @@ fn property_fee_and_multisig_arithmetic_fail_safely_for_arbitrary_edges() {
             fixed_fee,
         };
 
-        let expected_validation = if service_fee < 0
-            || network_fee < 0
-            || performance_bonus < 0
-            || fixed_fee < 0
-        {
-            Err(PaymentError::InvalidFee)
-        } else {
-            Ok(())
-        };
+        let expected_validation =
+            if service_fee < 0 || network_fee < 0 || performance_bonus < 0 || fixed_fee < 0 {
+                Err(PaymentError::InvalidFee)
+            } else {
+                Ok(())
+            };
 
         assert_eq!(fees.validate(), expected_validation);
         assert_eq!(fees.calculate_net_amount(gross), expected_net);
