@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'crypto';
+import { createHash } from 'crypto';
 
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -377,7 +377,7 @@ export class OutboxService {
     eventType: string,
     correlationId: string,
   ): string {
-    const raw = `${aggregateId}:${eventType}:${correlationId}:${randomUUID()}`;
+    const raw = `${aggregateId}:${eventType}:${correlationId}`;
     return createHash('sha256').update(raw).digest('hex').slice(0, 64);
   }
 }
