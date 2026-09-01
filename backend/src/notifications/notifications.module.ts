@@ -2,6 +2,8 @@ import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { JwtModule } from '@nestjs/jwt';
 
 import { PolicyCenterModule } from '../policy-center/policy-center.module';
 import { UserActivityModule } from '../user-activity/user-activity.module';
@@ -32,6 +34,15 @@ import { ProviderFailoverService } from './providers/provider-failover.service';
 
 @Module({
   imports: [
+    ConfigModule,
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.get<string>('JWT_SECRET'),
+        signOptions: { expiresIn: '1d' },
+      }),
+    }),
     TypeOrmModule.forFeature([
       NotificationEntity,
       NotificationTemplateEntity,
