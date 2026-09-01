@@ -96,6 +96,28 @@ describe('OutboxService', () => {
       expect(createCall.dedupKey).toBeDefined();
       expect(createCall.dedupKey.length).toBeGreaterThan(0);
     });
+
+    it('produces a deterministic dedup key for identical inputs', async () => {
+      await service.publishEvent(
+        OutboxEventType.BLOOD_REQUEST_CREATED,
+        { requestId: 'req-1' },
+        'req-1',
+        'BloodRequest',
+        'corr-1',
+      );
+      const firstKey = outboxRepo.create.mock.calls[0][0].dedupKey;
+
+      await service.publishEvent(
+        OutboxEventType.BLOOD_REQUEST_CREATED,
+        { requestId: 'req-1' },
+        'req-1',
+        'BloodRequest',
+        'corr-1',
+      );
+      const secondKey = outboxRepo.create.mock.calls[1][0].dedupKey;
+
+      expect(firstKey).toBe(secondKey);
+    });
   });
 
   describe('publishInTransaction — atomicity', () => {
