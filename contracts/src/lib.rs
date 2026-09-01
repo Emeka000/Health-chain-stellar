@@ -79,8 +79,10 @@ pub enum Error {
     PageNotFound = 35,
     /// No stored health record exists for this patient.
     RecordNotFound = 36,
-    /// evidence_digest is not a valid 32-byte SHA-256 digest.
-    InvalidEvidenceDigest = 37,
+    /// Total fees exceed the allowed cap (MAX_FEE_BPS) as a fraction of the
+    /// gross payment amount.  Raised during `create_payment` to close the
+    /// fee-structuring bypass of the multisig high-value threshold (issue #1400).
+    FeesExceedCap = 37,
 }
 
 // Alias for issue/docs terminology.
@@ -2926,6 +2928,15 @@ impl HealthChainContract {
             return Err(Error::InvalidFeePayload);
         }
 
+        // Reject fee payloads that exceed MAX_FEE_BPS of the gross amount.
+        // Without this check a caller can inflate fees so the stored net
+        // payment.amount falls just below HIGH_VALUE_THRESHOLD while locking a
+        // much larger gross amount in escrow, bypassing M-of-N multisig control
+        // (issue #1400).
+        if let Err(_) = fee_payload.validate_fee_cap(amount) {
+            return Err(Error::FeesExceedCap);
+        }
+
         // `amount` is the gross amount supplied by the payer; `payment.amount`
         // is documented as the net amount after fees, so net it down here.
         let net_amount = fee_payload
@@ -2973,6 +2984,14 @@ impl HealthChainContract {
         env.storage()
             .persistent()
             .set(&DataKey::Payment(payment_id), &payment);
+        // Persist the escrow record so propose_release can load it and gate the
+        // multisig threshold against the gross locked_amount instead of the
+        // post-fee net payment.amount (issue #1400 — escrow was built but never
+        // written to storage, making propose_release always fail with
+        // PaymentNotFound when looking up the escrow key).
+        env.storage()
+            .persistent()
+            .set(&DataKey::EscrowAccount(payment_id), &escrow);
         env.storage()
             .instance()
             .set(&NEXT_PAYMENT_ID, &(payment_id + 1));

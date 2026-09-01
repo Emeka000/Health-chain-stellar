@@ -4,6 +4,15 @@ pub const DEFAULT_DISPUTE_TIMEOUT_SECS: u64 = 72 * 60 * 60;
 pub const MAX_DISPUTE_TIMEOUT_SECS: u64 = 30 * 24 * 60 * 60;
 pub const HIGH_VALUE_THRESHOLD: i128 = 10_000;
 
+/// Maximum total fees expressed in basis points (1 bp = 0.01%).
+///
+/// Caps the sum of service_fee + network_fee + performance_bonus + fixed_fee at
+/// 50% of the gross amount (5000 bp). This closes the fee-structuring attack
+/// described in issue #1400: without this cap an attacker could inflate fees so
+/// that the stored net `payment.amount` falls under `HIGH_VALUE_THRESHOLD` while
+/// the real locked amount is far above it, bypassing the M-of-N multisig guard.
+pub const MAX_FEE_BPS: i128 = 5_000; // 50 %
+
 /// **Dispute evidence (beyond `Symbol` limits).**
 ///
 /// Soroban `Symbol` values are capped (~32 characters) and cannot carry full IPFS CIDs,
@@ -383,6 +392,37 @@ impl FeeStructure {
         }
         Ok(gross_amount - total_fees)
     }
+
+    /// Validates that total fees do not exceed `MAX_FEE_BPS` of the gross amount.
+    ///
+    /// Fee-structuring attack (issue #1400): an attacker can supply a large fee
+    /// payload so that the stored net `payment.amount` falls just under
+    /// `HIGH_VALUE_THRESHOLD`, causing `propose_release` to skip the M-of-N
+    /// multisig check even though the escrowed gross amount is far above the
+    /// threshold.  This method must be called at payment-creation time to close
+    /// that attack surface before the escrow record is written.
+    ///
+    /// `gross_amount` must be the raw amount supplied by the payer (before any
+    /// fee deduction).
+    pub fn validate_fee_cap(&self, gross_amount: i128) -> Result<(), PaymentError> {
+        if gross_amount <= 0 {
+            return Err(PaymentError::InvalidAmount);
+        }
+        let total_fees = self.total()?;
+        // total_fees / gross_amount <= MAX_FEE_BPS / 10_000
+        // ⟺  total_fees * 10_000 <= MAX_FEE_BPS * gross_amount
+        // Use only integer arithmetic to avoid floating-point inaccuracy.
+        let lhs = total_fees
+            .checked_mul(10_000)
+            .ok_or(PaymentError::Overflow)?;
+        let rhs = crate::payments::MAX_FEE_BPS
+            .checked_mul(gross_amount)
+            .ok_or(PaymentError::Overflow)?;
+        if lhs > rhs {
+            return Err(PaymentError::FeesExceedCap);
+        }
+        Ok(())
+    }
 }
 
 /// Error types for payment operations
@@ -399,4 +439,10 @@ pub enum PaymentError {
     InvalidMultiSigConfig,
     DuplicateApproval,
     Overflow,
+    /// Total fees exceed the MAX_FEE_BPS cap as a fraction of the gross amount.
+    ///
+    /// Raised by `FeeStructure::validate_fee_cap` to prevent fee-structuring
+    /// attacks that would reduce the stored net `payment.amount` below
+    /// `HIGH_VALUE_THRESHOLD` while locking a far larger gross amount in escrow.
+    FeesExceedCap,
 }
