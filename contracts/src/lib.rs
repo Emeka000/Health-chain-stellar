@@ -2897,6 +2897,10 @@ impl HealthChainContract {
     }
 
     /// Create a payment for a request and persist its escrow account with release conditions.
+    ///
+    /// NOTE: bookkeeping only. This does not call a token contract or move
+    /// any funds — it records intent to pay, nothing more. See
+    /// `EscrowAccount` docs.
     pub fn create_payment(
         env: Env,
         request_id: u64,
@@ -3126,6 +3130,10 @@ impl HealthChainContract {
     /// evaluated first for every payment.  Multisig approval is additive — it is
     /// required on top of the escrow conditions for high-value payments, not
     /// instead of them.
+    ///
+    /// NOTE: bookkeeping only. Marking a payment `Completed` here does not
+    /// call a token contract or pay the payee — no funds move. See
+    /// `EscrowAccount` docs.
     pub fn propose_release(env: Env, payment_id: u64, approver: Address) -> Result<bool, Error> {
         approver.require_auth();
 
@@ -3225,7 +3233,7 @@ impl HealthChainContract {
         // evidence_ref_chunks reconstruction against evidence_digest is off-chain only;
         // enforce a valid SHA-256 digest size to reject trivially invalid submissions.
         if evidence_digest.len() != 32 {
-            return Err(Error::InvalidFeePayload);
+            return Err(Error::InvalidEvidenceDigest);
         }
 
         let mut payment: crate::payments::Payment = env
@@ -3233,6 +3241,12 @@ impl HealthChainContract {
             .persistent()
             .get(&DataKey::Payment(payment_id))
             .ok_or(Error::PaymentNotFound)?;
+
+        let mut payment = payments.get(payment_id).ok_or(Error::PaymentNotFound)?;
+
+        if raised_by != payment.payer && raised_by != payment.payee {
+            return Err(Error::Unauthorized);
+        }
 
         if !payment.can_transition_to(PaymentStatus::Disputed) {
             return Err(Error::InvalidTransition);
@@ -3312,6 +3326,10 @@ impl HealthChainContract {
     }
 
     /// Resolve a dispute (admin only)
+    ///
+    /// NOTE: bookkeeping only. Setting the payment to `Refunded` or
+    /// `Completed` here does not call a token contract — no funds are
+    /// actually refunded or paid out. See `EscrowAccount` docs.
     pub fn resolve_dispute(
         env: Env,
         dispute_id: u64,
@@ -3402,6 +3420,10 @@ impl HealthChainContract {
     ///
     /// Only a bounded batch of dispute IDs is processed per call to keep costs
     /// predictable and prevent unbounded scans of historical disputes.
+    ///
+    /// NOTE: bookkeeping only. Auto-refunding here (including
+    /// `total_auto_refunded`) does not call a token contract — no funds
+    /// actually move. See `EscrowAccount` docs.
     pub fn process_expired_disputes(env: Env, dispute_ids: Vec<u64>) -> Result<u32, Error> {
         if dispute_ids.len() > MAX_BATCH_SIZE {
             return Err(Error::BatchSizeExceeded);

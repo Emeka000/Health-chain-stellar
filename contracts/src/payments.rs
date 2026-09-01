@@ -137,10 +137,16 @@ pub struct Payment {
 /// Escrow account holding locked funds
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Bookkeeping record only — `locked_amount` is not backed by any token
+/// transfer. This contract never calls a token contract, so no funds are
+/// ever actually pulled from the payer or paid to the payee; every
+/// status/amount here is cosmetic state until real token custody is wired
+/// in. See the on-chain entrypoints in `lib.rs` (create_payment,
+/// propose_release, resolve_dispute, process_expired_disputes).
 pub struct EscrowAccount {
     /// Associated payment ID
     pub payment_id: u64,
-    /// Amount locked in escrow
+    /// Amount recorded as locked in escrow bookkeeping (no real fund custody — see struct docs)
     pub locked_amount: i128,
     /// Conditions for releasing funds
     pub release_conditions: ReleaseConditions,
