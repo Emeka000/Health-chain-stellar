@@ -118,3 +118,6 @@ For contract deployment, full environment variable reference, and contributor gu
 
 <!-- handsoff-issue-1455 -->
 - #1455: [lifebank/payments] update_status can silently exit Disputed status, bypassing resolve_dispute and leaving stale dispute fields
+
+<!-- handsoff-issue-1482 -->
+- #1482: [lifebank/temperature] compute_excursion_data trusts stale is_violation flags computed under a historical threshold instead of re-validating against the current one
