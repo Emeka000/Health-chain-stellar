@@ -3,20 +3,23 @@ import {
   Controller,
   Get,
   Param,
-  ParseUUIDPipe,
   Patch,
   Post,
   Query,
-  Req,
+  UseGuards,
 } from '@nestjs/common';
-
-import { Request } from 'express';
-
-import { RequirePermissions } from '../../auth/decorators/require-permissions.decorator';
-import { Permission } from '../../auth/enums/permission.enum';
-
 import {
-  AssignQuarantineReviewerDto,
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+} from '@nestjs/swagger';
+
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../../auth/guards/roles.guard';
+import { Roles } from '../../auth/decorators/roles.decorator';
+import { CurrentUser } from '../../auth/decorators/current-user.decorator';
+import {
   CreateQuarantineCaseDto,
   FinalizeQuarantineDto,
   QueryQuarantineCasesDto,
@@ -24,71 +27,53 @@ import {
 } from '../dto/quarantine.dto';
 import { QuarantineService } from '../services/quarantine.service';
 
-@ApiTags('Blood Units')
+@ApiTags('blood-units/quarantine')
 @ApiBearerAuth()
 @Controller('blood-units/quarantine')
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class QuarantineController {
   constructor(private readonly quarantineService: QuarantineService) {}
 
-  @RequirePermissions(Permission.UPDATE_BLOOD_STATUS)
-  @ApiOperation({ summary: 'Post cases' })
-  @ApiResponse({ status: 201, description: 'Resource created successfully' })
-  @Post('cases')
+  @Post()
+  @Roles('admin', 'quality_manager')
+  @ApiOperation({ summary: 'Create a quarantine case for a blood unit' })
+  @ApiResponse({ status: 201, description: 'Quarantine case created' })
   async createCase(
     @Body() dto: CreateQuarantineCaseDto,
-    @Req() request: Request & { user?: { id: string; role: string } },
+    @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.quarantineService.createCase(dto, request.user);
+    return this.quarantineService.createCase(dto, user);
   }
 
-  @RequirePermissions(Permission.VIEW_BLOOD_STATUS_HISTORY)
-  @ApiOperation({ summary: 'Get cases' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
-  @Get('cases')
+  @Get()
+  @Roles('admin', 'quality_manager', 'auditor')
+  @ApiOperation({ summary: 'List quarantine cases' })
+  @ApiResponse({ status: 200, description: 'Quarantine cases returned' })
   async listCases(@Query() query: QueryQuarantineCasesDto) {
     return this.quarantineService.listCases(query);
   }
 
-  @RequirePermissions(Permission.VIEW_BLOOD_STATUS_HISTORY)
-  @ApiOperation({ summary: 'Get cases :caseId recommendation' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
-  @Get('cases/:caseId/recommendation')
-  async getRecommendation(@Param('caseId', ParseUUIDPipe) caseId: string) {
-    return this.quarantineService.getRecommendedDisposition(caseId);
-  }
-
-  @RequirePermissions(Permission.UPDATE_BLOOD_STATUS)
-  @ApiOperation({ summary: 'Patch cases :caseId assign reviewer' })
-  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
-  @Patch('cases/:caseId/assign-reviewer')
-  async assignReviewer(
-    @Param('caseId', ParseUUIDPipe) caseId: string,
-    @Body() dto: AssignQuarantineReviewerDto,
-  ) {
-    return this.quarantineService.assignReviewer(caseId, dto.reviewerAssignedTo);
-  }
-
-  @RequirePermissions(Permission.UPDATE_BLOOD_STATUS)
-  @ApiOperation({ summary: 'Patch cases :caseId review' })
-  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
-  @Patch('cases/:caseId/review')
+  @Patch(':id/review')
+  @Roles('admin', 'quality_manager')
+  @ApiOperation({ summary: 'Update quarantine case review state' })
+  @ApiResponse({ status: 200, description: 'Quarantine case updated' })
   async updateReview(
-    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Param('id') id: string,
     @Body() dto: UpdateQuarantineReviewDto,
-    @Req() request: Request & { user?: { id: string; role: string } },
+    @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.quarantineService.updateReview(caseId, dto, request.user);
+    return this.quarantineService.updateReview(id, dto, user);
   }
 
-  @RequirePermissions(Permission.UPDATE_BLOOD_STATUS)
-  @ApiOperation({ summary: 'Patch cases :caseId finalize' })
-  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
-  @Patch('cases/:caseId/finalize')
+  @Patch(':id/finalize')
+  @Roles('admin', 'quality_manager')
+  @ApiOperation({ summary: 'Finalize a quarantine case disposition' })
+  @ApiResponse({ status: 200, description: 'Quarantine case finalized' })
   async finalizeCase(
-    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Param('id') id: string,
     @Body() dto: FinalizeQuarantineDto,
-    @Req() request: Request & { user?: { id: string; role: string } },
+    @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.quarantineService.finalizeCase(caseId, dto, request.user);
+    return this.quarantineService.finalizeCase(id, dto, user);
   }
 }

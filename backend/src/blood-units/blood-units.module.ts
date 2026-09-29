@@ -60,6 +60,8 @@ import { BloodUnitBatchService } from './batch/blood-unit-batch.service';
     PolicyCenterModule,
     AuthModule,
     RegistryModule,
+    ApprovalModule,
+    FileMetadataModule,
   ],
   controllers: [BloodUnitsController, DispositionController, QuarantineController],
   providers: [
