@@ -1,4 +1,8 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 
@@ -116,13 +120,13 @@ describe('InventoryService', () => {
   describe('findOne', () => {
     it('returns the item when found', async () => {
       stockRepo.findById.mockResolvedValue(makeStock());
-      const result = await service.findOne('stock-1');
+      const result = await service.findOne('stock-1', 'bank-1');
       expect(result.data.id).toBe('stock-1');
     });
 
     it('throws NotFoundException when not found', async () => {
       stockRepo.findById.mockResolvedValue(null);
-      await expect(service.findOne('missing')).rejects.toThrow(NotFoundException);
+      await expect(service.findOne('missing', 'bank-1')).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -131,17 +135,27 @@ describe('InventoryService', () => {
   describe('create', () => {
     it('creates a new stock record when none exists', async () => {
       stockRepo.findByBankAndType.mockResolvedValue(null);
-      await service.create({ bloodBankId: 'bank-1', bloodType: 'A+', availableUnits: 500 });
+      await service.create({ hospitalId: 'bank-1', bloodType: 'A+', quantity: 500 }, 'bank-1');
       expect(stockRepo.create).toHaveBeenCalled();
+      expect(stockRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ bloodBankId: 'bank-1', availableUnitsMl: 500 }),
+      );
       expect(stockRepo.save).toHaveBeenCalled();
     });
 
     it('merges into existing record when one already exists', async () => {
       const existing = makeStock();
       stockRepo.findByBankAndType.mockResolvedValue(existing);
-      await service.create({ bloodBankId: 'bank-1', bloodType: 'O+', availableUnits: 200 });
+      await service.create({ hospitalId: 'bank-1', bloodType: 'O+', quantity: 200 }, 'bank-1');
       expect(stockRepo.merge).toHaveBeenCalledWith(existing, { availableUnitsMl: 200 });
       expect(stockRepo.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects creation for a different organization', async () => {
+      await expect(
+        service.create({ hospitalId: 'bank-2', bloodType: 'O+', quantity: 200 }, 'bank-1'),
+      ).rejects.toThrow(ForbiddenException);
+      expect(stockRepo.findByBankAndType).not.toHaveBeenCalled();
     });
   });
 
@@ -150,14 +164,14 @@ describe('InventoryService', () => {
   describe('update', () => {
     it('throws NotFoundException when item does not exist', async () => {
       stockRepo.findById.mockResolvedValue(null);
-      await expect(service.update('missing', {})).rejects.toThrow(NotFoundException);
+      await expect(service.update('missing', {}, 'bank-1')).rejects.toThrow(NotFoundException);
     });
 
     it('merges and saves the updated entity', async () => {
       const stock = makeStock();
       stockRepo.findById.mockResolvedValue(stock);
-      await service.update('stock-1', { availableUnits: 800 });
-      expect(stockRepo.merge).toHaveBeenCalled();
+      await service.update('stock-1', { quantity: 800 }, 'bank-1');
+      expect(stockRepo.merge).toHaveBeenCalledWith(stock, { availableUnitsMl: 800 });
       expect(stockRepo.save).toHaveBeenCalled();
     });
   });
@@ -167,12 +181,12 @@ describe('InventoryService', () => {
   describe('remove', () => {
     it('throws NotFoundException when item does not exist', async () => {
       stockRepo.findById.mockResolvedValue(null);
-      await expect(service.remove('missing')).rejects.toThrow(NotFoundException);
+      await expect(service.remove('missing', 'bank-1')).rejects.toThrow(NotFoundException);
     });
 
     it('calls stockRepo.remove on the found entity', async () => {
       stockRepo.findById.mockResolvedValue(makeStock());
-      await service.remove('stock-1');
+      await service.remove('stock-1', 'bank-1');
       expect(stockRepo.remove).toHaveBeenCalled();
     });
   });
@@ -182,13 +196,13 @@ describe('InventoryService', () => {
   describe('updateStock', () => {
     it('throws NotFoundException when item does not exist', async () => {
       stockRepo.findById.mockResolvedValue(null);
-      await expect(service.updateStock('missing', 100)).rejects.toThrow(NotFoundException);
+      await expect(service.updateStock('missing', 100, 'bank-1')).rejects.toThrow(NotFoundException);
     });
 
     it('sets availableUnitsMl and saves', async () => {
       const stock = makeStock();
       stockRepo.findById.mockResolvedValue(stock);
-      await service.updateStock('stock-1', 750);
+      await service.updateStock('stock-1', 750, 'bank-1');
       expect(stockRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({ availableUnitsMl: 750 }),
       );

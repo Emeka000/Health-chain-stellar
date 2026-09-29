@@ -59,13 +59,16 @@ describe('InventoryStockRepository', () => {
   describe('findById', () => {
     it('returns the entity when found', async () => {
       mockTypeormRepo.findOne.mockResolvedValue(makeStock());
-      const result = await repo.findById('stock-1');
+      const result = await repo.findById('stock-1', 'bank-1');
       expect(result?.id).toBe('stock-1');
+      expect(mockTypeormRepo.findOne).toHaveBeenCalledWith({
+        where: { id: 'stock-1', bloodBankId: 'bank-1' },
+      });
     });
 
     it('returns null when not found', async () => {
       mockTypeormRepo.findOne.mockResolvedValue(null);
-      expect(await repo.findById('missing')).toBeNull();
+      expect(await repo.findById('missing', 'bank-1')).toBeNull();
     });
   });
 

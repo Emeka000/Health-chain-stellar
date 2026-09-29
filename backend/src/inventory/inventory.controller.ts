@@ -9,6 +9,7 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  Req,
   ValidationPipe,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
@@ -114,16 +115,25 @@ export class InventoryController {
   @ApiOperation({ summary: 'Get :id' })
   @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.inventoryService.findOne(id);
+  findOne(
+    @Param('id') id: string,
+    @Req() req: { user?: { organizationId?: string | null } },
+  ) {
+    return this.inventoryService.findOne(id, req.user?.organizationId ?? '');
   }
 
   @RequirePermissions(Permission.INVENTORY_WRITE)
   @ApiOperation({ summary: 'Post' })
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post()
-  create(@Body() createInventoryDto: CreateInventoryDto) {
-    return this.inventoryService.create(createInventoryDto);
+  create(
+    @Body() createInventoryDto: CreateInventoryDto,
+    @Req() req: { user?: { organizationId?: string | null } },
+  ) {
+    return this.inventoryService.create(
+      createInventoryDto,
+      req.user?.organizationId ?? '',
+    );
   }
 
   @RequirePermissions(Permission.INVENTORY_WRITE)
@@ -133,16 +143,29 @@ export class InventoryController {
   update(
     @Param('id') id: string,
     @Body() updateInventoryDto: UpdateInventoryDto,
+    @Req() req: { user?: { organizationId?: string | null } },
   ) {
-    return this.inventoryService.update(id, updateInventoryDto);
+    return this.inventoryService.update(
+      id,
+      updateInventoryDto,
+      req.user?.organizationId ?? '',
+    );
   }
 
   @RequirePermissions(Permission.INVENTORY_WRITE)
   @ApiOperation({ summary: 'Patch :id stock' })
   @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id/stock')
-  updateStock(@Param('id') id: string, @Body('quantity') quantity: number) {
-    return this.inventoryService.updateStock(id, quantity);
+  updateStock(
+    @Param('id') id: string,
+    @Body('quantity') quantity: number,
+    @Req() req: { user?: { organizationId?: string | null } },
+  ) {
+    return this.inventoryService.updateStock(
+      id,
+      quantity,
+      req.user?.organizationId ?? '',
+    );
   }
 
   @RequirePermissions(Permission.INVENTORY_WRITE)
@@ -168,7 +191,10 @@ export class InventoryController {
   @ApiResponse({ status: 200, description: 'Resource deleted successfully' })
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@Param('id') id: string) {
-    return this.inventoryService.remove(id);
+  remove(
+    @Param('id') id: string,
+    @Req() req: { user?: { organizationId?: string | null } },
+  ) {
+    return this.inventoryService.remove(id, req.user?.organizationId ?? '');
   }
 }
