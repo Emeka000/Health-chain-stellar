@@ -11,7 +11,11 @@ import { FileMetadataService } from '../../file-metadata/file-metadata.service';
 import { BloodUnit } from '../entities/blood-unit.entity';
 import { QuarantineCase } from '../entities/quarantine-case.entity';
 import { CreateQuarantineCaseDto } from '../dto/quarantine.dto';
-import { QuarantineTriggerSource, QuarantineReasonCode } from '../enums/quarantine.enums';
+import {
+  QuarantineDisposition,
+  QuarantineTriggerSource,
+  QuarantineReasonCode,
+} from '../enums/quarantine.enums';
 import { BloodStatus } from '../enums/blood-status.enum';
 
 describe('QuarantineService', () => {
@@ -57,6 +61,7 @@ describe('QuarantineService', () => {
           provide: ApprovalService,
           useValue: {
             createRequest: jest.fn(),
+            isApproved: jest.fn(),
           },
         },
         {
@@ -95,6 +100,86 @@ describe('QuarantineService', () => {
       ],
     };
 
+
+  it('creates approval requests for donor-screening cases using contamination policy', async () => {
+    const dto: CreateQuarantineCaseDto = {
+      bloodUnitId: 'unit-123',
+      triggerSource: QuarantineTriggerSource.DONOR_SCREENING,
+      reasonCode: QuarantineReasonCode.SCREENING_FAILURE,
+      evidence: [{ type: 'lab_report', fileId: 'lab-123' }],
+    };
+    const policy = {
+      quarantine: {
+        triggerMatrix: {
+          contaminationSuspected: {
+            enabled: true,
+            autoQuarantine: false,
+            requiredEvidence: ['lab_report'],
+            approvalRequired: true,
+          },
+        },
+        dispositionRules: {
+          contaminationSuspected: {
+            defaultDisposition: 'DISCARD',
+            requiredApprovals: 2,
+          },
+        },
+        evidenceRequirements: {
+          minimumEvidenceCount: 1,
+          allowedEvidenceTypes: ['lab_report'],
+          maxEvidenceSizeMb: 10,
+        },
+      },
+    } as any;
+    const savedCase = { id: 'case-123' } as QuarantineCase;
+    bloodUnitRepository.findOne.mockResolvedValue({
+      id: 'unit-123',
+      status: BloodStatus.AVAILABLE,
+    } as BloodUnit);
+    quarantineRepository.findOne.mockResolvedValue(null);
+    policyCenterService.getDefaultRules.mockReturnValue(policy);
+    fileMetadataService.register.mockResolvedValue({} as any);
+    bloodStatusService.updateStatus.mockResolvedValue({} as any);
+    quarantineRepository.create.mockReturnValue(savedCase);
+    quarantineRepository.save.mockResolvedValue(savedCase);
+
+    await service.createCase(dto, { id: 'operator-1', role: 'operator' });
+
+    expect(approvalService.createRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetId: 'case-123',
+        requiredApprovals: 2,
+      }),
+    );
+  });
+
+  it('requires approval before releasing a donor-screening quarantine case', async () => {
+    const existingCase = {
+      id: 'case-123',
+      bloodUnitId: 'unit-123',
+      triggerSource: QuarantineTriggerSource.DONOR_SCREENING,
+      active: true,
+    } as QuarantineCase;
+    quarantineRepository.findOne.mockResolvedValue(existingCase);
+    policyCenterService.getDefaultRules.mockReturnValue({
+      quarantine: {
+        triggerMatrix: {
+          contaminationSuspected: { approvalRequired: true },
+        },
+      },
+    } as any);
+    approvalService.isApproved.mockResolvedValue(false);
+
+    await expect(
+      service.finalizeCase(
+        'case-123',
+        { disposition: QuarantineDisposition.RELEASE },
+        { id: 'reviewer-1', role: 'reviewer' },
+      ),
+    ).rejects.toThrow('Approval required for quarantine disposition');
+
+    expect(bloodStatusService.updateStatus).not.toHaveBeenCalled();
+  });
     const mockUnit: BloodUnit = {
       id: 'unit-123',
       status: BloodStatus.AVAILABLE,
@@ -103,7 +188,7 @@ describe('QuarantineService', () => {
     const mockPolicy = {
       quarantine: {
         triggerMatrix: {
-          temperature_breach: {
+          temperatureBreach: {
             enabled: true,
             autoQuarantine: true,
             requiredEvidence: ['temperature_log'],
@@ -111,7 +196,7 @@ describe('QuarantineService', () => {
         },
         evidenceRequirements: {
           minimumEvidenceCount: 1,
-          allowedEvidenceTypes: ['temperature_log', 'document'],
+          allowedEvidenceTypes: ['temperature_log', 'document', 'lab_report'],
           maxEvidenceSizeMb: 10,
         },
       },
@@ -162,7 +247,7 @@ describe('QuarantineService', () => {
         quarantine: {
           ...mockPolicy.quarantine,
           triggerMatrix: {
-            temperature_breach: { enabled: false },
+            temperatureBreach: { enabled: false },
           },
         },
       };
@@ -189,7 +274,7 @@ describe('QuarantineService', () => {
       const mockPolicy = {
         quarantine: {
           triggerMatrix: {
-            temperature_breach: {
+            temperatureBreach: {
               enabled: true,
               autoQuarantine: true,
               requiredEvidence: ['temperature_log'],
@@ -266,12 +351,12 @@ describe('QuarantineService', () => {
       const mockPolicy = {
         quarantine: {
           triggerMatrix: {
-            temperature_breach: {
+            temperatureBreach: {
               enabled: true,
               autoQuarantine: true,
               requiredEvidence: ['temperature_log'],
             },
-            anomaly_detection: {
+            anomalyDetection: {
               enabled: true,
               autoQuarantine: true,
               requiredEvidence: ['lab_report'],

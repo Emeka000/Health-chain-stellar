@@ -10,6 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { PolicyCenterService } from '../../policy-center/policy-center.service';
+import type { OperationalPolicyRules } from '../../policy-center/policy-config.types';
 import { ApprovalService } from '../../approvals/approval.service';
 import { ApprovalActionType } from '../../approvals/enums/approval.enum';
 import { FileMetadataService } from '../../file-metadata/file-metadata.service';
@@ -33,6 +34,25 @@ interface AuthenticatedUserContext {
   id: string;
   role: string;
 }
+
+type QuarantinePolicyTrigger = keyof OperationalPolicyRules['quarantine']['triggerMatrix'];
+type QuarantineTriggerConfig = {
+  enabled?: boolean;
+  autoQuarantine?: boolean;
+  approvalRequired?: boolean;
+};
+type QuarantineDispositionRules = {
+  defaultDisposition?: QuarantineDisposition;
+  requiredApprovals?: number;
+  autoApproveThresholdHours?: number;
+};
+
+const TRIGGER_POLICY_KEYS: Record<QuarantineTriggerSource, QuarantinePolicyTrigger> = {
+  [QuarantineTriggerSource.DONOR_SCREENING]: 'contaminationSuspected',
+  [QuarantineTriggerSource.TEMPERATURE_BREACH]: 'temperatureBreach',
+  [QuarantineTriggerSource.MANUAL_OPERATOR_ACTION]: 'manualOperatorAction',
+  [QuarantineTriggerSource.ANOMALY_DETECTION]: 'anomalyDetection',
+};
 
 @Injectable()
 export class QuarantineService {
@@ -76,7 +96,7 @@ export class QuarantineService {
 
     // Check if trigger is enabled in policy
     const policy = this.policyCenterService.getDefaultRules();
-    const triggerConfig = policy.quarantine.triggerMatrix[dto.triggerSource.toLowerCase() as keyof typeof policy.quarantine.triggerMatrix];
+    const triggerConfig = this.getTriggerConfig(dto.triggerSource, policy);
 
     if (!triggerConfig?.enabled) {
       throw new BadRequestException(`Quarantine trigger ${dto.triggerSource} is not enabled in policy`);
@@ -201,7 +221,13 @@ export class QuarantineService {
 
     // Check if approval is required and obtained
     const policy = this.policyCenterService.getDefaultRules();
-    const triggerConfig = policy.quarantine.triggerMatrix[existing.triggerSource.toLowerCase() as keyof typeof policy.quarantine.triggerMatrix];
+    const triggerConfig = this.getTriggerConfig(existing.triggerSource, policy);
+
+    if (!triggerConfig) {
+      throw new BadRequestException(
+        `Quarantine trigger ${existing.triggerSource} is not configured in policy`,
+      );
+    }
 
     if (triggerConfig?.approvalRequired) {
       const isApproved = await this.approvalService.isApproved(existing.id, ApprovalActionType.ESCROW_RELEASE);
@@ -327,11 +353,29 @@ export class QuarantineService {
     }
   }
 
+  private getTriggerConfig(
+    triggerSource: QuarantineTriggerSource,
+    policy: OperationalPolicyRules,
+  ): QuarantineTriggerConfig | undefined {
+    return policy.quarantine.triggerMatrix[
+      TRIGGER_POLICY_KEYS[triggerSource]
+    ] as QuarantineTriggerConfig | undefined;
+  }
+
+  private getDispositionRules(
+    triggerSource: QuarantineTriggerSource,
+    policy: OperationalPolicyRules,
+  ): QuarantineDispositionRules | undefined {
+    return policy.quarantine.dispositionRules[
+      TRIGGER_POLICY_KEYS[triggerSource]
+    ] as QuarantineDispositionRules | undefined;
+  }
+
   private determineInitialReviewState(
     dto: CreateQuarantineCaseDto,
-    policy: any,
+    policy: OperationalPolicyRules,
   ): QuarantineReviewState {
-    const triggerConfig = policy.quarantine.triggerMatrix[dto.triggerSource.toLowerCase()];
+    const triggerConfig = this.getTriggerConfig(dto.triggerSource, policy);
 
     if (triggerConfig?.autoQuarantine) {
       return QuarantineReviewState.UNDER_REVIEW;
@@ -340,8 +384,11 @@ export class QuarantineService {
     return QuarantineReviewState.PENDING;
   }
 
-  private requiresApproval(dto: CreateQuarantineCaseDto, policy: any): boolean {
-    const triggerConfig = policy.quarantine.triggerMatrix[dto.triggerSource.toLowerCase()];
+  private requiresApproval(
+    dto: CreateQuarantineCaseDto,
+    policy: OperationalPolicyRules,
+  ): boolean {
+    const triggerConfig = this.getTriggerConfig(dto.triggerSource, policy);
     return triggerConfig?.approvalRequired ?? false;
   }
 
@@ -350,7 +397,10 @@ export class QuarantineService {
     user?: AuthenticatedUserContext,
   ) {
     const policy = this.policyCenterService.getDefaultRules();
-    const dispositionRules = policy.quarantine.dispositionRules[quarantineCase.triggerSource.toLowerCase() as keyof typeof policy.quarantine.dispositionRules];
+    const dispositionRules = this.getDispositionRules(
+      quarantineCase.triggerSource,
+      policy,
+    );
 
     await this.approvalService.createRequest({
       targetId: quarantineCase.id,
@@ -380,7 +430,10 @@ export class QuarantineService {
   }> {
     const quarantineCase = await this.getCase(caseId);
     const policy = this.policyCenterService.getDefaultRules();
-    const dispositionRules = policy.quarantine.dispositionRules[quarantineCase.triggerSource.toLowerCase() as keyof typeof policy.quarantine.dispositionRules];
+    const dispositionRules = this.getDispositionRules(
+      quarantineCase.triggerSource,
+      policy,
+    );
 
     const recommended = dispositionRules?.defaultDisposition ?? 'RELEASE';
     const reasoning = [

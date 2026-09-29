@@ -371,9 +371,19 @@ export class BloodUnitsService {
         dto.temperature > this.maxStorageTempC)
     ) {
       try {
+        const quarantineUnit = await this.dataSource
+          .getRepository(BloodUnit)
+          .findOne({ where: { blockchainUnitId: String(dto.unitId) } });
+
+        if (!quarantineUnit) {
+          throw new NotFoundException(
+            `Current blood unit not found for blockchain ID ${dto.unitId}`,
+          );
+        }
+
         await this.quarantineService.createCase(
           {
-            bloodUnitId: matchedUnit.id,
+            bloodUnitId: quarantineUnit.id,
             triggerSource: QuarantineTriggerSource.TEMPERATURE_BREACH,
             reasonCode: QuarantineReasonCode.STORAGE_ANOMALY,
             reason: `Temperature ${dto.temperature}C breached threshold [${this.minStorageTempC}, ${this.maxStorageTempC}]`,
