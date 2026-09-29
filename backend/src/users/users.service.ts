@@ -230,13 +230,14 @@ export class UsersService {
       throw new NotFoundException(`User with ID ${userId} not found`);
     }
 
-    // Delete old avatar if exists
-    if (user.avatarUrl) {
-      const oldKey = user.avatarUrl.replace('/uploads/', '');
-      await this.storageService.deleteFile(oldKey);
+    // Delete old avatar if exists. Only the server-recorded storage key is
+    // trusted — never derive a key from avatarUrl.
+    if (this.isAvatarKey(user.avatarKey)) {
+      await this.storageService.deleteFile(user.avatarKey);
     }
 
     user.avatarUrl = uploadResult.url;
+    user.avatarKey = uploadResult.key;
 
     await this.dataSource.transaction(async (manager) => {
       await manager.save(UserEntity, user);
@@ -276,17 +277,19 @@ export class UsersService {
       throw new NotFoundException(`User with ID ${userId} not found`);
     }
 
-    if (!user.avatarUrl) {
+    if (!user.avatarUrl && !user.avatarKey) {
       throw new BadRequestException('No avatar to delete');
     }
 
-    // Delete from storage
-    const key = user.avatarUrl.replace('/uploads/', '');
-    await this.storageService.deleteFile(key);
+    // Delete from storage using the server-recorded key only.
+    if (this.isAvatarKey(user.avatarKey)) {
+      await this.storageService.deleteFile(user.avatarKey);
+    }
 
     // Update user and log activity atomically — if the DB write fails
     // the activity record is also rolled back, keeping them consistent.
     user.avatarUrl = null;
+    user.avatarKey = null;
     await this.dataSource.transaction(async (manager) => {
       await manager.save(UserEntity, user);
 
@@ -322,6 +325,11 @@ export class UsersService {
       limit,
       offset,
     };
+  }
+
+  /** Avatar keys are always issued by uploadFile(..., 'avatars'). */
+  private isAvatarKey(key: string | null | undefined): key is string {
+    return typeof key === 'string' && key.startsWith('avatars/');
   }
 
   private calculateProfileCompletion(user: UserEntity): number {

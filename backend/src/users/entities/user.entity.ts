@@ -57,6 +57,17 @@ export class UserEntity extends BaseEntity {
   @Column({ name: 'phone_number', type: 'varchar', length: 40, nullable: true })
   phoneNumber?: string | null;
 
+  /** Public URL of the avatar. Server-managed only — never client-settable. */
+  @Column({ name: 'avatar_url', type: 'varchar', length: 2048, nullable: true })
+  avatarUrl?: string | null;
+
+  /**
+   * Storage key of the avatar object, as returned by StorageService.uploadFile().
+   * This (not avatarUrl) is the only value ever passed to StorageService.deleteFile().
+   */
+  @Column({ name: 'avatar_key', type: 'varchar', length: 512, nullable: true })
+  avatarKey?: string | null;
+
   @Column({ name: 'organization_id', type: 'uuid', nullable: true })
   organizationId?: string | null;
 

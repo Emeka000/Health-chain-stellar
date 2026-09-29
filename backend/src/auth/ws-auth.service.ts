@@ -15,7 +15,10 @@ import Redis from 'ioredis';
 import { Inject } from '@nestjs/common';
 
 import { REDIS_CLIENT } from '../redis/redis.constants';
-import { SecurityEventLoggerService } from '../user-activity/security-event-logger.service';
+import {
+  SecurityEventLoggerService,
+  SecurityEventType,
+} from '../user-activity/security-event-logger.service';
 import { JwtKeyService } from './jwt-key.service';
 import { MFA_TOKEN_AUDIENCE } from './mfa/mfa.constants';
 import { SessionStatusService } from './session-status.service';
@@ -108,7 +111,7 @@ export class WsAuthService {
 
         if (!token) {
           const err = new Error('Authentication token required');
-          await this.auditEvent('WS_NO_TOKEN', {
+          await this.auditEvent(SecurityEventType.WS_NO_TOKEN, {
             socketId: socket.id,
             ip: socket.handshake.address,
             userAgent: socket.handshake.headers['user-agent'],
@@ -125,7 +128,7 @@ export class WsAuthService {
           decoded = await this.verifyToken(token);
         } catch (error) {
           const err = new Error(`Invalid or expired token: ${(error as Error).message}`);
-          await this.auditEvent('WS_INVALID_TOKEN', {
+          await this.auditEvent(SecurityEventType.WS_INVALID_TOKEN, {
             socketId: socket.id,
             ip: socket.handshake.address,
             error: (error as Error).message,
@@ -140,7 +143,7 @@ export class WsAuthService {
         const requiresTenant = !this.isOrgLessRole(decoded.role);
         if (!decoded.userId || (!decoded.tenantId && requiresTenant)) {
           const err = new Error('Invalid token claims: missing userId or tenantId');
-          await this.auditEvent('WS_INVALID_CLAIMS', {
+          await this.auditEvent(SecurityEventType.WS_INVALID_CLAIMS, {
             socketId: socket.id,
             ip: socket.handshake.address,
             userId: decoded.userId,
@@ -163,7 +166,7 @@ export class WsAuthService {
 
           if (!rateLimitOk) {
             const err = new Error('Rate limit exceeded: too many connections');
-            await this.auditEvent('WS_RATE_LIMITED', {
+            await this.auditEvent(SecurityEventType.WS_RATE_LIMITED, {
               socketId: socket.id,
               userId: decoded.userId,
               ip: socket.handshake.address,
@@ -188,7 +191,7 @@ export class WsAuthService {
           `WS authenticated: socketId=${socket.id} userId=${decoded.userId} tenantId=${decoded.tenantId ?? 'none'} role=${decoded.role}`,
         );
 
-        await this.auditEvent('WS_AUTH_SUCCESS', {
+        await this.auditEvent(SecurityEventType.WS_AUTH_SUCCESS, {
           socketId: socket.id,
           userId: decoded.userId,
           tenantId: decoded.tenantId ?? null,
@@ -204,7 +207,7 @@ export class WsAuthService {
         );
 
         const err = new Error('Authentication failed');
-        await this.auditEvent('WS_AUTH_ERROR', {
+        await this.auditEvent(SecurityEventType.WS_AUTH_ERROR, {
           socketId: socket.id,
           ip: socket.handshake.address,
           error: (error as Error).message,
@@ -369,27 +372,12 @@ export class WsAuthService {
    * All authentication and privilege violations are recorded for compliance.
    */
   private async auditEvent(
-    eventType: string,
+    eventType: SecurityEventType,
     metadata: Record<string, any>,
   ): Promise<void> {
     try {
-      // Map to SecurityEventType if exists
-      const eventMap: Record<string, string> = {
-        WS_NO_TOKEN: 'WS_NO_TOKEN',
-        WS_INVALID_TOKEN: 'WS_INVALID_TOKEN',
-        WS_INVALID_CLAIMS: 'WS_INVALID_CLAIMS',
-        WS_PRIVILEGE_VIOLATION: 'WS_PRIVILEGE_VIOLATION',
-        WS_TENANT_ESCAPE_ATTEMPT: 'WS_TENANT_ESCAPE_ATTEMPT',
-        WS_RATE_LIMITED: 'WS_RATE_LIMITED',
-        WS_AUTH_SUCCESS: 'WS_AUTH_SUCCESS',
-        WS_AUTH_ERROR: 'WS_AUTH_ERROR',
-        WS_TOKEN_REFRESH_FAILED: 'WS_TOKEN_REFRESH_FAILED',
-      };
-
-      const finalEventType = eventMap[eventType] || eventType;
-
       await this.securityEventLogger.logEvent({
-        eventType: finalEventType as any,
+        eventType,
         userId: metadata.userId || null,
         metadata,
         ipAddress: metadata.ip,

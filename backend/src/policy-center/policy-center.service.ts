@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 
 import { CreatePolicyVersionDto } from './dto/create-policy-version.dto';
 import { ListPolicyVersionsDto } from './dto/list-policy-versions.dto';
@@ -212,7 +212,41 @@ export class PolicyCenterService {
       throw new BadRequestException('Cannot activate an already-expired version');
     }
 
-    const currentlyActive = await this.repo.findOne({
+    return this.repo.manager.transaction((manager) =>
+      this.promoteVersion(manager, target, actor, now, PolicyVersionStatus.SUPERSEDED),
+    );
+  }
+
+  async rollbackToVersion(id: string, actor: string): Promise<PolicyVersionEntity> {
+    const target = await this.getVersion(id);
+    this.validateRules(target.rules);
+
+    const now = new Date();
+    if (target.effectiveFrom && target.effectiveFrom > now) {
+      throw new BadRequestException('Cannot roll back to a version before effectiveFrom');
+    }
+
+    // A previously-active version had its window closed (effectiveTo = now)
+    // when it was superseded. Re-open it so it is served again after rollback.
+    target.effectiveTo = null;
+
+    // Demote + activate atomically: a failure must never leave the policy
+    // without an ACTIVE version (which would reset it to default rules).
+    return this.repo.manager.transaction((manager) =>
+      this.promoteVersion(manager, target, actor, now, PolicyVersionStatus.ROLLED_BACK),
+    );
+  }
+
+  private async promoteVersion(
+    manager: EntityManager,
+    target: PolicyVersionEntity,
+    actor: string,
+    now: Date,
+    demotedStatus: PolicyVersionStatus.SUPERSEDED | PolicyVersionStatus.ROLLED_BACK,
+  ): Promise<PolicyVersionEntity> {
+    const repo = manager.getRepository(PolicyVersionEntity);
+
+    const currentlyActive = await repo.findOne({
       where: {
         policyName: target.policyName,
         status: PolicyVersionStatus.ACTIVE,
@@ -221,9 +255,12 @@ export class PolicyCenterService {
     });
 
     if (currentlyActive && currentlyActive.id !== target.id) {
-      currentlyActive.status = PolicyVersionStatus.SUPERSEDED;
+      currentlyActive.status = demotedStatus;
       currentlyActive.effectiveTo = now;
-      await this.repo.save(currentlyActive);
+      if (demotedStatus === PolicyVersionStatus.ROLLED_BACK) {
+        currentlyActive.rollbackFromVersionId = target.id;
+      }
+      await repo.save(currentlyActive);
     }
 
     target.status = PolicyVersionStatus.ACTIVE;
@@ -231,28 +268,7 @@ export class PolicyCenterService {
     target.activatedBy = actor;
 
     // Lock snapshot: persist rules hash and mark immutable (Issue #618)
-    return this.replayService.lockSnapshot(target);
-  }
-
-  async rollbackToVersion(id: string, actor: string): Promise<PolicyVersionEntity> {
-    const target = await this.getVersion(id);
-
-    const currentlyActive = await this.repo.findOne({
-      where: {
-        policyName: target.policyName,
-        status: PolicyVersionStatus.ACTIVE,
-      },
-      order: { version: 'DESC' },
-    });
-
-    if (currentlyActive && currentlyActive.id !== target.id) {
-      currentlyActive.status = PolicyVersionStatus.ROLLED_BACK;
-      currentlyActive.effectiveTo = new Date();
-      currentlyActive.rollbackFromVersionId = target.id;
-      await this.repo.save(currentlyActive);
-    }
-
-    return this.activateVersion(id, actor);
+    return this.replayService.lockSnapshot(target, manager);
   }
 
   async getActivePolicySnapshot(
