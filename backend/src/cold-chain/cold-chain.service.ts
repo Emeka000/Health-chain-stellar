@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ConfigService } from '@nestjs/config';
@@ -8,6 +8,7 @@ import { createHash } from 'crypto';
 import { TemperatureSampleEntity } from './entities/temperature-sample.entity';
 import { DeliveryComplianceEntity } from './entities/delivery-compliance.entity';
 import { IngestTelemetryDto } from './dto/ingest-telemetry.dto';
+import { DispatchRecord } from '../dispatch/entities/dispatch-record.entity';
 
 const SAFE_MIN_C = 2;
 const SAFE_MAX_C = 8;
@@ -41,6 +42,8 @@ export class ColdChainService {
     private readonly sampleRepo: Repository<TemperatureSampleEntity>,
     @InjectRepository(DeliveryComplianceEntity)
     private readonly complianceRepo: Repository<DeliveryComplianceEntity>,
+    @InjectRepository(DispatchRecord)
+    private readonly dispatchRepo: Repository<DispatchRecord>,
     private readonly eventEmitter: EventEmitter2,
     private readonly configService: ConfigService,
   ) {
@@ -51,12 +54,20 @@ export class ColdChainService {
   }
 
   async ingest(dto: IngestTelemetryDto): Promise<TemperatureSampleEntity> {
+    const dispatch = await this.dispatchRepo.findOne({ where: { id: dto.deliveryId } });
+    if (!dispatch) {
+      throw new NotFoundException(`No dispatch found for delivery '${dto.deliveryId}'`);
+    }
+    if (dto.orderId && dto.orderId !== dispatch.orderId) {
+      throw new BadRequestException('Telemetry orderId does not match the delivery order');
+    }
+
     const temp = dto.temperatureCelsius;
     const isExcursion = temp < SAFE_MIN_C || temp > SAFE_MAX_C;
 
     const sample = this.sampleRepo.create({
       deliveryId: dto.deliveryId,
-      orderId: dto.orderId ?? null,
+      orderId: dispatch.orderId,
       temperatureCelsius: temp,
       recordedAt: dto.recordedAt ? new Date(dto.recordedAt) : new Date(),
       source: dto.source ?? 'manual',
@@ -64,7 +75,7 @@ export class ColdChainService {
     });
 
     const saved = await this.sampleRepo.save(sample);
-    await this.recalcCompliance(dto.deliveryId, dto.orderId ?? null);
+    await this.recalcCompliance(dto.deliveryId, dispatch.orderId);
     return saved;
   }
 
@@ -129,7 +140,7 @@ export class ColdChainService {
 
       const breachEvent: ColdChainBreachEvent = {
         deliveryId,
-        orderId,
+        orderId: record.orderId,
         breachDurationMinutes,
         minTempCelsius: minTemp,
         maxTempCelsius: maxTemp,

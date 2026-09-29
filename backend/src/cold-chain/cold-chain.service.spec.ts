@@ -6,6 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import { ColdChainService } from './cold-chain.service';
 import { TemperatureSampleEntity } from './entities/temperature-sample.entity';
 import { DeliveryComplianceEntity } from './entities/delivery-compliance.entity';
+import { DispatchRecord } from '../dispatch/entities/dispatch-record.entity';
 
 describe('ColdChainService', () => {
   let service: ColdChainService;
@@ -30,6 +31,12 @@ describe('ColdChainService', () => {
     }),
   };
 
+  const mockDispatchRepo = {
+    findOne: jest.fn(() =>
+      Promise.resolve({ id: 'd1', orderId: 'd1' } as DispatchRecord | null),
+    ),
+  };
+
   const mockEventEmitter = {
     emit: jest.fn(),
   };
@@ -48,6 +55,7 @@ describe('ColdChainService', () => {
         ColdChainService,
         { provide: getRepositoryToken(TemperatureSampleEntity), useValue: mockSampleRepo },
         { provide: getRepositoryToken(DeliveryComplianceEntity), useValue: mockComplianceRepo },
+        { provide: getRepositoryToken(DispatchRecord), useValue: mockDispatchRepo },
         { provide: EventEmitter2, useValue: mockEventEmitter },
         { provide: ConfigService, useValue: mockConfigService },
       ],
@@ -110,6 +118,32 @@ describe('ColdChainService', () => {
     expect(complianceRecord?.minTempCelsius).toBe(0);
   });
 
+  it('rejects telemetry that associates an order different from the delivery', async () => {
+    await expect(
+      service.ingest({
+        deliveryId: 'd1',
+        orderId: 'victim-order',
+        temperatureCelsius: 10,
+      }),
+    ).rejects.toThrow('Telemetry orderId does not match the delivery order');
+
+    expect(mockSampleRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('rejects telemetry for an unknown delivery before saving the sample', async () => {
+    mockDispatchRepo.findOne.mockResolvedValueOnce(null);
+
+    await expect(
+      service.ingest({
+        deliveryId: 'made-up-delivery',
+        orderId: 'victim-order',
+        temperatureCelsius: 10,
+      }),
+    ).rejects.toThrow("No dispatch found for delivery 'made-up-delivery'");
+
+    expect(mockSampleRepo.save).not.toHaveBeenCalled();
+  });
+
   it('treats exactly 2°C and 8°C as within the safe boundary (compliant)', async () => {
     samples = [
       sample('s1', 2, t(0), false),
@@ -152,6 +186,7 @@ describe('ColdChainService', () => {
         ColdChainService,
         { provide: getRepositoryToken(TemperatureSampleEntity), useValue: mockSampleRepo },
         { provide: getRepositoryToken(DeliveryComplianceEntity), useValue: mockComplianceRepo },
+        { provide: getRepositoryToken(DispatchRecord), useValue: mockDispatchRepo },
         { provide: EventEmitter2, useValue: mockEventEmitter },
         { provide: ConfigService, useValue: mockConfigService },
       ],
@@ -166,6 +201,7 @@ describe('ColdChainService', () => {
 
     await service.ingest({
       deliveryId: 'd1',
+      orderId: 'd1',
       temperatureCelsius: 10,
       recordedAt: t(20 * 60_000).toISOString(),
     });
@@ -174,7 +210,7 @@ describe('ColdChainService', () => {
     expect(mockEventEmitter.emit).toHaveBeenCalledTimes(1);
     expect(mockEventEmitter.emit).toHaveBeenCalledWith(
       'cold-chain.breach',
-      expect.objectContaining({ deliveryId: 'd1', breachDurationMinutes: 20 }),
+      expect.objectContaining({ deliveryId: 'd1', orderId: 'd1', breachDurationMinutes: 20 }),
     );
 
     // Second ingest: still breaching, but suspension already triggered -> no repeat event.
@@ -191,6 +227,29 @@ describe('ColdChainService', () => {
     });
 
     expect(mockEventEmitter.emit).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the compliance record order when the threshold-crossing sample omits orderId', async () => {
+    complianceRecord = {
+      deliveryId: 'd1',
+      orderId: 'd1',
+      suspensionTriggered: false,
+    };
+    samples = [
+      sample('s1', 10, t(0), true),
+      sample('s2', 10, t(20 * 60_000), true),
+    ];
+
+    await service.ingest({
+      deliveryId: 'd1',
+      temperatureCelsius: 10,
+      recordedAt: t(20 * 60_000).toISOString(),
+    });
+
+    expect(mockEventEmitter.emit).toHaveBeenCalledWith(
+      'cold-chain.breach',
+      expect.objectContaining({ deliveryId: 'd1', orderId: 'd1' }),
+    );
   });
 
   it('does not fire the breach event when the excursion duration stays below the threshold', async () => {

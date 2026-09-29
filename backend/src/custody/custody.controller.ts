@@ -20,16 +20,18 @@ export class CustodyController {
   @RequirePermissions(Permission.TRANSFER_CUSTODY)
   @ApiOperation({ summary: 'Record a custody handoff between actors' })
   record(@Body() dto: RecordHandoffDto, @Req() req: Request) {
-    const performedByUserId: string = (req.user as any)?.id ?? (req.user as any)?.sub ?? 'unknown';
-    return this.service.recordHandoff(dto, performedByUserId);
+    const user = req.user as any;
+    const performedByUserId: string = user?.id ?? user?.sub ?? 'unknown';
+    return this.service.recordHandoff(dto, performedByUserId, user?.organizationId);
   }
 
   @Post('handoffs/:id/confirm')
   @RequirePermissions(Permission.TRANSFER_CUSTODY)
   @ApiOperation({ summary: 'Confirm a pending custody handoff' })
   confirm(@Param('id') id: string, @Body() dto: ConfirmHandoffDto, @Req() req: Request) {
-    const callerUserId: string = (req.user as any)?.id ?? (req.user as any)?.sub ?? 'unknown';
-    return this.service.confirmHandoff(id, dto, callerUserId);
+    const user = req.user as any;
+    const callerUserId: string = user?.id ?? user?.sub ?? 'unknown';
+    return this.service.confirmHandoff(id, dto, callerUserId, user?.organizationId);
   }
 
   @Get('units/:bloodUnitId/timeline')

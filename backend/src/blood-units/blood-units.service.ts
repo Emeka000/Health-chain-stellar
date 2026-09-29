@@ -341,8 +341,75 @@ export class BloodUnitsService {
 
     return {
       success: true,
-      transferId: transfer.id,
-      status: unit.status,
+      unitId,
+      newOrganizationId: unit.organizationId,
+    };
+  }
+
+
+  async logTemperature(dto: LogTemperatureDto) {
+    const matchedUnit = await this.findByBlockchainUnitId(dto.unitId);
+
+    const result = await this.sorobanService.logTemperature({
+      unitId: dto.unitId,
+      temperature: dto.temperature,
+      timestamp: dto.timestamp || Math.floor(Date.now() / 1000),
+      bloodType: dto.bloodType,
+    });
+
+    if (
+      matchedUnit &&
+      (dto.temperature < this.minStorageTempC ||
+        dto.temperature > this.maxStorageTempC)
+    ) {
+      try {
+        const quarantineUnit = await this.dataSource
+          .getRepository(BloodUnit)
+          .findOne({ where: { blockchainUnitId: String(dto.unitId) } });
+
+        if (!quarantineUnit) {
+          throw new NotFoundException(
+            `Current blood unit not found for blockchain ID ${dto.unitId}`,
+          );
+        }
+
+        await this.quarantineService.createCase(
+          {
+            bloodUnitId: quarantineUnit.id,
+            triggerSource: QuarantineTriggerSource.TEMPERATURE_BREACH,
+            reasonCode: QuarantineReasonCode.STORAGE_ANOMALY,
+            reason: `Temperature ${dto.temperature}C breached threshold [${this.minStorageTempC}, ${this.maxStorageTempC}]`,
+            metadata: {
+              onChainUnitId: dto.unitId,
+              observedTemperature: dto.temperature,
+              threshold: {
+                min: this.minStorageTempC,
+                max: this.maxStorageTempC,
+              },
+            },
+            evidence: [
+              {
+                type: 'temperature_log',
+                fileId: `temp-log-${dto.unitId}-${Date.now()}`,
+                description: `Temperature reading: ${dto.temperature}C`,
+              },
+            ],
+          },
+          undefined,
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Temperature breach quarantine trigger failed for unit ${matchedUnit.id}: ${
+            error instanceof Error ? error.message : 'unknown error'
+          }`,
+        );
+      }
+    }
+
+    return {
+      success: true,
+      transactionHash: result.transactionHash,
+      message: 'Temperature logged successfully',
     };
   }
 
