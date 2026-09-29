@@ -2340,7 +2340,7 @@ fn test_release_reservation_by_contract_releases_reservation() {
     let stored = client.get_blood_unit(&unit_id);
     assert_eq!(stored.status, BloodStatus::Reserved);
 
-    // Release via release_reservation_by_contract with the authorized contract
+    // Register the trusted requests contract address, then release via it.
     let authorized_addr = Address::generate(&env);
     client.release_reservation_by_contract(&authorized_addr, &reservation_id);
 

@@ -333,6 +333,11 @@ pub enum DataKey {
     /// Address of the authoritative HealthChainContract (BloodUnitRegistry)
     /// for cross-contract state synchronisation.
     RegistryContractId,
+
+    /// Address of the trusted requests contract that is allowed to call
+    /// `release_reservation_by_contract`. Only this address is permitted;
+    /// any other address is rejected regardless of `require_auth`.
+    RequestsContractId,
 }
 
 /// Reservation record for blood units locked for a specific requester

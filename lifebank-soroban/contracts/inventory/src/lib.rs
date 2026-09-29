@@ -515,6 +515,16 @@ impl InventoryContract {
             return Err(ContractError::Unauthorized);
         }
 
+        // Reject a blood bank whose authorization has been revoked since it
+        // registered this unit. register_blood and reserve_blood gate on
+        // is_authorized_bank; update_status must enforce the same invariant so
+        // that authorize_bank(..., false) actually strips all write access.
+        if authorized_by == blood_unit.bank_id
+            && !storage::is_authorized_bank(&env, &authorized_by)
+        {
+            return Err(ContractError::NotAuthorizedBloodBank);
+        }
+
         let mut blood_unit = blood_unit;
 
         let current_time = env.ledger().timestamp();
@@ -646,6 +656,14 @@ impl InventoryContract {
 
             if authorized_by != admin && authorized_by != blood_unit.bank_id {
                 return Err(ContractError::Unauthorized);
+            }
+
+            // Mirror the is_authorized_bank gate from register_blood/reserve_blood:
+            // a de-authorized bank must not be able to mutate its own units.
+            if authorized_by == blood_unit.bank_id
+                && !storage::is_authorized_bank(&env, &authorized_by)
+            {
+                return Err(ContractError::NotAuthorizedBloodBank);
             }
 
             if blood_unit.is_expired(current_time) {
@@ -925,17 +943,27 @@ impl InventoryContract {
     ) -> Result<(), ContractError> {
         Self::require_not_paused(&env)?;
 
-        // Verify that the caller is the expected contract using Soroban's
-        // standard cross-contract auth pattern. The requests contract passes
-        // its own address as `authorized_contract`; require_auth() on that
-        // address proves that the authenticated caller is indeed the requests
-        // contract (not a random contract or user).
+        // Step 1 — require_auth proves the caller controls `authorized_contract`.
         authorized_contract.require_auth();
+
+        // Step 2 — verify `authorized_contract` is the stored trusted requests
+        // contract. Without this check any address could pass step 1 by signing
+        // for itself and release arbitrary reservations.
+        let trusted: Option<Address> = env.storage().instance().get(&DataKey::RequestsContractId);
+        match trusted {
+            Some(ref requests_contract) if *requests_contract == authorized_contract => {}
+            _ => return Err(ContractError::Unauthorized),
+        }
 
         let reservation = storage::get_reservation(&env, reservation_id)
             .ok_or(ContractError::ReservationNotFound)?;
 
-        Self::release_reservation_internal(&env, &reservation, reservation_id)?;
+        Self::release_reservation_internal(
+            &env,
+            &reservation,
+            reservation_id,
+            &authorized_contract,
+        )?;
 
         Ok(())
     }
@@ -975,17 +1003,20 @@ impl InventoryContract {
             }
         }
 
-        Self::release_reservation_internal(&env, &reservation, reservation_id)?;
+        Self::release_reservation_internal(&env, &reservation, reservation_id, &caller)?;
 
         Ok(())
     }
 
     /// Shared internal logic for releasing a reservation.
-    /// Handles the actual state changes and synchronization with registry.
+    /// `caller` is the address that actually triggered the release (admin,
+    /// reserver, or requests contract) and is recorded in the audit trail
+    /// instead of the original `reservation.requester`.
     fn release_reservation_internal(
         env: &Env,
         reservation: &Reservation,
         reservation_id: u64,
+        caller: &Address,
     ) -> Result<(), ContractError> {
         let registry_id: Option<Address> =
             env.storage().instance().get(&DataKey::RegistryContractId);
@@ -1003,7 +1034,7 @@ impl InventoryContract {
                         unit_id,
                         BloodStatus::Reserved,
                         BloodStatus::Available,
-                        &reservation.requester,
+                        caller,
                         None,
                     );
                     events::emit_status_change(
@@ -1011,15 +1042,24 @@ impl InventoryContract {
                         unit_id,
                         BloodStatus::Reserved,
                         BloodStatus::Available,
-                        &reservation.requester,
+                        caller,
                         None,
                     );
-                }
-            }
 
-            // Sync the release to the authoritative registry if configured
-            if let Some(ref reg) = registry_id {
-                let _ = registry_client::release_unit(&env, reg, &reservation.requester, unit_id);
+                    // Sync the release to the authoritative registry if configured.
+                    // A failed registry call is treated as fatal to prevent the local
+                    // state from diverging from the authoritative registry.
+                    if let Some(ref reg) = registry_id {
+                        if !registry_client::release_unit(
+                            &env,
+                            reg,
+                            &reservation.requester,
+                            unit_id,
+                        ) {
+                            return Err(ContractError::RegistryCallFailed);
+                        }
+                    }
+                }
             }
         }
 
@@ -1101,6 +1141,36 @@ impl InventoryContract {
         let registry_contract = env.storage().instance().get(&DataKey::RegistryContractId);
         storage::extend_instance_ttl(&env);
         registry_contract
+    }
+
+    /// Set the trusted requests contract address. Only admin can call this.
+    ///
+    /// Once set, only this contract address is permitted to call
+    /// `release_reservation_by_contract`, preventing impersonation by
+    /// arbitrary addresses that could otherwise satisfy `require_auth` on
+    /// themselves.
+    ///
+    /// # Errors
+    /// - `Unauthorized`: caller is not the admin
+    pub fn set_requests_contract(
+        env: Env,
+        admin: Address,
+        requests_contract_id: Address,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        let stored_admin = storage::get_admin(&env);
+        if admin != stored_admin {
+            return Err(ContractError::Unauthorized);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::RequestsContractId, &requests_contract_id);
+        Ok(())
+    }
+
+    /// Get the configured requests contract address, if any.
+    pub fn get_requests_contract(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::RequestsContractId)
     }
 
     /// Upgrade the contract to a new WASM hash. Only admin can call this.
