@@ -26,7 +26,6 @@ interface ParsedRow {
   component: BloodComponent;
   volumeMl: number;
   expiresAt: Date;
-  organizationId: string;
   donorId?: string;
   collectedAt: Date;
 }
@@ -83,7 +82,7 @@ export class BloodUnitBatchService {
         volumeMl: parsed.volumeMl,
         expiresAt: parsed.expiresAt,
         collectedAt: parsed.collectedAt,
-        organizationId: parsed.organizationId ?? organizationId,
+        organizationId,
         donorId: parsed.donorId ?? null,
         status: BloodStatus.AVAILABLE,
         unitCode: this.generateUnitCode(parsed.bloodType, rowNumber),
@@ -170,7 +169,6 @@ export class BloodUnitBatchService {
         volumeMl,
         expiresAt,
         collectedAt,
-        organizationId: (raw['organization_id'] ?? raw['org_id'] ?? '').trim() || '',
         donorId: (raw['donor_id'] ?? '').trim() || undefined,
       },
     };

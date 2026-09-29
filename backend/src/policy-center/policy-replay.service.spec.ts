@@ -64,6 +64,40 @@ describe('PolicyReplayService (Issue #618)', () => {
     expect(h1).toHaveLength(64);
   });
 
+  it('computeRulesHash differs when a nested rule value changes (Issue #1500)', () => {
+    const changed: OperationalPolicyRules = {
+      ...baseRules,
+      anomaly: { ...baseRules.anomaly, duplicateEmergencyMinCount: 4 },
+    };
+    expect(service.computeRulesHash(changed)).not.toBe(service.computeRulesHash(baseRules));
+  });
+
+  it('computeRulesHash differs when a deeply nested array changes', () => {
+    const withMatrix = (evidence: string[]) =>
+      ({
+        ...baseRules,
+        quarantine: { triggerMatrix: { temperatureBreach: { requiredEvidence: evidence } } },
+      }) as unknown as OperationalPolicyRules;
+    expect(service.computeRulesHash(withMatrix(['a', 'b']))).not.toBe(
+      service.computeRulesHash(withMatrix(['b', 'a'])),
+    );
+  });
+
+  it('computeRulesHash is independent of object key order at every level', () => {
+    const reordered = {
+      notification: { ...baseRules.notification },
+      inventory: { ...baseRules.inventory },
+      dispatch: {
+        ratingWeight: 0.2,
+        workloadWeight: 0.3,
+        distanceWeight: 0.5,
+        acceptanceTimeoutMs: 180000,
+      },
+      anomaly: { ...baseRules.anomaly },
+    } as OperationalPolicyRules;
+    expect(service.computeRulesHash(reordered)).toBe(service.computeRulesHash(baseRules));
+  });
+
   it('replay returns archived rules and empty drift when current matches', async () => {
     const entity = makeEntity({ rulesHash: service.computeRulesHash(baseRules) });
     findOne.mockResolvedValueOnce(entity).mockResolvedValueOnce(entity);

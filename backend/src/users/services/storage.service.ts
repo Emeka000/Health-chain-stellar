@@ -2,7 +2,12 @@ import * as crypto from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
-import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import {
@@ -160,8 +165,15 @@ export class StorageService {
   }
 
   async deleteFile(key: string, bucket?: string): Promise<void> {
+    this.assertSafeKey(key);
+
     if (this.storageType === 'local') {
-      const filePath = path.join(this.uploadDir, key);
+      // Resolve and confirm the target stays inside uploadDir.
+      const root = path.resolve(this.uploadDir);
+      const filePath = path.resolve(root, key);
+      if (!filePath.startsWith(root + path.sep)) {
+        throw new BadRequestException('Invalid storage key');
+      }
       try {
         await fs.unlink(filePath);
       } catch (error) {
@@ -192,6 +204,24 @@ export class StorageService {
     throw new InternalServerErrorException(
       `S3 delete failed after ${maxAttempts} attempts: ${(lastError as Error).message}`,
     );
+  }
+
+  /**
+   * Storage keys are always `<subfolder>/<file>` as produced by uploadFile().
+   * Reject anything that could address objects outside that shape: absolute
+   * paths, backslashes, NUL bytes, and empty / `.` / `..` segments.
+   */
+  private assertSafeKey(key: string): void {
+    if (
+      typeof key !== 'string' ||
+      key.length === 0 ||
+      key.startsWith('/') ||
+      key.includes('\\') ||
+      key.includes('\0') ||
+      key.split('/').some((seg) => seg === '' || seg === '.' || seg === '..')
+    ) {
+      throw new BadRequestException('Invalid storage key');
+    }
   }
 
   /**

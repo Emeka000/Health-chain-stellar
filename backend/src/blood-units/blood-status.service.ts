@@ -48,16 +48,30 @@ export const ALLOWED_TRANSITIONS: Record<BloodStatus, BloodStatus[]> = {
     BloodStatus.EXPIRED,
   ],
   [BloodStatus.IN_TRANSIT]: [BloodStatus.DELIVERED, BloodStatus.DISCARDED],
-  [BloodStatus.IN_TRANSFER]: [BloodStatus.AVAILABLE, BloodStatus.DISCARDED],
+  [BloodStatus.IN_TRANSFER]: [],
   [BloodStatus.DELIVERED]: [],
   [BloodStatus.EXPIRED]: [BloodStatus.DISCARDED],
-  [BloodStatus.QUARANTINED]: [BloodStatus.AVAILABLE, BloodStatus.DISCARDED],
+  [BloodStatus.QUARANTINED]: [],
   [BloodStatus.DISCARDED]: [],
   [BloodStatus.PROCESSING]: [
     BloodStatus.AVAILABLE,
     BloodStatus.QUARANTINED,
     BloodStatus.DISCARDED,
   ],
+};
+
+/**
+ * Statuses that may only be exited through a dedicated workflow rather than
+ * the generic status endpoint. QUARANTINED units must be released/discarded
+ * via QuarantineService.finalizeCase (which records reviewer approval), and
+ * IN_TRANSFER units must be resolved via the inter-org transfer accept/cancel
+ * flow so the TransferRecord cannot be left PENDING.
+ */
+export const WORKFLOW_MANAGED_STATUSES: Partial<Record<BloodStatus, string>> = {
+  [BloodStatus.QUARANTINED]:
+    'Quarantined units must be released or discarded through QuarantineService.finalizeCase',
+  [BloodStatus.IN_TRANSFER]:
+    'Units in transfer must be resolved through the transfer accept/cancel flow',
 };
 
 
@@ -281,116 +295,6 @@ export class BloodStatusService {
     }
   }
 
-  isValidTransition(from: BloodStatus, to: BloodStatus): boolean {
-    return ALLOWED_TRANSITIONS[from]?.includes(to) ?? false;
-  }
+  isValid
 
-  private assertOwnsUnit(
-    unit: BloodUnit,
-    user?: AuthenticatedUserContext,
-  ): void {
-    if (!user || user.role === 'admin') {
-      return;
-    }
-
-    if (unit.organizationId !== user.organizationId) {
-      throw new ForbiddenException(
-        `You do not have permission to modify blood unit ${unit.id}`,
-      );
-    }
-  }
-
-  private validateTransition(from: BloodStatus, to: BloodStatus): void {
-    if (from === to) {
-      throw new BadRequestException(`Blood unit is already in ${to} status`);
-    }
-
-    if (!this.isValidTransition(from, to)) {
-      const allowed = ALLOWED_TRANSITIONS[from]?.join(', ') || 'none';
-      throw new BadRequestException(
-        `Invalid status transition from ${from} to ${to}. Allowed transitions: ${allowed}`,
-      );
-    }
-  }
-
-  private async syncStatusToBlockchain(
-    unit: BloodUnit,
-    previousStatus: BloodStatus,
-    newStatus: BloodStatus,
-    changedBy: string | null,
-  ): Promise<void> {
-    try {
-      const blockchainUnitId = Number(unit.blockchainUnitId);
-      const canMirrorOnChain = Number.isFinite(blockchainUnitId);
-
-      if (canMirrorOnChain && newStatus === BloodStatus.QUARANTINED) {
-        await this.sorobanService.quarantineBloodUnit({
-          unitId: blockchainUnitId,
-          reason: 'OTHER',
-        });
-      }
-
-      if (
-        canMirrorOnChain &&
-        previousStatus === BloodStatus.QUARANTINED &&
-        (newStatus === BloodStatus.AVAILABLE || newStatus === BloodStatus.DISCARDED)
-      ) {
-        await this.sorobanService.finalizeQuarantine({
-          unitId: blockchainUnitId,
-          disposition:
-            newStatus === BloodStatus.AVAILABLE ? 'RELEASE' : 'DISCARD',
-          reason: 'OTHER',
-        });
-      }
-
-      const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      await this.blockchainEventRepository.save(
-        this.blockchainEventRepository.create({
-          eventType: 'BLOOD_UNIT_STATUS_CHANGED',
-          transactionHash: `status-${unit.id}-${uniqueSuffix}`,
-          eventData: {
-            unitId: unit.id,
-            unitCode: unit.unitCode,
-            previousStatus,
-            newStatus,
-            changedBy,
-          },
-          blockchainTimestamp: new Date(),
-          processed: false,
-        }),
-      );
-    } catch (error) {
-      this.logger.warn(
-        `Blockchain sync failed for unit ${unit.id}: ${
-          error instanceof Error ? error.message : 'unknown error'
-        }`,
-      );
-    }
-  }
-
-  private async sendStatusChangeNotification(
-    unit: BloodUnit,
-    previousStatus: BloodStatus,
-    newStatus: BloodStatus,
-  ): Promise<void> {
-    try {
-      await this.notificationsService.send({
-        recipientId: unit.organizationId,
-        channels: [NotificationChannel.IN_APP],
-        templateKey: 'blood_unit_status_changed',
-        variables: {
-          unitCode: unit.unitCode,
-          bloodType: unit.bloodType,
-          previousStatus,
-          newStatus,
-        },
-      });
-    } catch (error) {
-      this.logger.warn(
-        `Status change notification failed for unit ${unit.id}: ${
-          error instanceof Error ? error.message : 'unknown error'
-        }`,
-      );
-    }
-  }
-}
+/* … truncated 3340 chars — edit only what you need near the top … */
