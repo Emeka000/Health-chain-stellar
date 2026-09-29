@@ -1,7 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
-import { InternalServerErrorException } from '@nestjs/common';
+import { BadRequestException, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { ArtifactAccessClass, resolveAccessClass, StorageService } from './storage.service';
@@ -41,6 +41,10 @@ function makeService(overrides: Record<string, string> = {}): StorageService {
   };
   const configService = {
     get: (key: string, fallback?: string) => defaults[key] ?? fallback,
+    getOrThrow: (key: string) => {
+      if (defaults[key] === undefined) throw new Error(`Missing config ${key}`);
+      return defaults[key];
+    },
   } as unknown as ConfigService;
   return new StorageService(configService);
 }
@@ -182,6 +186,19 @@ describe('StorageService – local backend', () => {
       await service.deleteFile(key);
       expect(fs.unlink).toHaveBeenCalledWith(path.join('/tmp/uploads', key));
     });
+
+    it.each([
+      ['../../.env'],
+      ['avatars/../../.env'],
+      ['/etc/passwd'],
+      ['avatars\\..\\..\\.env'],
+      ['avatars//x.jpg'],
+      ['./avatars/x.jpg'],
+      [''],
+    ])('rejects unsafe key %p without touching the filesystem', async (key) => {
+      await expect(service.deleteFile(key)).rejects.toThrow(BadRequestException);
+      expect(fs.unlink).not.toHaveBeenCalled();
+    });
   });
 
   describe('artifact coexistence', () => {
@@ -272,6 +289,14 @@ describe('StorageService – S3 backend', () => {
       const input = mockS3Send.mock.calls[0][0].input as { Key: string; Bucket: string };
       expect(input.Bucket).toBe('my-bucket');
     });
+
+    it.each([['../proof/x.pdf'], ['/proof/x.pdf'], ['avatars/../proof/x.pdf']])(
+      'rejects unsafe key %p without calling S3',
+      async (key) => {
+        await expect(service.deleteFile(key)).rejects.toThrow(BadRequestException);
+        expect(mockS3Send).not.toHaveBeenCalled();
+      },
+    );
 
     it.each([
       ['avatars/test-uuid.jpg'],

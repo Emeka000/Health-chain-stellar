@@ -1,11 +1,29 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash } from 'crypto';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 
 import { PolicyVersionEntity } from './entities/policy-version.entity';
 import { PolicyVersionStatus } from './enums/policy-version-status.enum';
 import { OperationalPolicyRules } from './policy-config.types';
+
+/**
+ * Recursively sorts object keys so that semantically equal rule sets always
+ * serialize identically. Array order is preserved (it is significant).
+ */
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value !== null && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    return Object.keys(obj)
+      .sort()
+      .reduce<Record<string, unknown>>((acc, key) => {
+        acc[key] = canonicalize(obj[key]);
+        return acc;
+      }, {});
+  }
+  return value;
+}
 
 export interface DriftEntry {
   path: string;
@@ -34,7 +52,7 @@ export class PolicyReplayService {
 
   computeRulesHash(rules: OperationalPolicyRules): string {
     return createHash('sha256')
-      .update(JSON.stringify(rules, Object.keys(rules as object).sort()))
+      .update(JSON.stringify(canonicalize(rules)))
       .digest('hex');
   }
 
@@ -72,10 +90,14 @@ export class PolicyReplayService {
   }
 
   /** Lock snapshot as immutable and persist rules hash on activation (Issue #618). */
-  async lockSnapshot(entity: PolicyVersionEntity): Promise<PolicyVersionEntity> {
+  async lockSnapshot(
+    entity: PolicyVersionEntity,
+    manager?: EntityManager,
+  ): Promise<PolicyVersionEntity> {
     entity.rulesHash = this.computeRulesHash(entity.rules);
     entity.immutable = true;
-    return this.repo.save(entity);
+    const repo = manager ? manager.getRepository(PolicyVersionEntity) : this.repo;
+    return repo.save(entity);
   }
 
   /** Throw if entity is already immutable (prevents edits to historical snapshots). */

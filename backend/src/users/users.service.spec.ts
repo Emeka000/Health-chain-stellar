@@ -241,7 +241,8 @@ describe('UsersService', () => {
         key: 'avatars/test.jpg',
         bucket: 'local',
       });
-      mockUserRepository.findOne.mockResolvedValue(mockUser);
+      // Copy: uploadAvatar mutates the loaded entity.
+      mockUserRepository.findOne.mockResolvedValue({ ...mockUser });
       mockUserRepository.save.mockResolvedValue({
         ...mockUser,
         avatarUrl: '/uploads/avatars/test.jpg',
@@ -290,6 +291,7 @@ describe('UsersService', () => {
       const userWithAvatar = {
         ...mockUser,
         avatarUrl: '/uploads/avatars/test.jpg',
+        avatarKey: 'avatars/test.jpg',
       };
       mockUserRepository.findOne.mockResolvedValue(userWithAvatar);
       mockStorageService.deleteFile.mockResolvedValue(undefined);
@@ -305,7 +307,34 @@ describe('UsersService', () => {
       });
 
       expect(result.message).toBe('Avatar deleted successfully');
-      expect(mockStorageService.deleteFile).toHaveBeenCalled();
+      expect(mockStorageService.deleteFile).toHaveBeenCalledWith(
+        'avatars/test.jpg',
+      );
+    });
+
+    it('never derives a storage key from avatarUrl (path traversal)', async () => {
+      mockUserRepository.findOne.mockResolvedValue({
+        ...mockUser,
+        avatarUrl: 'http://x/uploads/../../.env',
+        avatarKey: null,
+      });
+
+      const result = await service.deleteAvatar('user-1', {});
+
+      expect(result.message).toBe('Avatar deleted successfully');
+      expect(mockStorageService.deleteFile).not.toHaveBeenCalled();
+    });
+
+    it('does not delete a stored key outside the avatars/ prefix', async () => {
+      mockUserRepository.findOne.mockResolvedValue({
+        ...mockUser,
+        avatarUrl: '/uploads/avatars/test.jpg',
+        avatarKey: 'proof/other-user.pdf',
+      });
+
+      await service.deleteAvatar('user-1', {});
+
+      expect(mockStorageService.deleteFile).not.toHaveBeenCalled();
     });
 
     it('should throw BadRequestException if no avatar to delete', async () => {
