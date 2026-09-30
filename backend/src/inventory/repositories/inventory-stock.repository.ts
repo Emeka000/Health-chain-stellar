@@ -12,8 +12,8 @@ export class InventoryStockRepository {
     private readonly repo: Repository<InventoryStockEntity>,
   ) {}
 
-  findById(id: string): Promise<InventoryStockEntity | null> {
-    return this.repo.findOne({ where: { id } });
+  findById(id: string, bloodBankId: string): Promise<InventoryStockEntity | null> {
+    return this.repo.findOne({ where: { id, bloodBankId } });
   }
 
   findByBankAndType(

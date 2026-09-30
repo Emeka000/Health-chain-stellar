@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -24,6 +25,8 @@ import {
 import { InventoryStockEntity } from './entities/inventory-stock.entity';
 import { InventoryRepository } from './repositories/inventory.repository';
 import { InventoryStockRepository } from './repositories/inventory-stock.repository';
+import { CreateInventoryDto } from './dto/create-inventory.dto';
+import { UpdateInventoryDto } from './dto/update-inventory.dto';
 
 import { BloodComponent } from '../blood-units/enums/blood-component.enum';
 
@@ -64,26 +67,29 @@ export class InventoryService {
     return PaginationUtil.createResponse(data, page, pageSize, totalCount);
   }
 
-  async findOne(id: string) {
-    const item = await this.stockRepo.findById(id);
+  async findOne(id: string, bloodBankId: string) {
+    const item = await this.stockRepo.findById(id, bloodBankId);
     if (!item) throw new NotFoundException(`Inventory item '${id}' not found`);
     return { message: 'Inventory item retrieved successfully', data: item };
   }
 
-  async create(dto: any) {
-    const component = dto.component ?? BloodComponent.WHOLE_BLOOD;
+  async create(dto: CreateInventoryDto, bloodBankId: string) {
+    if (!bloodBankId || dto.hospitalId !== bloodBankId) {
+      throw new ForbiddenException(
+        'You can only manage inventory for your organization.',
+      );
+    }
+    const component = BloodComponent.WHOLE_BLOOD;
     const existing = await this.stockRepo.findByBankAndType(
-      dto.bloodBankId,
+      bloodBankId,
       dto.bloodType,
       component,
     );
-    const units = Number(
-      dto.availableUnits ?? dto.availableUnitsMl ?? dto.quantity ?? 0,
-    );
+    const units = Number(dto.quantity);
     const entity = existing
       ? this.stockRepo.merge(existing, { availableUnitsMl: units })
       : this.stockRepo.create({
-          bloodBankId: dto.bloodBankId,
+          bloodBankId,
           bloodType: dto.bloodType,
           component,
           availableUnitsMl: units,
@@ -92,33 +98,29 @@ export class InventoryService {
     return { message: 'Inventory item created successfully', data };
   }
 
-  async update(id: string, dto: any) {
-    const existing = await this.stockRepo.findById(id);
+  async update(id: string, dto: UpdateInventoryDto, bloodBankId: string) {
+    const existing = await this.stockRepo.findById(id, bloodBankId);
     if (!existing)
       throw new NotFoundException(`Inventory item '${id}' not found`);
-    const units =
-      dto.availableUnits !== undefined
-        ? Number(dto.availableUnits)
-        : dto.availableUnitsMl !== undefined
-          ? Number(dto.availableUnitsMl)
-          : existing.availableUnitsMl;
     const updated = this.stockRepo.merge(existing, {
-      ...dto,
-      availableUnitsMl: units,
+      availableUnitsMl:
+        dto.quantity !== undefined
+          ? Number(dto.quantity)
+          : existing.availableUnitsMl,
     });
     const data = await this.stockRepo.save(updated);
     return { message: 'Inventory item updated successfully', data };
   }
 
-  async remove(id: string) {
-    const item = await this.stockRepo.findById(id);
+  async remove(id: string, bloodBankId: string) {
+    const item = await this.stockRepo.findById(id, bloodBankId);
     if (!item) throw new NotFoundException(`Inventory item '${id}' not found`);
     await this.stockRepo.remove(item);
     return { message: 'Inventory item deleted successfully', data: { id } };
   }
 
-  async updateStock(id: string, quantity: number) {
-    const existing = await this.stockRepo.findById(id);
+  async updateStock(id: string, quantity: number, bloodBankId: string) {
+    const existing = await this.stockRepo.findById(id, bloodBankId);
     if (!existing)
       throw new NotFoundException(`Inventory item '${id}' not found`);
     existing.availableUnitsMl = Number(quantity);
