@@ -122,7 +122,8 @@ fn test_record_compliance_attestation_succeeds() {
     let delivery_id = 42u64;
     let compliance_hash = Bytes::from_slice(&env, b"hash_value");
 
-    let result = client.try_record_compliance_attestation(&admin, &delivery_id, &compliance_hash, &true);
+    let result =
+        client.try_record_compliance_attestation(&admin, &delivery_id, &compliance_hash, &true);
     assert!(result.is_ok());
 
     let events = env.events().all();
@@ -159,7 +160,12 @@ fn test_record_compliance_attestation_rejects_non_admin() {
     let delivery_id = 55u64;
     let compliance_hash = Bytes::from_slice(&env, b"hash");
 
-    let result = client.try_record_compliance_attestation(&unauthorized_caller, &delivery_id, &compliance_hash, &true);
+    let result = client.try_record_compliance_attestation(
+        &unauthorized_caller,
+        &delivery_id,
+        &compliance_hash,
+        &true,
+    );
     assert!(result.is_err());
 }
 
@@ -169,12 +175,8 @@ fn test_record_compliance_attestation_rejects_unknown_delivery() {
     let delivery_id = 101u64;
     let compliance_hash = Bytes::from_slice(&env, b"hash");
 
-    let result = client.try_record_compliance_attestation(
-        &admin,
-        &delivery_id,
-        &compliance_hash,
-        &true,
-    );
+    let result =
+        client.try_record_compliance_attestation(&admin, &delivery_id, &compliance_hash, &true);
 
     assert_eq!(result, Err(Ok(Error::DeliveryNotFound)));
 }
@@ -188,4 +190,113 @@ fn test_record_compliance_attestation_updates_delivery_counter() {
     client.record_compliance_attestation(&admin, &delivery_id, &compliance_hash, &true);
 
     assert_eq!(client.get_delivery_counter(), 100);
+}
+
+/// #1480: the two admin setters that redefine what counts as a compliant
+/// delivery published no event, so indexers and the backend that later calls
+/// `record_compliance_attestation` had no way to see the compliance bar move.
+mod threshold_proof_events {
+    use super::*;
+    extern crate std;
+    use soroban_sdk::TryFromVal as _;
+
+    fn thresholds(min: i32, max: i32) -> TemperatureThresholds {
+        TemperatureThresholds {
+            min_celsius: min,
+            max_celsius: max,
+        }
+    }
+
+    fn proofs(photo: bool, sig: bool, log: bool) -> ProofRequirements {
+        ProofRequirements {
+            requires_photo_proof: photo,
+            requires_recipient_signature: sig,
+            requires_temperature_log: log,
+        }
+    }
+
+    /// `env.events()` exposes only the most recent batch, so these tests assert
+    /// on the event at the head rather than on a cumulative count.
+    fn head_event(
+        env: &Env,
+    ) -> (
+        soroban_sdk::Address,
+        soroban_sdk::Vec<soroban_sdk::Val>,
+        soroban_sdk::Val,
+    ) {
+        let evs = env.events().all();
+        evs.get(0u32).unwrap()
+    }
+
+    fn payload_len(env: &Env, data: &soroban_sdk::Val) -> u32 {
+        soroban_sdk::Vec::<soroban_sdk::Val>::try_from_val(env, data)
+            .expect("event data should be a vec")
+            .len()
+    }
+
+    #[test]
+    fn set_temperature_thresholds_emits_event() {
+        let (env, client, _cid, admin, _req) = create_initialized_contract();
+        // initialize() emitted DeliveryInitialized: 2 topics, 2 data fields.
+        let (init_cid, init_topics, init_data) = head_event(&env);
+        assert_eq!(payload_len(&env, &init_data), 2);
+
+        client.set_temperature_thresholds(&admin, &thresholds(-10, 10));
+
+        let (cid, topics, data) = head_event(&env);
+        assert_eq!(cid, init_cid);
+        assert!(
+            topics != init_topics,
+            "topics should identify the new event"
+        );
+        assert_eq!(
+            payload_len(&env, &data),
+            5,
+            "admin + new min/max + previous min/max"
+        );
+    }
+
+    #[test]
+    fn set_temperature_thresholds_event_carries_new_and_previous_values() {
+        let (env, client, _cid, admin, _req) = create_initialized_contract();
+        // initialize() seeds DEFAULT_MIN=2 / DEFAULT_MAX=6, so the "previous"
+        // values an indexer reads out of this event must be 2 and 6 — not the
+        // newly supplied ones.
+        client.set_temperature_thresholds(&admin, &thresholds(-20, 8));
+
+        let events = env.events().all();
+        let (contract_id, topics, data) = events.last().unwrap();
+        assert_eq!(contract_id, client.address);
+        assert_eq!(topics.len(), 2, "topics are [\"delivery\", \"thresholds\"]");
+
+        let payload = soroban_sdk::Vec::<soroban_sdk::Val>::try_from_val(&env, &data).unwrap();
+        assert_eq!(payload.len(), 5, "admin + new min/max + previous min/max");
+    }
+
+    #[test]
+    fn set_proof_requirements_emits_event() {
+        let (env, client, _cid, admin, _req) = create_initialized_contract();
+        let (init_cid, init_topics, init_data) = head_event(&env);
+        assert_eq!(payload_len(&env, &init_data), 2);
+
+        client.set_proof_requirements(&admin, &proofs(true, true, false));
+
+        let (cid, topics, data) = head_event(&env);
+        assert_eq!(cid, init_cid);
+        assert!(
+            topics != init_topics,
+            "topics should identify the new event"
+        );
+        assert_eq!(payload_len(&env, &data), 7, "admin + 3 new + 3 previous");
+    }
+
+    #[test]
+    fn set_proof_requirements_event_has_seven_data_fields() {
+        let (env, client, _cid, admin, _req) = create_initialized_contract();
+        client.set_proof_requirements(&admin, &proofs(true, false, true));
+
+        let (_, _, data) = head_event(&env);
+        // admin + 3 new + 3 previous.
+        assert_eq!(payload_len(&env, &data), 7);
+    }
 }
