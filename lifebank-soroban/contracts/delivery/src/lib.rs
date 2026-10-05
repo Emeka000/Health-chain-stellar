@@ -30,6 +30,30 @@ pub struct ComplianceAttested {
     pub is_compliant: bool,
 }
 
+/// Emitted when the admin redefines the temperature band a delivery must stay
+/// within. `previous` is the band in effect before this call; without it an
+/// indexer could not tell what the compliance bar moved from.
+#[contractevent(topics = ["delivery", "thresholds"], data_format = "vec")]
+pub struct TemperatureThresholdsUpdated {
+    pub admin: Address,
+    pub min_celsius: i32,
+    pub max_celsius: i32,
+    pub previous_min_celsius: i32,
+    pub previous_max_celsius: i32,
+}
+
+/// Emitted when the admin changes which proofs a delivery must supply.
+#[contractevent(topics = ["delivery", "proofs"], data_format = "vec")]
+pub struct ProofRequirementsUpdated {
+    pub admin: Address,
+    pub requires_photo_proof: bool,
+    pub requires_recipient_signature: bool,
+    pub requires_temperature_log: bool,
+    pub prev_requires_photo_proof: bool,
+    pub prev_requires_recipient_sig: bool,
+    pub prev_requires_temperature_log: bool,
+}
+
 const DEFAULT_MIN_TEMPERATURE_C: i32 = 2;
 const DEFAULT_MAX_TEMPERATURE_C: i32 = 6;
 const CONTRACT_VERSION: u32 = 1;
@@ -185,12 +209,27 @@ impl DeliveryContract {
         if thresholds.min_celsius > thresholds.max_celsius {
             return Err(Error::InvalidInput);
         }
+        let previous: TemperatureThresholds = env
+            .storage()
+            .instance()
+            .get(&DataKey::TemperatureThresholds)
+            .ok_or(Error::NotInitialized)?;
         env.storage()
             .instance()
             .set(&DataKey::TemperatureThresholds, &thresholds);
         env.storage()
             .instance()
             .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        TemperatureThresholdsUpdated {
+            admin,
+            min_celsius: thresholds.min_celsius,
+            max_celsius: thresholds.max_celsius,
+            previous_min_celsius: previous.min_celsius,
+            previous_max_celsius: previous.max_celsius,
+        }
+        .publish(&env);
+
         Ok(())
     }
 
@@ -209,12 +248,29 @@ impl DeliveryContract {
         if admin != stored {
             return Err(Error::Unauthorized);
         }
+        let previous: ProofRequirements = env
+            .storage()
+            .instance()
+            .get(&DataKey::ProofRequirements)
+            .ok_or(Error::NotInitialized)?;
         env.storage()
             .instance()
             .set(&DataKey::ProofRequirements, &requirements);
         env.storage()
             .instance()
             .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        ProofRequirementsUpdated {
+            admin,
+            requires_photo_proof: requirements.requires_photo_proof,
+            requires_recipient_signature: requirements.requires_recipient_signature,
+            requires_temperature_log: requirements.requires_temperature_log,
+            prev_requires_photo_proof: previous.requires_photo_proof,
+            prev_requires_recipient_sig: previous.requires_recipient_signature,
+            prev_requires_temperature_log: previous.requires_temperature_log,
+        }
+        .publish(&env);
+
         Ok(())
     }
 
