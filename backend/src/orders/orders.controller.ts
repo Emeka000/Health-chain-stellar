@@ -243,6 +243,61 @@ export class OrdersController {
     const actorId: string | undefined = req.user?.id;
     return this.ordersService.assignRider(id, riderId, actorId, {
       userId: req.user?.id ?? 'unknown',
-      role: req.user?.rol
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
+  }
 
-/* … truncated 2084 chars — edit only what you need near the top … */
+  @RequirePermissions(Permission.UPDATE_ORDER)
+  @ApiOperation({ summary: 'Post :id raise dispute' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @Post(':id/disputes')
+  raiseDispute(
+    @Param('id') id: string,
+    @Body() raiseDisputeDto: RaiseDisputeDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    const actorId: string | undefined = req.user?.id;
+    return this.ordersService.raiseDispute(id, raiseDisputeDto, actorId, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
+  }
+
+  @RequirePermissions(Permission.ADMIN_ACCESS)
+  @ApiOperation({ summary: 'Patch :id disputes :disputeId resolve' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
+  @Patch(':id/disputes/:disputeId/resolve')
+  resolveDispute(
+    @Param('id') id: string,
+    @Param('disputeId') disputeId: string,
+    @Body() resolveDisputeDto: ResolveDisputeDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    const actorId: string | undefined = req.user?.id;
+    return this.ordersService.resolveDispute(
+      id,
+      disputeId,
+      resolveDisputeDto,
+      actorId,
+      {
+        userId: req.user?.id ?? 'unknown',
+        role: req.user?.role,
+        organizationId: req.user?.organizationId ?? null,
+      },
+    );
+  }
+
+  @RequirePermissions(Permission.DELETE_ORDER)
+  @ApiOperation({ summary: 'Delete :id' })
+  @ApiResponse({ status: 200, description: 'Resource deleted successfully' })
+  @Delete(':id')
+  remove(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
+    return this.ordersService.remove(id, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
+  }
+}
