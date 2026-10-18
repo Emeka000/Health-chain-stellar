@@ -2318,7 +2318,7 @@ fn test_reserve_blood_fails_on_mixed_ownership() {
     );
 
     // Bank1 tries to reserve both units (but only owns one)
-    client.reserve_blood(&bank1, &vec![&env, id1, id2], &123, &3600);
+    client.reserve_blood(&bank1, &bank1, &vec![&env, id1, id2], &123, &3600);
 }
 
 #[test]
@@ -2338,7 +2338,7 @@ fn test_release_reservation_by_contract_releases_reservation() {
     );
 
     // Reserve it
-    let reservation_id = client.reserve_blood(&bank, &vec![&env, unit_id], &42, &3600);
+    let reservation_id = client.reserve_blood(&bank, &bank, &vec![&env, unit_id], &42, &3600);
 
     // Verify unit is Reserved
     let stored = client.get_blood_unit(&unit_id);

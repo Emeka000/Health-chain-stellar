@@ -86,7 +86,7 @@ mod security_tests {
             duration_seconds: u64,
         ) -> Result<u64, ContractError> {
             self.client
-                .try_reserve_blood(&requester, &unit_ids, &request_id, &duration_seconds)
+                .try_reserve_blood(&requester, &requester, &unit_ids, &request_id, &duration_seconds)
                 .into_contract()
         }
 
@@ -97,7 +97,7 @@ mod security_tests {
             batch: soroban_sdk::Vec<(soroban_sdk::Vec<u64>, u64, u64)>,
         ) -> Result<soroban_sdk::Vec<u64>, ContractError> {
             self.client
-                .try_batch_reserve_blood(&requester, &batch)
+                .try_batch_reserve_blood(&requester, &requester, &batch)
                 .into_contract()
         }
 
@@ -182,7 +182,7 @@ mod security_tests {
 
         // Bank B attempts to reserve Bank A's blood unit
         let unit_ids = vec![&env, unit_id];
-        let result = client.reserve_blood(env.clone(), bank_b.clone(), unit_ids, 1, 3600);
+        let result = client.reserve_blood(env.clone(), bank_b.clone(), bank_b.clone(), unit_ids, 1, 3600);
 
         // Should fail: unit belongs to Bank A, not Bank B
         assert_eq!(result, Err(ContractError::NotUnitOwner));
@@ -217,7 +217,7 @@ mod security_tests {
 
         // Bank A reserves its own blood unit
         let unit_ids = vec![&env, unit_id];
-        let result = client.reserve_blood(env.clone(), bank_a.clone(), unit_ids, 1, 3600);
+        let result = client.reserve_blood(env.clone(), bank_a.clone(), bank_a.clone(), unit_ids, 1, 3600);
 
         assert!(result.is_ok());
     }
@@ -268,7 +268,7 @@ mod security_tests {
         let unit_ids = vec![&env, unit_1, unit_2];
         let batch = vec![&env, (unit_ids, 1u64, 3600u64)];
 
-        let result = client.batch_reserve_blood(env.clone(), bank_b.clone(), batch);
+        let result = client.batch_reserve_blood(env.clone(), bank_b.clone(), bank_b.clone(), batch);
 
         // Should fail on first unit ownership check
         assert_eq!(result, Err(ContractError::NotUnitOwner));
@@ -360,8 +360,14 @@ mod security_tests {
         let oversized_duration = max_allowed + 1;
 
         let unit_ids = vec![&env, unit_id];
-        let result =
-            client.reserve_blood(env.clone(), bank.clone(), unit_ids, 1, oversized_duration);
+        let result = client.reserve_blood(
+            env.clone(),
+            bank.clone(),
+            bank.clone(),
+            unit_ids,
+            1,
+            oversized_duration,
+        );
 
         // Should return InvalidInput error, not panic
         assert_eq!(result, Err(ContractError::InvalidInput));
@@ -395,7 +401,7 @@ mod security_tests {
 
         let max_allowed = 86_400u64 * 7;
         let unit_ids = vec![&env, unit_id];
-        let result = client.reserve_blood(env.clone(), bank, unit_ids, 1, max_allowed);
+        let result = client.reserve_blood(env.clone(), bank.clone(), bank, unit_ids, 1, max_allowed);
 
         assert!(result.is_ok());
     }
@@ -429,7 +435,7 @@ mod security_tests {
 
         let unit_ids = vec![&env, unit_id];
         let reservation_id = client
-            .reserve_blood(env.clone(), bank.clone(), unit_ids, 1, 3600)
+            .reserve_blood(env.clone(), bank.clone(), bank.clone(), unit_ids, 1, 3600)
             .unwrap();
 
         // Verify reservation exists before release
