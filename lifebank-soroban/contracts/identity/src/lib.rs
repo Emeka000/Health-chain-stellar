@@ -123,6 +123,8 @@ pub enum Error {
     DeliveryAlreadyVerified = 214,
     /// The owner address already has a registered organization.
     OrganizationAlreadyRegistered = 215,
+    /// The primary admin's `Admin` role cannot be revoked, so one admin always remains.
+    CannotRevokeLastAdmin = 216,
 }
 
 // ---------------------------------------------------------------------------
@@ -258,6 +260,31 @@ pub struct DeliveryProofRecorded {
     pub temperature_ok: bool,
 }
 
+#[contractevent(topics = ["role_granted"], data_format = "vec")]
+pub struct RoleGranted {
+    pub address: Address,
+    pub role: Role,
+    pub expires_at: Option<u64>,
+}
+
+#[contractevent(topics = ["role_revoked"], data_format = "vec")]
+pub struct RoleRevoked {
+    pub address: Address,
+    pub role: Role,
+}
+
+#[contractevent(topics = ["scope_granted"], data_format = "vec")]
+pub struct ScopeGranted {
+    pub address: Address,
+    pub scope: PermissionScope,
+}
+
+#[contractevent(topics = ["scope_revoked"], data_format = "vec")]
+pub struct ScopeRevoked {
+    pub address: Address,
+    pub scope: PermissionScope,
+}
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct RoleGrant {
@@ -324,7 +351,7 @@ pub enum DataKey {
     OrgBadges(Address),
     // Delivery
     Delivery(u64),
-    // AccessControlContract (and IdentityContract role storage)
+    // IdentityContract role storage
     AddressRoles(Address),
     // Fine-grained permission scopes (Issue #374)
     AddressScopes(Address),
@@ -341,7 +368,7 @@ pub enum DataKey {
 pub struct IdentityContract;
 
 impl IdentityContract {
-    /// Check whether an address has a given role.
+    /// Check whether an address has a given non-expired role.
     fn has_role_internal(env: Env, account: Address, role: Role) -> bool {
         let key = DataKey::AddressRoles(account);
         let roles: Vec<RoleGrant> = env
@@ -349,12 +376,94 @@ impl IdentityContract {
             .persistent()
             .get(&key)
             .unwrap_or(Vec::new(&env));
+        let now = env.ledger().timestamp();
         for i in 0..roles.len() {
-            if roles.get(i).unwrap().role == role {
+            let grant = roles.get(i).unwrap();
+            let active = match grant.expires_at {
+                Some(expires_at) => now < expires_at,
+                None => true,
+            };
+            if grant.role == role && active {
                 return true;
             }
         }
         false
+    }
+
+    /// Drop expired grants for an address. Returns the number removed.
+    fn cleanup_expired_roles_internal(env: &Env, address: &Address) -> u32 {
+        let key = DataKey::AddressRoles(address.clone());
+
+        if let Some(roles) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Vec<RoleGrant>>(&key)
+        {
+            let current_time = env.ledger().timestamp();
+            let mut new_roles = Vec::new(env);
+            let mut removed_count = 0u32;
+
+            for i in 0..roles.len() {
+                let grant = roles.get(i).unwrap();
+                let is_expired = if let Some(expires_at) = grant.expires_at {
+                    current_time >= expires_at
+                } else {
+                    false
+                };
+
+                if is_expired {
+                    removed_count += 1;
+                } else {
+                    new_roles.push_back(grant);
+                }
+            }
+
+            if removed_count > 0 {
+                if new_roles.is_empty() {
+                    env.storage().persistent().remove(&key);
+                } else {
+                    env.storage().persistent().set(&key, &new_roles);
+                    env.storage()
+                        .persistent()
+                        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+                }
+            }
+
+            removed_count
+        } else {
+            0
+        }
+    }
+
+    fn remove_role_from_vec(env: &Env, roles: Vec<RoleGrant>, role: &Role) -> Vec<RoleGrant> {
+        let mut new_roles = Vec::new(env);
+        for i in 0..roles.len() {
+            let grant = roles.get(i).unwrap();
+            if &grant.role != role {
+                new_roles.push_back(grant);
+            }
+        }
+        new_roles
+    }
+
+    fn insert_sorted(env: &Env, roles: Vec<RoleGrant>, new_grant: RoleGrant) -> Vec<RoleGrant> {
+        let mut new_roles = Vec::new(env);
+        let mut inserted = false;
+
+        for i in 0..roles.len() {
+            let grant = roles.get(i).unwrap();
+            if !inserted && new_grant.role < grant.role {
+                new_roles.push_back(new_grant.clone());
+                inserted = true;
+            }
+            new_roles.push_back(grant);
+        }
+
+        if !inserted {
+            new_roles.push_back(new_grant);
+        }
+
+        new_roles
     }
 }
 
@@ -554,6 +663,110 @@ impl IdentityContract {
         Ok(())
     }
 
+    /// Admin-only: grant a role that lapses at `expires_at` (ledger timestamp).
+    /// `None` grants the role indefinitely.
+    pub fn grant_role_with_expiry(
+        env: Env,
+        admin: Address,
+        address: Address,
+        role: Role,
+        expires_at: Option<u64>,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        Self::require_not_paused(&env)?;
+        Self::require_role(&env, &admin, Role::Admin)?;
+
+        Self::cleanup_expired_roles_internal(&env, &address);
+
+        let key = DataKey::AddressRoles(address.clone());
+        let roles: Vec<RoleGrant> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(Vec::new(&env));
+
+        let new_grant = RoleGrant {
+            role: role.clone(),
+            granted_at: env.ledger().timestamp(),
+            expires_at,
+        };
+        let roles = Self::remove_role_from_vec(&env, roles, &role);
+        let roles = Self::insert_sorted(&env, roles, new_grant);
+
+        env.storage().persistent().set(&key, &roles);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        RoleGranted {
+            address,
+            role,
+            expires_at,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Admin-only: remove a role from an address. The primary admin's own
+    /// `Admin` role cannot be removed, so at least one admin always remains.
+    pub fn revoke_role(
+        env: Env,
+        admin: Address,
+        address: Address,
+        role: Role,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        Self::require_not_paused(&env)?;
+        Self::require_role(&env, &admin, Role::Admin)?;
+
+        if role == Role::Admin && address == Self::get_admin(env.clone())? {
+            return Err(Error::CannotRevokeLastAdmin);
+        }
+
+        let key = DataKey::AddressRoles(address.clone());
+        if let Some(roles) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Vec<RoleGrant>>(&key)
+        {
+            let roles = Self::remove_role_from_vec(&env, roles, &role);
+            if roles.is_empty() {
+                env.storage().persistent().remove(&key);
+            } else {
+                env.storage().persistent().set(&key, &roles);
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+            }
+        }
+
+        RoleRevoked { address, role }.publish(&env);
+
+        Ok(())
+    }
+
+    /// Admin-only: proactively remove expired grants for an address. Returns count removed.
+    pub fn cleanup_expired_roles(
+        env: Env,
+        admin: Address,
+        address: Address,
+    ) -> Result<u32, Error> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, Role::Admin)?;
+
+        Ok(Self::cleanup_expired_roles_internal(&env, &address))
+    }
+
+    /// Get all role grants for an address (including expired until cleaned up).
+    pub fn get_roles(env: Env, address: Address) -> Vec<RoleGrant> {
+        let key = DataKey::AddressRoles(address);
+        env.storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(Vec::new(&env))
+    }
+
     /// Internal helper to grant a role to an address (no auth check).
     fn grant_role_internal(env: &Env, address: Address, role: Role) {
         let key = DataKey::AddressRoles(address.clone());
@@ -619,8 +832,9 @@ impl IdentityContract {
         env.storage().persistent().get(&DataKey::Org(org_id))
     }
 
-    /// Check if an address has a given role
+    /// Check if an address has a given non-expired role (lazily drops expired grants)
     pub fn has_role(env: Env, account: Address, role: Role) -> bool {
+        Self::cleanup_expired_roles_internal(&env, &account);
         Self::has_role_internal(env, account, role)
     }
 
@@ -1181,226 +1395,18 @@ impl IdentityContract {
     // Internal helpers
     // -----------------------------------------------------------------------
 
-    fn increment_counter(env: &Env, key: DataKey) -> u32 {
-        let mut count: u32 = env.storage().instance().get(&key).unwrap_or(0);
-        count += 1;
-        env.storage().instance().set(&key, &count);
-        count
-    }
-}
-
-#[cfg(test)]
-#[contract]
-pub struct AccessControlContract;
-
-#[cfg(test)]
-#[contractimpl]
-impl AccessControlContract {
-    /// Initialize the contract with an administrator
-    pub fn ac_initialize(env: Env, admin: Address) {
-        if env.storage().persistent().has(&DataKey::Admin) {
-            panic!("Already initialized");
-        }
-        // Require the supplied admin address to sign this transaction so that
-        // an attacker cannot front-run initialization and claim admin rights.
-        admin.require_auth();
-        env.storage().persistent().set(&DataKey::Admin, &admin);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::Admin, TTL_THRESHOLD, TTL_EXTEND_TO);
-    }
-
-    /// Grant a role to an address with optional expiry
-    pub fn grant_role_with_expiry(env: Env, address: Address, role: Role, expires_at: Option<u64>) {
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .expect("Not initialized");
-        admin.require_auth();
-
-        Self::cleanup_expired_roles_internal(&env, &address);
-
-        let key = DataKey::AddressRoles(address.clone());
-        let mut roles: Vec<RoleGrant> = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .unwrap_or(Vec::new(&env));
-
-        let granted_at = env.ledger().timestamp();
-        let new_grant = RoleGrant {
-            role: role.clone(),
-            granted_at,
-            expires_at,
-        };
-
-        roles = Self::remove_role_from_vec(&env, roles, &role);
-        roles = Self::insert_sorted(&env, roles, new_grant);
-
-        env.storage().persistent().set(&key, &roles);
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
-    }
-
-    /// Revoke a role from an address
-    pub fn revoke_role(env: Env, address: Address, role: Role) {
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .expect("Not initialized");
-        admin.require_auth();
-
-        let key = DataKey::AddressRoles(address.clone());
-
-        if let Some(mut roles) = env
-            .storage()
-            .persistent()
-            .get::<DataKey, Vec<RoleGrant>>(&key)
-        {
-            roles = Self::remove_role_from_vec(&env, roles, &role);
-
-            if roles.is_empty() {
-                env.storage().persistent().remove(&key);
-            } else {
-                env.storage().persistent().set(&key, &roles);
-                env.storage()
-                    .persistent()
-                    .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
-            }
-        }
-    }
-
-    /// Check if an address has a specific non-expired role
-    pub fn ac_has_role(env: Env, address: Address, role: Role) -> bool {
-        Self::cleanup_expired_roles_internal(&env, &address);
-
-        let key = DataKey::AddressRoles(address);
-
-        if let Some(roles) = env
-            .storage()
-            .persistent()
-            .get::<DataKey, Vec<RoleGrant>>(&key)
-        {
-            for i in 0..roles.len() {
-                let grant = roles.get(i).unwrap();
-                if grant.role == role {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Get all role grants for an address (including expired)
-    pub fn get_roles(env: Env, address: Address) -> Vec<RoleGrant> {
-        let key = DataKey::AddressRoles(address);
-        env.storage()
-            .persistent()
-            .get(&key)
-            .unwrap_or(Vec::new(&env))
-    }
-
-    /// Proactively clean up all expired roles for an address. Returns count removed.
-    pub fn cleanup_expired_roles(env: Env, address: Address) -> u32 {
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .expect("Not initialized");
-        admin.require_auth();
-
-        Self::cleanup_expired_roles_internal(&env, &address)
-    }
-
-    fn cleanup_expired_roles_internal(env: &Env, address: &Address) -> u32 {
-        let key = DataKey::AddressRoles(address.clone());
-
-        if let Some(roles) = env
-            .storage()
-            .persistent()
-            .get::<DataKey, Vec<RoleGrant>>(&key)
-        {
-            let current_time = env.ledger().timestamp();
-            let mut new_roles = Vec::new(env);
-            let mut removed_count = 0u32;
-
-            for i in 0..roles.len() {
-                let grant = roles.get(i).unwrap();
-                let is_expired = if let Some(expires_at) = grant.expires_at {
-                    current_time >= expires_at
-                } else {
-                    false
-                };
-
-                if is_expired {
-                    removed_count += 1;
-                } else {
-                    new_roles.push_back(grant);
-                }
-            }
-
-            if removed_count > 0 {
-                if new_roles.is_empty() {
-                    env.storage().persistent().remove(&key);
-                } else {
-                    env.storage().persistent().set(&key, &new_roles);
-                    env.storage()
-                        .persistent()
-                        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
-                }
-            }
-
-            removed_count
-        } else {
-            0
-        }
-    }
-
-    fn remove_role_from_vec(env: &Env, roles: Vec<RoleGrant>, role: &Role) -> Vec<RoleGrant> {
-        let mut new_roles = Vec::new(env);
-        for i in 0..roles.len() {
-            let grant = roles.get(i).unwrap();
-            if &grant.role != role {
-                new_roles.push_back(grant);
-            }
-        }
-        new_roles
-    }
-
-    fn insert_sorted(env: &Env, roles: Vec<RoleGrant>, new_grant: RoleGrant) -> Vec<RoleGrant> {
-        let mut new_roles = Vec::new(env);
-        let mut inserted = false;
-
-        for i in 0..roles.len() {
-            let grant = roles.get(i).unwrap();
-            if !inserted && new_grant.role < grant.role {
-                new_roles.push_back(new_grant.clone());
-                inserted = true;
-            }
-            new_roles.push_back(grant);
-        }
-
-        if !inserted {
-            new_roles.push_back(new_grant);
-        }
-
-        new_roles
-    }
-
     // ── Fine-grained permission scopes (Issue #374) ──────────────────────
 
-    /// Grant a permission scope to an address. Admin only.
-    pub fn grant_scope(env: Env, address: Address, scope: PermissionScope) {
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .expect("Not initialized");
+    /// Admin-only: grant a permission scope to an address.
+    pub fn grant_scope(
+        env: Env,
+        admin: Address,
+        address: Address,
+        scope: PermissionScope,
+    ) -> Result<(), Error> {
         admin.require_auth();
+        Self::require_not_paused(&env)?;
+        Self::require_role(&env, &admin, Role::Admin)?;
 
         let key = DataKey::AddressScopes(address.clone());
         let mut scopes: Vec<PermissionScope> = env
@@ -1412,24 +1418,30 @@ impl AccessControlContract {
         // Deduplicate
         for i in 0..scopes.len() {
             if scopes.get(i).unwrap() == scope {
-                return;
+                return Ok(());
             }
         }
-        scopes.push_back(scope);
+        scopes.push_back(scope.clone());
         env.storage().persistent().set(&key, &scopes);
         env.storage()
             .persistent()
             .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        ScopeGranted { address, scope }.publish(&env);
+
+        Ok(())
     }
 
-    /// Revoke a permission scope from an address. Admin only.
-    pub fn revoke_scope(env: Env, address: Address, scope: PermissionScope) {
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .expect("Not initialized");
+    /// Admin-only: revoke a permission scope from an address.
+    pub fn revoke_scope(
+        env: Env,
+        admin: Address,
+        address: Address,
+        scope: PermissionScope,
+    ) -> Result<(), Error> {
         admin.require_auth();
+        Self::require_not_paused(&env)?;
+        Self::require_role(&env, &admin, Role::Admin)?;
 
         let key = DataKey::AddressScopes(address.clone());
         if let Some(scopes) = env
@@ -1449,6 +1461,10 @@ impl AccessControlContract {
                 .persistent()
                 .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         }
+
+        ScopeRevoked { address, scope }.publish(&env);
+
+        Ok(())
     }
 
     /// Check whether an address holds a specific permission scope.
@@ -1475,6 +1491,13 @@ impl AccessControlContract {
             .persistent()
             .get(&key)
             .unwrap_or(Vec::new(&env))
+    }
+
+    fn increment_counter(env: &Env, key: DataKey) -> u32 {
+        let mut count: u32 = env.storage().instance().get(&key).unwrap_or(0);
+        count += 1;
+        env.storage().instance().set(&key, &count);
+        count
     }
 }
 

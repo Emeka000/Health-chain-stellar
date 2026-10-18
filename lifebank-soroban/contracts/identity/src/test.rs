@@ -1267,7 +1267,7 @@ fn test_get_top_rated_organizations() {
 }
 
 // ---------------------------------------------------------------------------
-// AccessControlContract tests (unchanged logic, updated role variants)
+// IdentityContract role-expiry and revocation tests
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1276,16 +1276,16 @@ fn test_grant_and_has_role() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     let address = Address::generate(&env);
 
-    client.grant_role_with_expiry(&address, &Role::Admin, &None);
+    client.grant_role_with_expiry(&admin, &address, &Role::Admin, &None);
 
-    assert!(client.ac_has_role(&address, &Role::Admin));
-    assert!(!client.ac_has_role(&address, &Role::Hospital));
+    assert!(client.has_role(&address, &Role::Admin));
+    assert!(!client.has_role(&address, &Role::Hospital));
 }
 
 #[test]
@@ -1294,17 +1294,17 @@ fn test_revoke_role() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     let address = Address::generate(&env);
 
-    client.grant_role_with_expiry(&address, &Role::Donor, &None);
-    assert!(client.ac_has_role(&address, &Role::Donor));
+    client.grant_role_with_expiry(&admin, &address, &Role::Donor, &None);
+    assert!(client.has_role(&address, &Role::Donor));
 
-    client.revoke_role(&address, &Role::Donor);
-    assert!(!client.ac_has_role(&address, &Role::Donor));
+    client.revoke_role(&admin, &address, &Role::Donor);
+    assert!(!client.has_role(&address, &Role::Donor));
 }
 
 #[test]
@@ -1313,19 +1313,19 @@ fn test_multiple_roles_single_entry() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     let address = Address::generate(&env);
 
-    client.grant_role_with_expiry(&address, &Role::Admin, &None);
-    client.grant_role_with_expiry(&address, &Role::Hospital, &None);
-    client.grant_role_with_expiry(&address, &Role::Donor, &None);
+    client.grant_role_with_expiry(&admin, &address, &Role::Admin, &None);
+    client.grant_role_with_expiry(&admin, &address, &Role::Hospital, &None);
+    client.grant_role_with_expiry(&admin, &address, &Role::Donor, &None);
 
-    assert!(client.ac_has_role(&address, &Role::Admin));
-    assert!(client.ac_has_role(&address, &Role::Hospital));
-    assert!(client.ac_has_role(&address, &Role::Donor));
+    assert!(client.has_role(&address, &Role::Admin));
+    assert!(client.has_role(&address, &Role::Hospital));
+    assert!(client.has_role(&address, &Role::Donor));
 
     let roles = client.get_roles(&address);
     assert_eq!(roles.len(), 3);
@@ -1337,14 +1337,14 @@ fn test_no_duplicate_roles() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     let address = Address::generate(&env);
 
-    client.grant_role_with_expiry(&address, &Role::Admin, &None);
-    client.grant_role_with_expiry(&address, &Role::Admin, &None);
+    client.grant_role_with_expiry(&admin, &address, &Role::Admin, &None);
+    client.grant_role_with_expiry(&admin, &address, &Role::Admin, &None);
 
     let roles = client.get_roles(&address);
     assert_eq!(roles.len(), 1);
@@ -1357,15 +1357,15 @@ fn test_roles_sorted() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     let address = Address::generate(&env);
 
-    client.grant_role_with_expiry(&address, &Role::Rider, &None);
-    client.grant_role_with_expiry(&address, &Role::Admin, &None);
-    client.grant_role_with_expiry(&address, &Role::Hospital, &None);
+    client.grant_role_with_expiry(&admin, &address, &Role::Rider, &None);
+    client.grant_role_with_expiry(&admin, &address, &Role::Admin, &None);
+    client.grant_role_with_expiry(&admin, &address, &Role::Hospital, &None);
 
     let roles = client.get_roles(&address);
 
@@ -1382,9 +1382,9 @@ fn test_role_expiration() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     let address = Address::generate(&env);
 
@@ -1392,14 +1392,14 @@ fn test_role_expiration() {
         li.timestamp = 1000;
     });
 
-    client.grant_role_with_expiry(&address, &Role::Donor, &Some(2000));
-    assert!(client.ac_has_role(&address, &Role::Donor));
+    client.grant_role_with_expiry(&admin, &address, &Role::Donor, &Some(2000));
+    assert!(client.has_role(&address, &Role::Donor));
 
     env.ledger().with_mut(|li| {
         li.timestamp = 2001;
     });
 
-    assert!(!client.ac_has_role(&address, &Role::Donor));
+    assert!(!client.has_role(&address, &Role::Donor));
 
     let roles = client.get_roles(&address);
     assert_eq!(
@@ -1415,9 +1415,9 @@ fn test_get_roles_empty() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     let address = Address::generate(&env);
     let roles = client.get_roles(&address);
@@ -1430,21 +1430,21 @@ fn test_revoke_one_of_multiple_roles() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     let address = Address::generate(&env);
 
-    client.grant_role_with_expiry(&address, &Role::Admin, &None);
-    client.grant_role_with_expiry(&address, &Role::Hospital, &None);
-    client.grant_role_with_expiry(&address, &Role::Donor, &None);
+    client.grant_role_with_expiry(&admin, &address, &Role::Admin, &None);
+    client.grant_role_with_expiry(&admin, &address, &Role::Hospital, &None);
+    client.grant_role_with_expiry(&admin, &address, &Role::Donor, &None);
 
-    client.revoke_role(&address, &Role::Hospital);
+    client.revoke_role(&admin, &address, &Role::Hospital);
 
-    assert!(client.ac_has_role(&address, &Role::Admin));
-    assert!(!client.ac_has_role(&address, &Role::Hospital));
-    assert!(client.ac_has_role(&address, &Role::Donor));
+    assert!(client.has_role(&address, &Role::Admin));
+    assert!(!client.has_role(&address, &Role::Hospital));
+    assert!(client.has_role(&address, &Role::Donor));
 
     let roles = client.get_roles(&address);
     assert_eq!(roles.len(), 2);
@@ -1456,9 +1456,9 @@ fn test_storage_benchmark_comparison() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     let addr1 = Address::generate(&env);
     let addr2 = Address::generate(&env);
@@ -1466,20 +1466,20 @@ fn test_storage_benchmark_comparison() {
     let addr4 = Address::generate(&env);
     let addr5 = Address::generate(&env);
 
-    client.grant_role_with_expiry(&addr1, &Role::Admin, &None);
-    client.grant_role_with_expiry(&addr1, &Role::Hospital, &None);
+    client.grant_role_with_expiry(&admin, &addr1, &Role::Admin, &None);
+    client.grant_role_with_expiry(&admin, &addr1, &Role::Hospital, &None);
 
-    client.grant_role_with_expiry(&addr2, &Role::Donor, &None);
-    client.grant_role_with_expiry(&addr2, &Role::Rider, &None);
+    client.grant_role_with_expiry(&admin, &addr2, &Role::Donor, &None);
+    client.grant_role_with_expiry(&admin, &addr2, &Role::Rider, &None);
 
-    client.grant_role_with_expiry(&addr3, &Role::BloodBank, &None);
-    client.grant_role_with_expiry(&addr3, &Role::Admin, &None);
+    client.grant_role_with_expiry(&admin, &addr3, &Role::BloodBank, &None);
+    client.grant_role_with_expiry(&admin, &addr3, &Role::Admin, &None);
 
-    client.grant_role_with_expiry(&addr4, &Role::Hospital, &None);
-    client.grant_role_with_expiry(&addr4, &Role::Donor, &None);
+    client.grant_role_with_expiry(&admin, &addr4, &Role::Hospital, &None);
+    client.grant_role_with_expiry(&admin, &addr4, &Role::Donor, &None);
 
-    client.grant_role_with_expiry(&addr5, &Role::Rider, &None);
-    client.grant_role_with_expiry(&addr5, &Role::BloodBank, &None);
+    client.grant_role_with_expiry(&admin, &addr5, &Role::Rider, &None);
+    client.grant_role_with_expiry(&admin, &addr5, &Role::BloodBank, &None);
 
     let mut storage_entry_count = 0;
     if !client.get_roles(&addr1).is_empty() {
@@ -1500,10 +1500,10 @@ fn test_storage_benchmark_comparison() {
 
     assert_eq!(storage_entry_count, 5);
 
-    assert!(client.ac_has_role(&addr1, &Role::Admin));
-    assert!(client.ac_has_role(&addr1, &Role::Hospital));
-    assert!(client.ac_has_role(&addr2, &Role::Donor));
-    assert!(client.ac_has_role(&addr3, &Role::BloodBank));
+    assert!(client.has_role(&addr1, &Role::Admin));
+    assert!(client.has_role(&addr1, &Role::Hospital));
+    assert!(client.has_role(&addr2, &Role::Donor));
+    assert!(client.has_role(&addr3, &Role::BloodBank));
 }
 
 #[test]
@@ -1512,9 +1512,9 @@ fn test_role_grant_metadata() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     let address = Address::generate(&env);
 
@@ -1522,7 +1522,7 @@ fn test_role_grant_metadata() {
         li.timestamp = 5000;
     });
 
-    client.grant_role_with_expiry(&address, &Role::Hospital, &Some(10000));
+    client.grant_role_with_expiry(&admin, &address, &Role::Hospital, &Some(10000));
 
     let roles = client.get_roles(&address);
     assert_eq!(roles.len(), 1);
@@ -1539,9 +1539,9 @@ fn test_lazy_deletion_in_has_role() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     let address = Address::generate(&env);
 
@@ -1549,7 +1549,7 @@ fn test_lazy_deletion_in_has_role() {
         li.timestamp = 1000;
     });
 
-    client.grant_role_with_expiry(&address, &Role::Donor, &Some(2000));
+    client.grant_role_with_expiry(&admin, &address, &Role::Donor, &Some(2000));
 
     let roles_before = client.get_roles(&address);
     assert_eq!(roles_before.len(), 1);
@@ -1558,7 +1558,7 @@ fn test_lazy_deletion_in_has_role() {
         li.timestamp = 2001;
     });
 
-    assert!(!client.ac_has_role(&address, &Role::Donor));
+    assert!(!client.has_role(&address, &Role::Donor));
 
     let roles_after = client.get_roles(&address);
     assert_eq!(
@@ -1574,9 +1574,9 @@ fn test_lazy_deletion_preserves_other_roles() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     let address = Address::generate(&env);
 
@@ -1584,20 +1584,20 @@ fn test_lazy_deletion_preserves_other_roles() {
         li.timestamp = 1000;
     });
 
-    client.grant_role_with_expiry(&address, &Role::Donor, &Some(2000));
-    client.grant_role_with_expiry(&address, &Role::Admin, &None);
+    client.grant_role_with_expiry(&admin, &address, &Role::Donor, &Some(2000));
+    client.grant_role_with_expiry(&admin, &address, &Role::Admin, &None);
 
     env.ledger().with_mut(|li| {
         li.timestamp = 2001;
     });
 
-    assert!(!client.ac_has_role(&address, &Role::Donor));
+    assert!(!client.has_role(&address, &Role::Donor));
 
     let roles = client.get_roles(&address);
     assert_eq!(roles.len(), 1);
     assert_eq!(roles.get(0).unwrap().role, Role::Admin);
 
-    assert!(client.ac_has_role(&address, &Role::Admin));
+    assert!(client.has_role(&address, &Role::Admin));
 }
 
 #[test]
@@ -1606,9 +1606,9 @@ fn test_cleanup_expired_roles_basic() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     let address = Address::generate(&env);
 
@@ -1616,23 +1616,23 @@ fn test_cleanup_expired_roles_basic() {
         li.timestamp = 1000;
     });
 
-    client.grant_role_with_expiry(&address, &Role::Donor, &Some(2000));
-    client.grant_role_with_expiry(&address, &Role::Rider, &Some(3000));
-    client.grant_role_with_expiry(&address, &Role::Hospital, &None);
+    client.grant_role_with_expiry(&admin, &address, &Role::Donor, &Some(2000));
+    client.grant_role_with_expiry(&admin, &address, &Role::Rider, &Some(3000));
+    client.grant_role_with_expiry(&admin, &address, &Role::Hospital, &None);
 
     env.ledger().with_mut(|li| {
         li.timestamp = 2500;
     });
 
-    let removed = client.cleanup_expired_roles(&address);
+    let removed = client.cleanup_expired_roles(&admin, &address);
     assert_eq!(removed, 1, "Should have removed 1 expired role");
 
     let roles = client.get_roles(&address);
     assert_eq!(roles.len(), 2);
 
-    assert!(!client.ac_has_role(&address, &Role::Donor));
-    assert!(client.ac_has_role(&address, &Role::Rider));
-    assert!(client.ac_has_role(&address, &Role::Hospital));
+    assert!(!client.has_role(&address, &Role::Donor));
+    assert!(client.has_role(&address, &Role::Rider));
+    assert!(client.has_role(&address, &Role::Hospital));
 }
 
 #[test]
@@ -1641,9 +1641,9 @@ fn test_cleanup_expired_roles_removes_all_when_all_expired() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     let address = Address::generate(&env);
 
@@ -1651,9 +1651,9 @@ fn test_cleanup_expired_roles_removes_all_when_all_expired() {
         li.timestamp = 1000;
     });
 
-    client.grant_role_with_expiry(&address, &Role::Admin, &Some(2000));
-    client.grant_role_with_expiry(&address, &Role::Hospital, &Some(2500));
-    client.grant_role_with_expiry(&address, &Role::Donor, &Some(3000));
+    client.grant_role_with_expiry(&admin, &address, &Role::Admin, &Some(2000));
+    client.grant_role_with_expiry(&admin, &address, &Role::Hospital, &Some(2500));
+    client.grant_role_with_expiry(&admin, &address, &Role::Donor, &Some(3000));
 
     assert_eq!(client.get_roles(&address).len(), 3);
 
@@ -1661,7 +1661,7 @@ fn test_cleanup_expired_roles_removes_all_when_all_expired() {
         li.timestamp = 4000;
     });
 
-    let removed = client.cleanup_expired_roles(&address);
+    let removed = client.cleanup_expired_roles(&admin, &address);
     assert_eq!(removed, 3);
 
     let roles = client.get_roles(&address);
@@ -1674,12 +1674,12 @@ fn test_cleanup_expired_roles_no_roles() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     let address = Address::generate(&env);
-    let removed = client.cleanup_expired_roles(&address);
+    let removed = client.cleanup_expired_roles(&admin, &address);
     assert_eq!(removed, 0);
 }
 
@@ -1689,9 +1689,9 @@ fn test_cleanup_expired_roles_none_expired() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     let address = Address::generate(&env);
 
@@ -1699,10 +1699,10 @@ fn test_cleanup_expired_roles_none_expired() {
         li.timestamp = 1000;
     });
 
-    client.grant_role_with_expiry(&address, &Role::Admin, &Some(5000));
-    client.grant_role_with_expiry(&address, &Role::Hospital, &None);
+    client.grant_role_with_expiry(&admin, &address, &Role::Admin, &Some(5000));
+    client.grant_role_with_expiry(&admin, &address, &Role::Hospital, &None);
 
-    let removed = client.cleanup_expired_roles(&address);
+    let removed = client.cleanup_expired_roles(&admin, &address);
     assert_eq!(removed, 0);
 
     let roles = client.get_roles(&address);
@@ -1710,28 +1710,33 @@ fn test_cleanup_expired_roles_none_expired() {
 }
 
 #[test]
-#[should_panic(expected = "Already initialized")]
 fn test_already_initialized() {
     let env = Env::default();
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+    assert_eq!(
+        client.try_initialize(&admin),
+        Err(Ok(Error::AlreadyInitialized))
+    );
 }
 
 #[test]
-#[should_panic(expected = "Not initialized")]
 fn test_not_initialized() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
     let address = Address::generate(&env);
-    client.grant_role_with_expiry(&address, &Role::Admin, &None);
+    assert_eq!(
+        client.try_grant_role_with_expiry(&admin, &address, &Role::Admin, &None),
+        Err(Ok(Error::Unauthorized))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1750,13 +1755,13 @@ fn test_attack_self_grant_rider_to_admin_must_fail() {
     let admin = Address::generate(&env);
     let rider = Address::generate(&env);
 
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     // Give rider the Rider role legitimately.
-    client.grant_role_with_expiry(&rider, &Role::Rider, &None);
-    assert!(client.ac_has_role(&rider, &Role::Rider));
+    client.grant_role_with_expiry(&admin, &rider, &Role::Rider, &None);
+    assert!(client.has_role(&rider, &Role::Rider));
 
     // Now simulate the rider trying to grant themselves Admin.
     // We do NOT mock admin auth — only rider auth is present.
@@ -1766,11 +1771,11 @@ fn test_attack_self_grant_rider_to_admin_must_fail() {
     // Attempt: rider calls grant_role_with_expiry for themselves as Admin.
     // The contract reads the stored admin and calls admin.require_auth(),
     // which will fail because the rider is not the admin.
-    let result = client.try_grant_role_with_expiry(&rider, &Role::Admin, &None);
+    let result = client.try_grant_role_with_expiry(&rider, &rider, &Role::Admin, &None);
     // Must fail — rider is not the admin.
     assert!(result.is_err(), "Self-grant attack must be rejected");
     // Admin role must NOT have been granted.
-    assert!(!client.ac_has_role(&rider, &Role::Admin));
+    assert!(!client.has_role(&rider, &Role::Admin));
 }
 
 /// Attack: A Hospital address calls a function that requires Admin role.
@@ -1784,19 +1789,19 @@ fn test_attack_role_spoofing_hospital_calls_admin_function_must_fail() {
     let hospital = Address::generate(&env);
     let victim = Address::generate(&env);
 
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     // Hospital has Hospital role, not Admin.
-    client.grant_role_with_expiry(&hospital, &Role::Hospital, &None);
+    client.grant_role_with_expiry(&admin, &hospital, &Role::Hospital, &None);
 
-    // Hospital attempts to grant Admin to itself by calling grant_role_with_expiry.
+    // Hospital attempts to grant Admin to victim by calling grant_role_with_expiry.
     // The contract must reject because hospital != stored admin.
     env.set_auths(&[]);
-    let result = client.try_grant_role_with_expiry(&victim, &Role::Admin, &None);
+    let result = client.try_grant_role_with_expiry(&hospital, &victim, &Role::Admin, &None);
     assert!(result.is_err(), "Role spoofing attack must be rejected");
-    assert!(!client.ac_has_role(&victim, &Role::Admin));
+    assert!(!client.has_role(&victim, &Role::Admin));
 }
 
 /// Attack: An address with an expired role attempts to use it.
@@ -1809,22 +1814,22 @@ fn test_attack_expired_role_reuse_must_fail() {
     let admin = Address::generate(&env);
     let blood_bank_admin = Address::generate(&env);
 
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     env.ledger().with_mut(|l| l.timestamp = 1_000);
 
     // Grant BloodBank role with expiry at t=2000.
-    client.grant_role_with_expiry(&blood_bank_admin, &Role::BloodBank, &Some(2_000));
-    assert!(client.ac_has_role(&blood_bank_admin, &Role::BloodBank));
+    client.grant_role_with_expiry(&admin, &blood_bank_admin, &Role::BloodBank, &Some(2_000));
+    assert!(client.has_role(&blood_bank_admin, &Role::BloodBank));
 
     // Advance time past expiry.
     env.ledger().with_mut(|l| l.timestamp = 2_001);
 
     // Expired role must not be recognized.
     assert!(
-        !client.ac_has_role(&blood_bank_admin, &Role::BloodBank),
+        !client.has_role(&blood_bank_admin, &Role::BloodBank),
         "Expired BloodBank role must not be usable after expiry"
     );
 }
@@ -1839,19 +1844,19 @@ fn test_attack_revoked_role_immediate_reuse_must_fail() {
     let admin = Address::generate(&env);
     let attacker = Address::generate(&env);
 
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
-    client.grant_role_with_expiry(&attacker, &Role::Donor, &None);
-    assert!(client.ac_has_role(&attacker, &Role::Donor));
+    client.grant_role_with_expiry(&admin, &attacker, &Role::Donor, &None);
+    assert!(client.has_role(&attacker, &Role::Donor));
 
     // Revoke the role.
-    client.revoke_role(&attacker, &Role::Donor);
+    client.revoke_role(&admin, &attacker, &Role::Donor);
 
     // Immediate reuse attempt — must fail.
     assert!(
-        !client.ac_has_role(&attacker, &Role::Donor),
+        !client.has_role(&attacker, &Role::Donor),
         "Revoked role must not be usable in the same transaction"
     );
 }
@@ -1865,21 +1870,22 @@ fn test_attack_nomination_hijack_unauthorized_must_fail() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let _attacker = Address::generate(&env);
+    let attacker = Address::generate(&env);
     let fake_nominee = Address::generate(&env);
 
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     // Attacker (not admin) tries to grant Admin to fake_nominee.
     env.set_auths(&[]);
-    let result = client.try_grant_role_with_expiry(&fake_nominee, &Role::Admin, &None);
+    let result =
+        client.try_grant_role_with_expiry(&attacker, &fake_nominee, &Role::Admin, &None);
     assert!(
         result.is_err(),
         "Nomination hijack by unauthorized address must be rejected"
     );
-    assert!(!client.ac_has_role(&fake_nominee, &Role::Admin));
+    assert!(!client.has_role(&fake_nominee, &Role::Admin));
 }
 
 /// Attack: BloodBank("BANK_001") attempts to grant a role under a different
@@ -1894,27 +1900,27 @@ fn test_attack_scoped_role_cross_contamination_must_fail() {
     let bank_001 = Address::generate(&env);
     let bank_002 = Address::generate(&env);
 
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     // bank_001 has BloodBank role.
-    client.grant_role_with_expiry(&bank_001, &Role::BloodBank, &None);
+    client.grant_role_with_expiry(&admin, &bank_001, &Role::BloodBank, &None);
 
     // bank_001 attempts to grant BloodBank role to bank_002 (cross-contamination).
     // Only admin can call grant_role_with_expiry.
     env.set_auths(&[]);
-    let result = client.try_grant_role_with_expiry(&bank_002, &Role::BloodBank, &None);
+    let result =
+        client.try_grant_role_with_expiry(&bank_001, &bank_002, &Role::BloodBank, &None);
     assert!(
         result.is_err(),
         "Cross-bank role grant must be rejected — only admin may grant roles"
     );
-    assert!(!client.ac_has_role(&bank_002, &Role::BloodBank));
+    assert!(!client.has_role(&bank_002, &Role::BloodBank));
 }
 
-/// Attack: An authorized address attempts a write operation (grant_role) while
-/// the contract admin key has been cleared (simulating a paused/locked state).
-/// Without an admin, grant_role_with_expiry must panic with "Not initialized".
+/// Attack: An admin attempts a write operation (grant_role) while the contract
+/// is paused. Every state-mutating role function must be rejected.
 #[test]
 fn test_attack_paused_contract_write_must_fail() {
     let env = Env::default();
@@ -1924,23 +1930,17 @@ fn test_attack_paused_contract_write_must_fail() {
     let authorized = Address::generate(&env);
     let target = Address::generate(&env);
 
-    let contract_id = env.register(AccessControlContract, ());
-    let client = AccessControlContractClient::new(&env, &contract_id);
-    client.ac_initialize(&admin);
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
-    client.grant_role_with_expiry(&authorized, &Role::Hospital, &None);
+    client.grant_role_with_expiry(&admin, &authorized, &Role::Hospital, &None);
 
-    // Simulate pause by removing the admin key from storage.
-    env.as_contract(&contract_id, || {
-        env.storage().persistent().remove(&DataKey::Admin);
-    });
+    client.pause(&admin);
 
-    // Any write operation must now fail because admin key is absent.
-    let result = client.try_grant_role_with_expiry(&target, &Role::Hospital, &None);
-    assert!(
-        result.is_err(),
-        "Write operation on paused (no-admin) contract must be rejected"
-    );
+    // Any write operation must now fail while the contract is paused.
+    let result = client.try_grant_role_with_expiry(&admin, &target, &Role::Hospital, &None);
+    assert_eq!(result, Err(Ok(Error::ContractPaused)));
 }
 
 // ── Circuit breaker tests ─────────────────────────────────────────────────────
