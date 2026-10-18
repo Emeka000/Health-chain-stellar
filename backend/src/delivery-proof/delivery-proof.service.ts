@@ -212,55 +212,222 @@ export class DeliveryProofService {
   }
 
   /**
-   * Deterministically serialises a value so that structurally identical
-   * evidence always produces the same digest (stable key ordering).
+   * Deterministically serialises a value so that structurally
+   * identical payloads always produce the same signature input.
    */
   private stableStringify(value: unknown): string {
-    if (value === null || value === undefined) return 'null';
+    if (value === null || typeof value !== 'object') {
+      return JSON.stringify(value);
+    }
     if (Array.isArray(value)) {
       return `[${value.map((v) => this.stableStringify(v)).join(',')}]`;
     }
-    if (typeof value === 'object') {
-      const obj = value as Record<string, unknown>;
-      const keys = Object.keys(obj).sort();
-      return `{${keys
-        .map((k) => `${JSON.stringify(k)}:${this.stableStringify(obj[k])}`)
-        .join(',')}}`;
-    }
-    return JSON.stringify(value);
+    const obj = value as Record<string, unknown>;
+    const keys = Object.keys(obj).sort();
+    return `{${keys
+      .map((k) => `${JSON.stringify(k)}:${this.stableStringify(obj[k])}`)
+      .join(',')}}`;
   }
 
   /**
-   * Builds a digest over every evidential field so the signature binds the
-   * cold-chain readings, delivery times, recipient and photo/location hashes
-   * (issue #1536). Without this, a legitimately signed payload could be
-   * replayed with tampered evidence.
+   * Builds the canonical signed payload for a delivery proof.
    */
-  private buildEvidenceDigest(dto: CreateDeliveryProofDto): string {
-    const evidence = {
-      deliveryId: dto.deliveryId,
-      orderId: dto.orderId,
-      requestId: dto.requestId,
-      riderId: dto.riderId,
-      signerRole: dto.signerRole,
-      signedAt: dto.signedAt,
-      pickupTimestamp: dto.pickupTimestamp,
-      deliveredAt: dto.deliveredAt,
-      recipientName: dto.recipientName,
-      recipientSignatureUrl: dto.recipientSignatureUrl,
-      recipientSignatureHash: dto.recipientSignatureHash,
-      temperatureReadings: dto.temperatureReadings,
-      temperatureCelsius: dto.temperatureCelsius ?? null,
-      notes: dto.notes ?? null,
-      isTemperatureCompliant,
-      verified: true,
-      signerKeyId: dto.signerKeyId,
-      signerPublicKey: dto.signerPublicKey,
-      signerRole: dto.signerRole,
-      signedAt,
-      proofSignature: dto.signature,
-      proofPayloadDigest: payloadDigest,
-      trustedTimestampAt,
+  buildSignedPayload(proof: Partial<DeliveryProofEntity>): string {
+    return this.stableStringify({
+      orderId: proof.orderId,
+      deliveryId: proof.deliveryId,
+      riderId: proof.riderId,
+      photoHashes: proof.photoHashes ?? [],
+      temperatureCelsius: proof.temperatureCelsius ?? null,
+      deliveredAt: proof.deliveredAt ?? null,
+    });
+  }
 
+  /**
+   * Resolves the trusted signer key for a given key id from configuration.
+   */
+  resolveTrustedSigner(kid?: string): TrustedSignerKey | null {
+    const raw = this.configService.get<string>('DELIVERY_PROOF_TRUSTED_SIGNERS');
+    if (!raw) return null;
+    let keys: TrustedSignerKey[];
+    try {
+      keys = JSON.parse(raw);
+    } catch {
+      this.logger.warn('DELIVERY_PROOF_TRUSTED_SIGNERS is not valid JSON');
+      return null;
+    }
+    if (!Array.isArray(keys)) return null;
+    if (!kid) return keys[0] ?? null;
+    return keys.find((k) => k.kid === kid) ?? null;
+  }
 
-/* … truncated 5374 chars — edit only what you need near the top … */
+  /**
+   * Ensures every evidence digest referenced by the proof is present in the
+   * stored photo hashes.
+   */
+  assertEvidenceDigestReferences(
+    proof: Partial<DeliveryProofEntity>,
+    evidenceDigests: string[] = [],
+  ): void {
+    const known = new Set(proof.photoHashes ?? []);
+    for (const digest of evidenceDigests) {
+      if (!known.has(digest)) {
+        throw new BadRequestException(
+          `Evidence digest ${digest} does not reference a stored photo hash`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Returns true when the recorded temperature is within the compliant range.
+   */
+  isTemperatureCompliant(temperatureCelsius?: number | null): boolean {
+    if (temperatureCelsius === null || temperatureCelsius === undefined) {
+      return false;
+    }
+    return temperatureCelsius >= TEMP_MIN_CELSIUS && temperatureCelsius <= TEMP_MAX_CELSIUS;
+  }
+
+  /**
+   * Calculates a success rate as a percentage (0-100), rounded to two decimals.
+   */
+  calculateSuccessRate(successful: number, total: number): number {
+    if (!total || total <= 0) return 0;
+    return Math.round((successful / total) * 10000) / 100;
+  }
+
+  async create(dto: CreateDeliveryProofDto, actor?: DeliveryProofActor) {
+    await this.assertCanUploadToOrder(dto.orderId, actor);
+
+    const existing = await this.proofRepo.findOne({ where: { orderId: dto.orderId } });
+    if (existing) {
+      throw new BadRequestException(
+        `A delivery proof already exists for order ${dto.orderId}`,
+      );
+    }
+
+    const proof = this.proofRepo.create({
+      ...dto,
+      photoHashes: dto.photoHashes ?? [],
+    } as Partial<DeliveryProofEntity>);
+
+    const saved = await this.proofRepo.save(proof);
+    return saved;
+  }
+
+  async getDeliveryProof(id: string, actor?: DeliveryProofActor) {
+    const proof = await this.proofRepo.findOne({ where: { id } });
+    if (!proof) {
+      throw new NotFoundException('Delivery proof not found');
+    }
+    this.assertCanReadProof(proof, actor);
+    return proof;
+  }
+
+  async getOne(id: string, actor?: DeliveryProofActor) {
+    return this.getDeliveryProof(id, actor);
+  }
+
+  async queryProofs(
+    query: DeliveryProofQueryDto,
+    actor?: DeliveryProofActor,
+  ): Promise<PaginatedResponse<DeliveryProofEntity>> {
+    const { page = 1, limit = 20 } = query;
+    const qb = this.proofRepo.createQueryBuilder('proof');
+
+    if (query.orderId) {
+      qb.andWhere('proof.orderId = :orderId', { orderId: query.orderId });
+    }
+    if (query.riderId) {
+      qb.andWhere('proof.riderId = :riderId', { riderId: query.riderId });
+    }
+    if (query.deliveryId) {
+      qb.andWhere('proof.deliveryId = :deliveryId', { deliveryId: query.deliveryId });
+    }
+
+    // Non-admins only see proofs they are assigned to.
+    if (!this.isAdmin(actor)) {
+      if (!actor) {
+        throw new NotFoundException('Delivery proof not found');
+      }
+      qb.andWhere('proof.riderId = :actorId', { actorId: actor.userId });
+    }
+
+    qb.orderBy('proof.createdAt', 'DESC');
+    qb.skip(PaginationUtil.getOffset(page, limit)).take(limit);
+
+    const [items, total] = await qb.getManyAndCount();
+    return PaginationUtil.buildResponse(items, total, page, limit);
+  }
+
+  async query(
+    query: DeliveryProofQueryDto,
+    actor?: DeliveryProofActor,
+  ): Promise<PaginatedResponse<DeliveryProofEntity>> {
+    return this.queryProofs(query, actor);
+  }
+
+  async getProofsByRequest(orderId: string, actor?: DeliveryProofActor) {
+    const proofs = await this.proofRepo.find({
+      where: { orderId },
+      order: { createdAt: 'DESC' },
+    });
+    if (!this.isAdmin(actor)) {
+      for (const proof of proofs) {
+        this.assertCanReadProof(proof, actor);
+      }
+    }
+    return proofs;
+  }
+
+  async getProofsByRider(riderId: string, actor?: DeliveryProofActor) {
+    if (!this.isAdmin(actor) && actor?.userId !== riderId) {
+      throw new NotFoundException('Delivery proof not found');
+    }
+    return this.proofRepo.find({
+      where: { riderId },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  async getDeliveryStatistics(
+    riderId?: string,
+    actor?: DeliveryProofActor,
+  ): Promise<DeliveryStatistics> {
+    if (riderId && !this.isAdmin(actor) && actor?.userId !== riderId) {
+      throw new NotFoundException('Delivery proof not found');
+    }
+
+    const qb = this.proofRepo.createQueryBuilder('proof');
+    if (riderId) {
+      qb.andWhere('proof.riderId = :riderId', { riderId });
+    }
+    const proofs = await qb.getMany();
+
+    const totalDeliveries = proofs.length;
+    const successfulDeliveries = proofs.filter((p) => p.deliveredAt != null).length;
+    const temperatureCompliantDeliveries = proofs.filter((p) =>
+      this.isTemperatureCompliant(p.temperatureCelsius),
+    ).length;
+
+    const temps = proofs
+      .map((p) => p.temperatureCelsius)
+      .filter((t): t is number => typeof t === 'number');
+    const averageTemperatureCelsius = temps.length
+      ? Math.round((temps.reduce((a, b) => a + b, 0) / temps.length) * 100) / 100
+      : null;
+
+    return {
+      totalDeliveries,
+      successfulDeliveries,
+      successRate: this.calculateSuccessRate(successfulDeliveries, totalDeliveries),
+      temperatureCompliantDeliveries,
+      temperatureComplianceRate: this.calculateSuccessRate(
+        temperatureCompliantDeliveries,
+        totalDeliveries,
+      ),
+      averageTemperatureCelsius,
+    };
+  }
+}
