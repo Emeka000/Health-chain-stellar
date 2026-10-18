@@ -71,9 +71,9 @@ pub fn set_admin(env: &Env, admin: &Address) {
 // ── Authorization ──────────────────────────────────────────────────────────────
 
 pub fn is_authorized_bank(env: &Env, bank: &Address) -> bool {
-    env.storage()
-        .persistent()
-        .has(&DataKey::AuthorizedBank(bank.clone()))
+    let key = DataKey::AuthorizedBank(bank.clone());
+    extend_page_ttl(env, &key);
+    env.storage().persistent().has(&key)
 }
 
 pub fn set_authorized_bank(env: &Env, bank: &Address, authorized: bool) {
