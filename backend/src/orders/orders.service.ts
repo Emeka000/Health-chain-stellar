@@ -218,65 +218,180 @@ export class OrdersService {
       );
     if (restriction !== RestrictionLevel.NONE) {
       throw new ForbiddenException(
-        'This hospital is restricted from creating new orders',
+        'Organization is restricted from creating orders',
       );
     }
-    const saved = await this.createOrderEntity(dto, actorId);
-    if (
-      saved.status === OrderStatus.CONFIRMED ||
-      saved.status === OrderStatus.DISPATCHED
-    ) {
-      await this.orderFeeService.computeAndPersist(saved);
-    }
-    return { message: 'Order created successfully', data: saved };
+
+    const order = await this.createOrderEntity(dto, actorId);
+
+    await this.eventStore.appendEvent(
+      order.id,
+      OrderEventType.ORDER_CONFIRMED,
+      new OrderConfirmedEvent(order.id, order.hospitalId, order.bloodBankId),
+    );
+
+    return { message: 'Order created successfully', data: order };
   }
 
   async update(
     id: string,
-    updateDto: UpdateOrderDto,
+    dto: UpdateOrderDto,
     actor?: TenantActorContext,
   ) {
     const order = await this.findOrderOrFail(id, actor);
-    if (updateDto.deliveryAddress !== undefined)
-      order.deliveryAddress = updateDto.deliveryAddress;
-    if (updateDto.quantity !== undefined) {
-      // Adjust the reservation to match the new quantity so that a later
-      // cancellation restores exactly what is currently reserved. The
-      // originally reserved amount is preserved for audit/reconciliation.
-      const previousQuantity = Number(order.quantity);
-      const nextQuantity = Number(updateDto.quantity);
-      const delta = nextQuantity - previousQuantity;
-      if (delta > 0) {
-        await this.inventoryService.reserveStockOrThrow(
-          order.bloodBankId ?? '',
-          order.bloodType,
-          delta,
-        );
-      } else if (delta < 0) {
-        await this.inventoryService.restoreStockOrThrow(
-          order.bloodBankId ?? '',
-          order.bloodType,
-          Math.abs(delta),
-        );
-      }
-      order.quantity = updateDto.quantity;
-      order.reservedQuantity = nextQuantity;
-    }
-    const updated = await this.orderRepo.save(order);
-    return { message: 'Order updated successfully', data: updated };
+    Object.assign(order, dto);
+    const saved = await this.orderRepo.save(order);
+    return { message: 'Order updated successfully', data: saved };
+  }
+
+  async remove(id: string, actor?: TenantActorContext) {
+    const order = await this.findOrderOrFail(id, actor);
+    await this.orderRepo.remove(order);
+    return { message: 'Order deleted successfully' };
   }
 
   async updateStatus(
     id: string,
-    statusUpdate: UpdateRequestStatusDto | string,
-    actorId?: string,
-    actorRole?: string,
-    actor?: TenantActorCo
-
-  async remove(id: string, actorId?: string, actor?: TenantActorContext) {
+    dto: UpdateRequestStatusDto,
+    actor?: TenantActorContext,
+  ) {
     const order = await this.findOrderOrFail(id, actor);
-    await this.dataSource.transaction(async (manager) => {
-      await this.requestStatusService.applyStatusUpdate(
-    
 
-/* … truncated 6514 chars — edit only what you need near the top … */
+    const nextStatus = this.stateMachine.transition(
+      order.status,
+      dto.action as RequestStatusAction,
+    );
+
+    await this.requestStatusService.applyStatusUpdate(
+      order,
+      nextStatus,
+      dto,
+      actor,
+    );
+
+    await this.eventStore.appendEvent(
+      order.id,
+      OrderEventType.ORDER_STATUS_UPDATED,
+      new OrderStatusUpdatedEvent(order.id, order.status, nextStatus),
+    );
+
+    return { message: 'Order status updated successfully', data: order };
+  }
+
+  async assignRider(
+    id: string,
+    riderId: string,
+    actor?: TenantActorContext,
+  ) {
+    const order = await this.findOrderOrFail(id, actor);
+
+    if (order.status !== OrderStatus.CONFIRMED) {
+      throw new ConflictException(
+        'Rider can only be assigned to a confirmed order',
+      );
+    }
+
+    order.riderId = riderId;
+    const saved = await this.orderRepo.save(order);
+
+    await this.eventStore.appendEvent(
+      order.id,
+      OrderEventType.RIDER_ASSIGNED,
+      new OrderRiderAssignedEvent(order.id, riderId),
+    );
+
+    return { message: 'Rider assigned successfully', data: saved };
+  }
+
+  async raiseDispute(
+    id: string,
+    dto: RaiseDisputeDto,
+    actor?: TenantActorContext,
+  ) {
+    const order = await this.findOrderOrFail(id, actor);
+
+    if (order.status === OrderStatus.DISPUTED) {
+      throw new ConflictException('Order is already disputed');
+    }
+
+    order.status = OrderStatus.DISPUTED;
+    order.disputeReason = dto.reason;
+    const saved = await this.orderRepo.save(order);
+
+    await this.eventStore.appendEvent(
+      order.id,
+      OrderEventType.ORDER_DISPUTED,
+      new OrderDisputedEvent(order.id, dto.reason),
+    );
+
+    return { message: 'Dispute raised successfully', data: saved };
+  }
+
+  async resolveDispute(
+    id: string,
+    dto: ResolveDisputeDto,
+    actor?: TenantActorContext,
+  ) {
+    const order = await this.findOrderOrFail(id, actor);
+
+    if (order.status !== OrderStatus.DISPUTED) {
+      throw new ConflictException('Order is not in a disputed state');
+    }
+
+    return this.finalizeDisputeResolution(order, dto, actor);
+  }
+
+  private async finalizeDisputeResolution(
+    order: OrderEntity,
+    dto: ResolveDisputeDto,
+    actor?: TenantActorContext,
+  ) {
+    order.status = dto.resolutionStatus ?? OrderStatus.RESOLVED;
+    order.disputeResolution = dto.resolution;
+    const saved = await this.orderRepo.save(order);
+
+    await this.eventStore.appendEvent(
+      order.id,
+      OrderEventType.ORDER_RESOLVED,
+      new OrderResolvedEvent(order.id, dto.resolution),
+    );
+
+    return { message: 'Dispute resolved successfully', data: saved };
+  }
+
+  async previewOrderFees(dto: FeePreviewDto) {
+    return this.orderFeeService.previewFees(dto);
+  }
+
+  private async findOrderOrFail(id: string, actor?: TenantActorContext) {
+    const order = await this.orderRepo.findOne({ where: { id } });
+    if (!order) {
+      throw new NotFoundException(`Order ${id} not found`);
+    }
+    this.assertTenantAccess(order, actor);
+    return order;
+  }
+
+  private assertTenantAccess(
+    order: OrderEntity,
+    actor?: TenantActorContext,
+  ) {
+    if (!actor) return;
+    const isAdmin = (actor.role ?? '').toLowerCase() === 'admin';
+    if (isAdmin) return;
+    assertTenantAccess(actor, [order.hospitalId, order.bloodBankId]);
+  }
+
+  private async createOrderEntity(
+    dto: CreateOrderDto,
+    actorId?: string,
+  ): Promise<OrderEntity> {
+    const order = this.orderRepo.create({
+      ...dto,
+      status: OrderStatus.PENDING,
+      placedAt: new Date(),
+      createdBy: actorId,
+    });
+    return this.orderRepo.save(order);
+  }
+}

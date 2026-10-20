@@ -314,6 +314,113 @@ export class RidersService {
     const rows = await this.riderRepository.manager
       .createQueryBuilder()
       .select('dispatch.rider_id', 'riderId')
-      .addSelec
+      .addSelect('COUNT(*)', 'count')
+      .from('dispatches', 'dispatch')
+      .where('dispatch.rider_id IN (:...riderIds)', { riderIds })
+      .andWhere('dispatch.status IN (:...activeStatuses)', {
+        activeStatuses: ['assigned', 'accepted', 'picked_up', 'in_transit'],
+      })
+      .groupBy('dispatch.rider_id')
+      .getRawMany<{ riderId: string; count: string }>();
 
-/* … truncated 1127 chars — edit only what you need near the top … */
+    for (const row of rows) {
+      counts.set(row.riderId, parseInt(row.count, 10));
+    }
+    return counts;
+  }
+
+  async getNearbyRiders(
+    query: AvailabilityQueryDto,
+  ): Promise<{ message: string; data: RiderRecord[] }> {
+    const { latitude, longitude, radiusKm = 10 } = query;
+
+    const qb = this.riderRepository
+      .createQueryBuilder('rider')
+      .where('rider.status = :status', { status: RiderStatus.AVAILABLE })
+      .andWhere('rider.isVerified = :isVerified', { isVerified: true })
+      .andWhere('rider.latitude IS NOT NULL')
+      .andWhere('rider.longitude IS NOT NULL');
+
+    const riders = await qb.getMany();
+
+    const nearby = riders
+      .map((r) => ({
+        rider: r,
+        distanceKm: haversineKm(
+          latitude,
+          longitude,
+          Number(r.latitude),
+          Number(r.longitude),
+        ),
+      }))
+      .filter((entry) => entry.distanceKm <= radiusKm)
+      .sort((a, b) => a.distanceKm - b.distanceKm);
+
+    const activeCounts = await this.countActiveDeliveries(
+      nearby.map((entry) => entry.rider.id),
+    );
+
+    const data: RiderRecord[] = nearby.map((entry) => ({
+      ...entry.rider,
+      averageRating: entry.rider.rating,
+      activeDeliveries: activeCounts.get(entry.rider.id) ?? 0,
+    }));
+
+    return {
+      message: 'Nearby riders retrieved successfully',
+      data,
+    };
+  }
+
+  async getLeaderboard(limit = 10) {
+    const riders = await this.riderRepository.find({
+      where: { isVerified: true },
+      relations: ['user'],
+      order: { rating: 'DESC', totalDeliveries: 'DESC' },
+      take: limit,
+    });
+
+    return {
+      message: 'Rider leaderboard retrieved successfully',
+      data: riders.map((rider, index) => ({
+        rank: index + 1,
+        riderId: rider.id,
+        name: rider.user?.name ?? null,
+        rating: rider.rating,
+        totalDeliveries: rider.totalDeliveries,
+      })),
+    };
+  }
+
+  async getPerformance(id: string) {
+    const riderResult = await this.findOne(id);
+    const rider = riderResult.data;
+
+    const activeDeliveries = await this.countActiveDeliveries([rider.id]);
+
+    return {
+      message: 'Rider performance retrieved successfully',
+      data: {
+        riderId: rider.id,
+        rating: rider.rating,
+        totalDeliveries: rider.totalDeliveries,
+        activeDeliveries: activeDeliveries.get(rider.id) ?? 0,
+        status: rider.status,
+        isVerified: rider.isVerified,
+      },
+    };
+  }
+
+  private emitStatusChangeEvent(
+    rider: RiderEntity,
+    previousStatus: RiderStatus,
+  ): void {
+    this.eventEmitter.emit('rider.status.changed', {
+      riderId: rider.id,
+      userId: rider.userId,
+      previousStatus,
+      status: rider.status,
+      changedAt: new Date(),
+    });
+  }
+}

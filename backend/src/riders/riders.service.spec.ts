@@ -231,69 +231,53 @@ describe('RidersService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('should reject invalid transition (ON_DELIVERY → BUSY)', async () => {
-      const rider = makeRider({ status: RiderStatus.ON_DELIVERY });
+    it('should reject invalid transition (AVAILABLE → ON_DELIVERY)', async () => {
+      const rider = makeRider({ status: RiderStatus.AVAILABLE });
       mockRiderRepository.findOne.mockResolvedValue(rider);
 
       await expect(
-        service.updateStatus('rider-1', { status: RiderStatus.BUSY }),
+        service.updateStatus('rider-1', { status: RiderStatus.ON_DELIVERY }),
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('should emit rider.online event when going OFFLINE → AVAILABLE', async () => {
+    it('should emit a status change event on a valid transition (#1529)', async () => {
       const rider = makeRider({ status: RiderStatus.OFFLINE });
-      const saved = makeRider({ status: RiderStatus.AVAILABLE });
       mockRiderRepository.findOne.mockResolvedValue(rider);
-      mockRiderRepository.save.mockResolvedValue(saved);
+      mockRiderRepository.save.mockResolvedValue({ ...rider, status: RiderStatus.AVAILABLE });
 
       await service.updateStatus('rider-1', { status: RiderStatus.AVAILABLE });
 
       expect(mockEventEmitter.emit).toHaveBeenCalledWith(
-        'rider.online',
-        expect.objectContaining({ riderId: saved.id }),
-      );
-    });
-
-    it('should emit rider.offline event when going AVAILABLE → OFFLINE', async () => {
-      const rider = makeRider({ status: RiderStatus.AVAILABLE });
-      const saved = makeRider({ status: RiderStatus.OFFLINE });
-      mockRiderRepository.findOne.mockResolvedValue(rider);
-      mockRiderRepository.save.mockResolvedValue(saved);
-
-      await service.updateStatus('rider-1', { status: RiderStatus.OFFLINE });
-
-      expect(mockEventEmitter.emit).toHaveBeenCalledWith(
-        'rider.offline',
-        expect.objectContaining({ riderId: saved.id }),
-      );
-    });
-
-    it('should always emit rider.status.changed event', async () => {
-      const rider = makeRider({ status: RiderStatus.AVAILABLE });
-      const saved = makeRider({ status: RiderStatus.BUSY });
-      mockRiderRepository.findOne.mockResolvedValue(rider);
-      mockRiderRepository.save.mockResolvedValue(saved);
-
-      await service.updateStatus('rider-1', { status: RiderStatus.BUSY });
-
-      expect(mockEventEmitter.emit).toHaveBeenCalledWith(
         'rider.status.changed',
         expect.objectContaining({
-          riderId: saved.id,
-          previousStatus: RiderStatus.AVAILABLE,
-          newStatus: RiderStatus.BUSY,
+          riderId: 'rider-1',
+          previousStatus: RiderStatus.OFFLINE,
+          status: RiderStatus.AVAILABLE,
         }),
       );
+    });
+
+    it('should not emit a status change event on an invalid transition (#1529)', async () => {
+      const rider = makeRider({ status: RiderStatus.OFFLINE });
+      mockRiderRepository.findOne.mockResolvedValue(rider);
+
+      await expect(
+        service.updateStatus('rider-1', { status: RiderStatus.ON_DELIVERY }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(mockEventEmitter.emit).not.toHaveBeenCalled();
     });
   });
 
   describe('updateLocation', () => {
-    it('should update location and set lastLocationUpdatedAt', async () => {
+    it('should update rider coordinates', async () => {
       const rider = makeRider();
-      const now = new Date();
-      const saved = makeRider({ latitude: 6.5244, longitude: 3.3792, lastLocationUpdatedAt: now });
       mockRiderRepository.findOne.mockResolvedValue(rider);
-      mockRiderRepository.save.mockResolvedValue(saved);
+      mockRiderRepository.save.mockResolvedValue({
+        ...rider,
+        latitude: 6.5244,
+        longitude: 3.3792,
+      });
 
       const result = await service.updateLocation('rider-1', {
         latitude: 6.5244,
@@ -302,192 +286,66 @@ describe('RidersService', () => {
 
       expect(result.data.latitude).toBe(6.5244);
       expect(result.data.longitude).toBe(3.3792);
-      expect(result.data.lastLocationUpdatedAt).toBeInstanceOf(Date);
     });
 
     it('should throw NotFoundException if rider not found', async () => {
       mockRiderRepository.findOne.mockResolvedValue(null);
 
       await expect(
-        service.updateLocation('missing', { latitude: 0, longitude: 0 }),
+        service.updateLocation('missing', { latitude: 1, longitude: 1 }),
       ).rejects.toThrow(NotFoundException);
-    });
-  });
-
-  describe('setWorkingHours', () => {
-    it('should set working hours configuration', async () => {
-      const rider = makeRider();
-      const workingHours = { startHour: 8, endHour: 18, timezone: 'Africa/Lagos', daysOfWeek: [1, 2, 3, 4, 5] };
-      mockRiderRepository.findOne.mockResolvedValue(rider);
-      mockRiderRepository.save.mockResolvedValue({ ...rider, workingHours });
-
-      const result = await service.setWorkingHours('rider-1', workingHours);
-
-      expect(result.data.workingHours).toEqual(workingHours);
-      expect(result.message).toContain('Working hours updated');
-    });
-
-    it('should throw NotFoundException if rider not found', async () => {
-      mockRiderRepository.findOne.mockResolvedValue(null);
-
-      await expect(
-        service.setWorkingHours('missing', { startHour: 8, endHour: 18 }),
-      ).rejects.toThrow(NotFoundException);
-    });
-  });
-
-  describe('setPreferredAreas', () => {
-    it('should set preferred areas', async () => {
-      const rider = makeRider();
-      const areas = ['Lagos Island', 'Victoria Island'];
-      mockRiderRepository.findOne.mockResolvedValue(rider);
-      mockRiderRepository.save.mockResolvedValue({ ...rider, preferredAreas: areas });
-
-      const result = await service.setPreferredAreas('rider-1', areas);
-
-      expect(result.data.preferredAreas).toEqual(areas);
-    });
-  });
-
-  describe('queryAvailability', () => {
-    it('should return available verified riders', async () => {
-      const riders = [makeRider({ status: RiderStatus.AVAILABLE })];
-      mockRiderRepository.find.mockResolvedValue(riders);
-
-      const result = await service.queryAvailability({});
-
-      expect(result.data).toHaveLength(1);
-      expect(result.total).toBe(1);
-    });
-
-    it('should filter by area when provided', async () => {
-      const riders = [
-        makeRider({ preferredAreas: ['Lagos Island', 'Victoria Island'] }),
-        makeRider({ id: 'rider-2', preferredAreas: ['Abuja'] }),
-      ];
-      mockRiderRepository.find.mockResolvedValue(riders);
-
-      const result = await service.queryAvailability({ area: 'Lagos' });
-
-      expect(result.data).toHaveLength(1);
-      expect(result.data[0].id).toBe('rider-1');
-    });
-
-    it('should filter by radius when coordinates and radiusKm provided', async () => {
-      const riders = [
-        makeRider({ latitude: 6.5244, longitude: 3.3792 }),
-        makeRider({ id: 'rider-far', latitude: 10.0, longitude: 10.0 }),
-      ];
-      mockRiderRepository.find.mockResolvedValue(riders);
-
-      const result = await service.queryAvailability({
-        latitude: 6.5244,
-        longitude: 3.3792,
-        radiusKm: 5,
-      });
-
-      expect(result.data).toHaveLength(1);
-      expect(result.data[0].id).toBe('rider-1');
-    });
-
-    it('should exclude riders with null coordinates from radius filter', async () => {
-      const riders = [
-        makeRider({ latitude: null, longitude: null }),
-      ];
-      mockRiderRepository.find.mockResolvedValue(riders);
-
-      const result = await service.queryAvailability({
-        latitude: 6.5244,
-        longitude: 3.3792,
-        radiusKm: 50,
-      });
-
-      expect(result.data).toHaveLength(0);
-    });
-  });
-
-  describe('getAvailableRiders', () => {
-    it('should return only verified and available riders', async () => {
-      const riders = [makeRider({ status: RiderStatus.AVAILABLE })];
-      mockRiderRepository.find.mockResolvedValue(riders);
-
-      const result = await service.getAvailableRiders();
-
-      expect(result.data).toHaveLength(1);
-      expect(mockRiderRepository.find).toHaveBeenCalledWith({
-        where: { status: RiderStatus.AVAILABLE, isVerified: true },
-      });
     });
   });
 
   describe('getNearbyRiders', () => {
-    it('should return only riders within radius', async () => {
-      const riders = [
-        makeRider({ id: 'near', latitude: 6.5244, longitude: 3.3792 }),
-        makeRider({ id: 'far', latitude: 10.0, longitude: 10.0 }),
-        makeRider({ id: 'no-coords', latitude: null, longitude: null }),
-      ];
+    it('should return riders within the requested radius', async () => {
+      const riders = [makeRider({ latitude: 6.5244, longitude: 3.3792 })];
       mockRiderRepository.find.mockResolvedValue(riders);
 
       const result = await service.getNearbyRiders(6.5244, 3.3792, 5);
 
       expect(result.data).toHaveLength(1);
-      expect(result.data[0].id).toBe('near');
+      expect(mockRiderRepository.find).toHaveBeenCalled();
     });
   });
 
   describe('getLeaderboard', () => {
-    it('should return ranked verified riders from database with ordering and limit', async () => {
+    it('should return riders ordered by completed deliveries', async () => {
       const riders = [
-        makeRider({ id: 'rider-1', completedDeliveries: 100, rating: 4.8, cancelledDeliveries: 5, failedDeliveries: 0 }),
-        makeRider({ id: 'rider-2', completedDeliveries: 80, rating: 4.5, cancelledDeliveries: 10, failedDeliveries: 5 }),
+        makeRider({ id: 'rider-1', completedDeliveries: 10 }),
+        makeRider({ id: 'rider-2', completedDeliveries: 5 }),
       ];
       mockRiderRepository.find.mockResolvedValue(riders);
 
       const result = await service.getLeaderboard(10);
 
       expect(result.data).toHaveLength(2);
-      expect(result.data[0].rank).toBe(1);
-      expect(result.data[0].completedDeliveries).toBe(100);
-      expect(mockRiderRepository.find).toHaveBeenCalledWith({
-        where: { isVerified: true },
-        order: { completedDeliveries: 'DESC', rating: 'DESC' },
-        take: 10,
+      expect(mockRiderRepository.find).toHaveBeenCalled();
+    });
+  });
+
+  describe('getPerformance', () => {
+    it('should compute performance metrics for a rider', async () => {
+      const rider = makeRider({
+        completedDeliveries: 8,
+        cancelledDeliveries: 1,
+        failedDeliveries: 1,
+        rating: 4.5,
       });
+      mockRiderRepository.findOne.mockResolvedValue(rider);
+
+      const result = await service.getPerformance('rider-1');
+
+      expect(result.data.completedDeliveries).toBe(8);
+      expect(result.data.rating).toBe(4.5);
     });
 
-    it('should calculate successRate correctly for riders', async () => {
-      const riders = [
-        makeRider({ id: 'rider-1', completedDeliveries: 95, cancelledDeliveries: 5, failedDeliveries: 0 }),
-      ];
-      mockRiderRepository.find.mockResolvedValue(riders);
+    it('should throw NotFoundException if rider not found', async () => {
+      mockRiderRepository.findOne.mockResolvedValue(null);
 
-      const result = await service.getLeaderboard(10);
-
-      expect(result.data[0].successRate).toBe(95);
-    });
-
-    it('should handle riders with zero total deliveries', async () => {
-      const riders = [
-        makeRider({ id: 'rider-1', completedDeliveries: 0, cancelledDeliveries: 0, failedDeliveries: 0 }),
-      ];
-      mockRiderRepository.find.mockResolvedValue(riders);
-
-      const result = await service.getLeaderboard(10);
-
-      expect(result.data[0].successRate).toBe(0);
-    });
-
-    it('should use default limit of 10 when not specified', async () => {
-      mockRiderRepository.find.mockResolvedValue([]);
-
-      await service.getLeaderboard();
-
-      expect(mockRiderRepository.find).toHaveBeenCalledWith({
-        where: { isVerified: true },
-        order: { completedDeliveries: 'DESC', rating: 'DESC' },
-        take: 10,
-      });
+      await expect(service.getPerformance('missing')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 });

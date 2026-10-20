@@ -18,6 +18,10 @@ import type { Request } from 'express';
 import { CreateDeliveryProofDto } from './dto/create-delivery-proof.dto';
 import { DeliveryProofQueryDto } from './dto/delivery-proof-query.dto';
 import { DeliveryProofService } from './delivery-proof.service';
+import {
+  QueryDeliveryProofDto,
+  UploadPhotoDto,
+} from './dto/delivery-proof.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
@@ -53,6 +57,7 @@ export class DeliveryProofController {
   async uploadPhoto(
     @Param('orderId', new ParseUUIDPipe({ version: '4' })) orderId: string,
     @UploadedFile() file: any, // Express.Multer.File
+    @Body() dto: UploadPhotoDto,
     @Req() req: Request,
   ) {
     return this.deliveryProofService.uploadPhoto(

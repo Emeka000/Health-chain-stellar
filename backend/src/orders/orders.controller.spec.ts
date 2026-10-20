@@ -182,5 +182,32 @@ describe('OrdersController', () => {
         expect.objectContaining({ organizationId: 'HOSP-001' }),
       );
     });
+
+    it('should scope results to the caller organization (tenant check, #1522)', async () => {
+      const params: OrderQueryParamsDto = {
+        hospitalId: 'HOSP-999',
+        page: 1,
+        pageSize: 25,
+      };
+
+      const result = {
+        data: [],
+        pagination: {
+          currentPage: 1,
+          pageSize: 25,
+          totalCount: 0,
+          totalPages: 0,
+        },
+      };
+
+      jest.spyOn(service, 'findAllWithFilters').mockResolvedValue(result);
+
+      await controller.findAllWithFilters(params, req as any);
+
+      expect(service.findAllWithFilters).toHaveBeenCalledWith(
+        params,
+        expect.objectContaining({ organizationId: 'HOSP-001' }),
+      );
+    });
   });
 });
