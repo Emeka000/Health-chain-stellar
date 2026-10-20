@@ -212,55 +212,6 @@ export class DeliveryProofService {
   }
 
   /**
-   * Deterministically serialises a value so that structurally identical
-   * evidence always produces the same digest (stable key ordering).
-   */
-  private stableStringify(value: unknown): string {
-    if (value === null || value === undefined) return 'null';
-    if (Array.isArray(value)) {
-      return `[${value.map((v) => this.stableStringify(v)).join(',')}]`;
-    }
-    if (typeof value === 'object') {
-      const obj = value as Record<string, unknown>;
-      const keys = Object.keys(obj).sort();
-      return `{${keys
-        .map((k) => `${JSON.stringify(k)}:${this.stableStringify(obj[k])}`)
-        .join(',')}}`;
-    }
-    return JSON.stringify(value);
-  }
+   * Deterministically serialises a value so that structurally
 
-  /**
-   * Builds a digest over every evidential field so the signature binds the
-   * cold-chain readings, delivery times, recipient and photo/location hashes
-   * (issue #1536). Without this, a legitimately signed payload could be
-   * replayed with tampered evidence.
-   */
-  private buildEvidenceDigest(dto: CreateDeliveryProofDto): string {
-    const evidence = {
-      deliveryId: dto.deliveryId,
-      orderId: dto.orderId,
-      requestId: dto.requestId,
-      riderId: dto.riderId,
-      signerRole: dto.signerRole,
-      signedAt: dto.signedAt,
-      pickupTimestamp: dto.pickupTimestamp,
-      deliveredAt: dto.deliveredAt,
-      recipientName: dto.recipientName,
-      recipientSignatureUrl: dto.recipientSignatureUrl,
-      recipientSignatureHash: dto.recipientSignatureHash,
-      temperatureReadings: dto.temperatureReadings,
-      temperatureCelsius: dto.temperatureCelsius ?? null,
-      notes: dto.notes ?? null,
-      isTemperatureCompliant,
-      verified: true,
-      signerKeyId: dto.signerKeyId,
-      signerPublicKey: dto.signerPublicKey,
-      signerRole: dto.signerRole,
-      signedAt,
-      proofSignature: dto.signature,
-      proofPayloadDigest: payloadDigest,
-      trustedTimestampAt,
-
-
-/* … truncated 5374 chars — edit only what you need near the top … */
+/* … truncated 1899 chars — edit only what you need near the top … */

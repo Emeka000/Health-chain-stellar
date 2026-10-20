@@ -43,6 +43,8 @@ import { BloodRequestsInventoryContract } from './blood-requests-inventory.fixtu
 import { BloodRequestsSorobanContract } from './blood-requests-soroban.fixture';
 import { DispatchRidersContract } from './dispatch-riders.fixture';
 import { AuthContract } from './auth.fixture';
+import { DonationContract } from './donation.fixture';
+import { DonationAttributionContract } from './donation-attribution.fixture';
 
 /**
  * Get contract by name
@@ -60,9 +62,11 @@ export function getContractByName(name: string) {
 }
 
 // Re-export for convenience
-import { BloodRequestsInventoryContract } from './blood-requests-inventory.fixture';
-import { BloodRequestsSorobanContract } from './blood-requests-soroban.fixture';
-import { DispatchRidersContract } from './dispatch-riders.fixture';
-import { AuthContract } from './auth.fixture';
-import { DonationContract } from './donation.fixture';
-import { DonationAttributionContract } from './donation-attribution.fixture';
+export {
+  BloodRequestsInventoryContract,
+  BloodRequestsSorobanContract,
+  DispatchRidersContract,
+  AuthContract,
+  DonationContract,
+  DonationAttributionContract,
+};

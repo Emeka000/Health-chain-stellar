@@ -124,14 +124,5 @@ For contract deployment, full environment variable reference, and contributor gu
 <!-- handsoff-issue-1482 -->
 - #1482: [lifebank/temperature] compute_excursion_data trusts stale is_violation flags computed under a historical threshold instead of re-validating against the current one
 
-<!-- handsoff-issue-1644 -->
-- #1644: [lifebank/reputation] update_from_event treats every lost dispute as confirmed fraud, and event kinds 0 and 1 are identical
-
-<!-- handsoff-issue-1645 -->
-- #1645: [lifebank/reputation] calculate_reputation is an unauthenticated public write that ignores pause, and get_score returns stale scores that never include decay
-
-<!-- handsoff-issue-1646 -->
-- #1646: [lifebank/temperature] set_threshold lets the admin bypass the 7-day threshold-change timelock entirely
-
-<!-- handsoff-issue-1647 -->
-- #1647: [lifebank/temperature] report_excursion_to_coordinator never binds payment_id to unit_id, so any oracle can dispute any payment by citing any unit with a past violation
+<!-- handsoff-issue-1675 -->
+- #1675: [backend/auth, backend/route-deviation] #1490 and #1531 were closed by README-only commits and are still present
