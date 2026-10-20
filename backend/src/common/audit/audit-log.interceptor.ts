@@ -11,6 +11,7 @@ import { tap } from 'rxjs/operators';
 
 import { AUDITABLE_KEY, AuditableOptions } from './auditable.decorator';
 import { AuditLogService } from './audit-log.service';
+import { getClientIp } from '../utils/client-ip.util';
 
 @Injectable()
 export class AuditLogInterceptor implements NestInterceptor {
@@ -35,10 +36,7 @@ export class AuditLogInterceptor implements NestInterceptor {
     const actorRole = user?.role ?? 'unknown';
 
     // Extract request metadata
-    const ipAddress: string | null =
-      (req.headers?.['x-forwarded-for'] as string)?.split(',')[0]?.trim() ??
-      req.ip ??
-      null;
+    const ipAddress = getClientIp(req);
 
     const userAgent: string | null = req.headers?.['user-agent'] ?? null;
     const correlationId: string | null = req.correlationId ?? null;

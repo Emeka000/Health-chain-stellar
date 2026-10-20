@@ -60,7 +60,7 @@ redis-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" ping
 redis-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" INFO persistence
 ```
 
-If Redis data is lost, restore it using the platform’s approved RDB/AOF procedure, then verify workers through Bull Board and `/health`. Do not invent business records from Redis. Re-enqueue failed work only after PostgreSQL has been verified, and do not bulk-retry jobs that already produced a durable order or payment result.
+If Redis data is lost, restore it using the platform’s approved RDB/AOF procedure, then verify workers through Bull Board and `/health/ready`. Do not invent business records from Redis. Re-enqueue failed work only after PostgreSQL has been verified, and do not bulk-retry jobs that already produced a durable order or payment result.
 
 ### Replay projections and blockchain events
 

@@ -6,6 +6,7 @@ import { OrderEntity } from '../../orders/entities/order.entity';
 import { OrderStatus } from '../../orders/enums/order-status.enum';
 import { OrganizationEntity } from '../../organizations/entities/organization.entity';
 import { OrganizationVerificationStatus } from '../../organizations/enums/organization-verification-status.enum';
+import { TransparencyPublicationEntity } from '../entities/transparency-publication.entity';
 import { TransparencyService } from '../transparency.service';
 
 // ── Repo factories ────────────────────────────────────────────────────────────
@@ -43,11 +44,24 @@ const makeOrgRepo = (overrides: Partial<Record<string, unknown>> = {}) => ({
 });
 
 const makeBloodUnitRepo = () => ({ count: jest.fn().mockResolvedValue(0) });
+const makePublicationRepo = () => {
+  let storedArtifact: Record<string, unknown> | null = null;
+  return {
+    findOne: jest.fn().mockImplementation(() =>
+      Promise.resolve(storedArtifact ? { artifact: storedArtifact } : null),
+    ),
+    insert: jest.fn().mockImplementation(({ artifact }) => {
+      storedArtifact = artifact;
+      return Promise.resolve({});
+    }),
+  };
+};
 
 async function buildService(
   orderRepo = makeOrderRepo(),
   orgRepo = makeOrgRepo(),
   bloodUnitRepo = makeBloodUnitRepo(),
+  publicationRepo = makePublicationRepo(),
 ) {
   const module = await Test.createTestingModule({
     providers: [
@@ -55,6 +69,10 @@ async function buildService(
       { provide: getRepositoryToken(OrderEntity), useValue: orderRepo },
       { provide: getRepositoryToken(OrganizationEntity), useValue: orgRepo },
       { provide: getRepositoryToken(BloodUnitEntity), useValue: bloodUnitRepo },
+      {
+        provide: getRepositoryToken(TransparencyPublicationEntity),
+        useValue: publicationRepo,
+      },
     ],
   }).compile();
   return module.get(TransparencyService);
@@ -63,6 +81,25 @@ async function buildService(
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('TransparencyService – public metrics transformations', () => {
+  it('returns the same noised publication for repeated requests in one period', async () => {
+    const publicationRepo = makePublicationRepo();
+    const service = await buildService(
+      makeOrderRepo({ count: jest.fn().mockResolvedValue(100) }),
+      makeOrgRepo(),
+      makeBloodUnitRepo(),
+      publicationRepo,
+    );
+
+    const first = await service.getPublicMetricsWithProvenance();
+    const second = await service.getPublicMetricsWithProvenance();
+
+    expect(second).toEqual(first);
+    expect(second.data.bloodTypeBreakdown).toEqual(
+      first.data.bloodTypeBreakdown,
+    );
+    expect(publicationRepo.insert).toHaveBeenCalledTimes(1);
+  });
+
   it('returns zeroed metrics snapshot when database is empty', async () => {
     const service = await buildService();
     const result = await service.getPublicMetrics();

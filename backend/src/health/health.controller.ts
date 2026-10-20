@@ -8,6 +8,7 @@ import {
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { Public } from '../auth/decorators/public.decorator';
+import { Permission } from '../auth/enums/permission.enum';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { SorobanRpcHealthIndicator } from './indicators/soroban-rpc.health-indicator';
@@ -30,28 +31,28 @@ export class HealthController {
     private readonly sms: SmsHealthIndicator,
   ) {}
 
-  /**
-   * Public health check — returns only { status: 'ok' | 'error' }.
-   * Does NOT leak internal hostnames or connection strings.
-   */
+  /** Liveness check: confirm this process can serve requests, without dependency I/O. */
   @Get()
   @Public()
   @HealthCheck()
-  @ApiOperation({ summary: 'Public liveness check' })
-  async check() {
-    try {
-      await this.health.check([
-        () => this.db.pingCheck('database'),
-        () => this.redis.isHealthy('redis'),
-        () => this.soroban.isHealthy('soroban_rpc'),
-        () => this.bullmq.isHealthy('bullmq'),
-        () => this.firebase.isHealthy('firebase'),
-        () => this.sms.isHealthy('sms'),
-      ]);
-      return { status: 'ok' };
-    } catch {
-      return { status: 'error' };
-    }
+  @ApiOperation({ summary: 'Legacy readiness check' })
+  check() {
+    return this.checkReadiness();
+  }
+
+  @Get('live')
+  @Public()
+  @ApiOperation({ summary: 'Process liveness check' })
+  live() {
+    return { status: 'ok' };
+  }
+
+  @Get('ready')
+  @Public()
+  @HealthCheck()
+  @ApiOperation({ summary: 'Database and Redis readiness check' })
+  ready() {
+    return this.checkReadiness();
   }
 
   /**
@@ -60,7 +61,7 @@ export class HealthController {
    */
   @Get('details')
   @UseGuards(JwtAuthGuard)
-  @RequirePermissions('admin:health:read')
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @HealthCheck()
   @ApiOperation({ summary: 'Admin detailed health breakdown' })
   async details() {
@@ -72,6 +73,13 @@ export class HealthController {
       () => this.firebase.isHealthy('firebase'),
       () => this.sms.isHealthy('sms'),
       () => this.memory.checkHeap('memory_heap', 300 * 1024 * 1024),
+    ]);
+  }
+
+  private checkReadiness() {
+    return this.health.check([
+      () => this.db.pingCheck('database'),
+      () => this.redis.isHealthy('redis'),
     ]);
   }
 }

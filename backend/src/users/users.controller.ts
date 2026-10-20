@@ -23,6 +23,7 @@ import { RequirePermissions } from '../auth/decorators/require-permissions.decor
 import { Permission } from '../auth/enums/permission.enum';
 import { Auditable } from '../common/audit/auditable.decorator';
 import { AuditLogInterceptor } from '../common/audit/audit-log.interceptor';
+import { getClientIp } from '../common/utils/client-ip.util';
 
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UsersService } from './users.service';
@@ -67,7 +68,7 @@ export class UsersController {
   ) {
     return this.usersService.update(req.user?.id, updateProfileDto, {
       actorId: req.user?.id,
-      ipAddress: req.headers?.['x-forwarded-for'] ?? req.ip,
+      ipAddress: getClientIp(req),
       userAgent: req.headers?.['user-agent'],
     });
   }
@@ -85,7 +86,7 @@ export class UsersController {
   ) {
     return this.usersService.update(id, updateProfileDto, {
       actorId: req.user?.id,
-      ipAddress: req.headers?.['x-forwarded-for'] ?? req.ip,
+      ipAddress: getClientIp(req),
       userAgent: req.headers?.['user-agent'],
     });
   }
@@ -110,7 +111,7 @@ export class UsersController {
   )
   uploadAvatar(@UploadedFile() file: Express.Multer.File, @Request() req: any) {
     return this.usersService.uploadAvatar(req.user?.id, file, {
-      ipAddress: req.headers?.['x-forwarded-for'] ?? req.ip,
+      ipAddress: getClientIp(req),
       userAgent: req.headers?.['user-agent'],
     });
   }
@@ -122,7 +123,7 @@ export class UsersController {
   @HttpCode(HttpStatus.OK)
   deleteAvatar(@Request() req: any) {
     return this.usersService.deleteAvatar(req.user?.id, {
-      ipAddress: req.headers?.['x-forwarded-for'] ?? req.ip,
+      ipAddress: getClientIp(req),
       userAgent: req.headers?.['user-agent'],
     });
   }

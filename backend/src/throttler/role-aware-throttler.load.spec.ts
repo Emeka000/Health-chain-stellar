@@ -11,12 +11,12 @@ import { RoleAwareThrottlerGuard } from './role-aware-throttler.guard';
 class LoadTestController {
   @Get('public')
   publicEndpoint() {
-    return { ok: true, role: 'PUBLIC' };
+    return { ok: true, role: 'public' };
   }
 
   @Get('hospital')
   hospitalEndpoint() {
-    return { ok: true, role: 'HOSPITAL' };
+    return { ok: true, role: 'hospital' };
   }
 
   @Get('emergency')
@@ -47,7 +47,7 @@ describe('RoleAwareThrottlerGuard — Load Test Simulation', () => {
 
     // Middleware to simulate user injection
     app.use((req: any, res: any, next: () => void) => {
-      const role = req.headers['x-test-role'] || 'PUBLIC';
+      const role = req.headers['x-test-role'] || 'public';
       const orgId = req.headers['x-test-org'] || 'default';
       req.user = { id: `test-${role}-${Date.now()}`, role, orgId };
       next();
@@ -78,7 +78,7 @@ describe('RoleAwareThrottlerGuard — Load Test Simulation', () => {
       promises.push(
         request(app.getHttpServer())
           .get('/load-test/public')
-          .set('x-test-role', 'PUBLIC')
+          .set('x-test-role', 'public')
           .then(res => {
             if (res.status === 429) publicBlocked++;
           })
@@ -90,7 +90,7 @@ describe('RoleAwareThrottlerGuard — Load Test Simulation', () => {
       promises.push(
         request(app.getHttpServer())
           .get('/load-test/hospital')
-          .set('x-test-role', 'HOSPITAL')
+          .set('x-test-role', 'hospital')
           .then(res => {
             if (res.status === 429) hospitalBlocked++;
           })
@@ -102,7 +102,7 @@ describe('RoleAwareThrottlerGuard — Load Test Simulation', () => {
       promises.push(
         request(app.getHttpServer())
           .get('/load-test/emergency')
-          .set('x-test-role', 'HOSPITAL') // Emergency uses hospital role
+          .set('x-test-role', 'hospital') // Emergency uses hospital role
           .then(res => {
             if (res.status === 429) emergencyBlocked++;
           })

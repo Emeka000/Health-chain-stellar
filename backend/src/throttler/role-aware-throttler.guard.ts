@@ -10,12 +10,10 @@ import {
 import type Redis from 'ioredis';
 
 import {
-  ROLE_THROTTLE_LIMITS,
   THROTTLE_TTL_MS,
-  DEFAULT_THROTTLE_LIMIT,
   TENANT_THROTTLE_LIMITS,
-  EMERGENCY_ROLES,
-  EMERGENCY_WEIGHT
+  getEffectiveRoleThrottleLimit,
+  getEmergencyThrottleWeight,
 } from '../config/throttle-limits.config';
 import { REDIS_CLIENT } from '../redis/redis.constants';
 import { throttleGetTracker } from './throttle-tracker.util';
@@ -93,9 +91,6 @@ export class RoleAwareThrottlerGuard extends ThrottlerGuard {
     const request = context.switchToHttp().getRequest();
     const user = request.user as { role?: string; orgId?: string } | undefined;
 
-    const role = user?.role || 'PUBLIC';
-    const roleLimit = ROLE_THROTTLE_LIMITS[role] || DEFAULT_THROTTLE_LIMIT;
-
     // Tenant-level throttling
     const tenantId = user?.orgId || 'default';
     const tenantLimit = TENANT_THROTTLE_LIMITS[tenantId] || TENANT_THROTTLE_LIMITS.default;
@@ -105,10 +100,11 @@ export class RoleAwareThrottlerGuard extends ThrottlerGuard {
     const isEmergencyEndpoint = endpoint.includes('/emergency') || endpoint.includes('/critical');
 
     // Weighted fairness: emergency roles and endpoints get higher limits
-    const isEmergencyRole = EMERGENCY_ROLES.includes(role as any);
-    const weight = (isEmergencyRole || isEmergencyEndpoint) ? EMERGENCY_WEIGHT : 1;
-
-    const adjustedRoleLimit = Math.floor(roleLimit.limit * weight);
+    const weight = getEmergencyThrottleWeight(user?.role, isEmergencyEndpoint);
+    const adjustedRoleLimit = getEffectiveRoleThrottleLimit(
+      user?.role,
+      isEmergencyEndpoint,
+    );
     const adjustedTenantLimit = Math.floor(tenantLimit.limit * weight);
 
     return [

@@ -1,6 +1,6 @@
 # SLO instrumentation and burn-rate alerting
 
-This guide defines signals available from the current backend. The service exposes a public liveness endpoint and an admin-only component breakdown rather than a Prometheus endpoint, so the first implementation may scrape `/health`, `/health/details`, structured application logs, the BullMQ metrics service, and domain read endpoints. Do not expose the detailed health response publicly: it is protected by `admin:health:read`.
+This guide defines signals available from the current backend. The service exposes public liveness (`/health/live`), dependency readiness (`/health/ready`), and an admin-only component breakdown rather than a Prometheus endpoint. Scrape these alongside structured application logs, the BullMQ metrics service, and domain read endpoints. Do not expose the detailed health response publicly: it requires `admin:access`.
 
 ## Service-level indicators
 
@@ -9,7 +9,7 @@ This guide defines signals available from the current backend. The service expos
 | Blood-request creation | HTTP success rate for `POST /blood-requests`; request duration from API access logs | successful requests / total requests, excluding 4xx validation failures | 99.5% / 99% under 1s |
 | Dispatch assignment | HTTP success rate for `POST /dispatch`, `/dispatch/assign`, and `/dispatch/assignments/respond`; dispatch stats for pending/timeout outcomes | successful requests and completed assignments / eligible requests | 99.5% / 95% assigned within 5m |
 | Cold-chain alerting | `POST /cold-chain/telemetry`; `TelemetryIngestionPipelineService` results and `getBackpressureStatus()` | accepted valid samples, quality rejects, duplicate rate, queue depth, and shedding | 99.9% accepted valid samples; queue depth < 1,000 |
-| API availability | `GET /health` plus admin `/health/details` component statuses | successful health checks / total checks; alert on any `database`, `redis`, `soroban_rpc`, `bullmq`, `firebase`, or `sms` down | 99.9% monthly |
+| API availability | `GET /health/ready` plus admin `/health/details` component statuses | successful readiness checks / total checks; readiness covers `database` and `redis`, while details reports external providers | 99.9% monthly |
 | Soroban reconciliation | `soroban_indexer_state.last_ledger_sequence`, `reconciliation_logs`, and RPC health | current ledger minus checkpoint, event processing errors, and `DISCREPANCY` count | lag < 2 ledgers; zero unowned discrepancies |
 | Transaction worker | `QueueMetricsService.getDetailedMetrics()` for `soroban-tx-queue` and `soroban-dlq` | waiting, active, failed, delayed, DLQ depth, success/failure/retry counters, and `avgMs` | DLQ 0; failure < 1%; waiting returns to baseline |
 

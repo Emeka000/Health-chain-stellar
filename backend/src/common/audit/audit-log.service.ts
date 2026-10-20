@@ -7,6 +7,7 @@ import { Request } from 'express';
 
 import { AuditChainService } from './audit-chain.service';
 import { AuditLogEntity } from './audit-log.entity';
+import { getClientIp } from '../utils/client-ip.util';
 import {
   getAuditEventDefinition,
   isValidAuditAction,
@@ -62,13 +63,7 @@ export class AuditLogService {
         params.userAgent ?? this.request?.headers?.['user-agent'] ?? null;
 
       // Extract IP address if not provided
-      const ipAddress =
-        params.ipAddress ??
-        (this.request?.headers?.['x-forwarded-for'] as string)
-          ?.split(',')[0]
-          ?.trim() ??
-        this.request?.ip ??
-        null;
+      const ipAddress = params.ipAddress ?? getClientIp(this.request);
 
       const result = await this.repo.insert({
         actorId: params.actorId,
