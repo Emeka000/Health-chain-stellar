@@ -37,4 +37,12 @@ export class PartnerOnboardingEntity extends BaseEntity {
 
   @Column({ name: 'contract_tx_hash', type: 'varchar', nullable: true })
   contractTxHash: string | null;
+
+  /** Transaction hash of the on-chain activation, set when reconciliation kicks off activation */
+  @Column({ name: 'activation_tx_id', type: 'varchar', nullable: true })
+  activationTxId: string | null;
+
+  /** Last reconciliation outcome for this onboarding record */
+  @Column({ name: 'reconciliation_status', type: 'varchar', nullable: true })
+  reconciliationStatus: string | null;
 }

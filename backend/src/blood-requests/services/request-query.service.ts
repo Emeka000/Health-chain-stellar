@@ -253,6 +253,164 @@ export class RequestQueryService {
 
     // Requests by urgency (would need urgency field)
     const requestsByUrgency: Record<string, number> = {
-      low: 0,
-      medium: 0,
-      high: 0,
+      [UrgencyLevel.CRITICAL]: 0,
+      [UrgencyLevel.HIGH]: 0,
+      [UrgencyLevel.MEDIUM]: 0,
+      [UrgencyLevel.LOW]: 0,
+    };
+
+    // Requests by hospital
+    const requestsByHospital: Record<string, number> = {};
+    requests.forEach((request) => {
+      requestsByHospital[request.hospitalId] =
+        (requestsByHospital[request.hospitalId] || 0) + 1;
+    });
+
+    return {
+      totalRequests,
+      pendingRequests,
+      approvedRequests,
+      fulfilledRequests,
+      cancelledRequests,
+      averageFulfillmentTime,
+      slaComplianceRate,
+      requestsByBloodType,
+      requestsByUrgency,
+      requestsByHospital,
+    };
+  }
+
+  async getSLAComplianceReport(
+    hospitalId?: string,
+    startDate?: Date,
+    endDate?: Date,
+  ): Promise<SLAComplianceReport> {
+    const queryBuilder =
+      this.bloodRequestRepository.createQueryBuilder('request');
+
+    if (hospitalId) {
+      queryBuilder.andWhere('request.hospitalId = :hospitalId', { hospitalId });
+    }
+
+    if (startDate) {
+      queryBuilder.andWhere('request.createdAt >= :startDate', { startDate });
+    }
+
+    if (endDate) {
+      queryBuilder.andWhere('request.createdAt <= :endDate', { endDate });
+    }
+
+    const requests = await queryBuilder.getMany();
+
+    const fulfilled = requests.filter(
+      (r) =>
+        r.status === BloodRequestStatus.FULFILLED &&
+        r.requiredByTimestamp &&
+        r.updatedAt,
+    );
+
+    // requiredByTimestamp is stored in Unix seconds, so convert to ms before comparing.
+    const onTimeFulfillments = fulfilled.filter(
+      (r) => r.updatedAt.getTime() <= r.requiredByTimestamp * 1000,
+    ).length;
+    const lateFulfillments = fulfilled.length - onTimeFulfillments;
+
+    const complianceRate =
+      fulfilled.length > 0
+        ? (onTimeFulfillments / fulfilled.length) * 100
+        : 0;
+
+    let averageDelayHours = 0;
+    if (lateFulfillments > 0) {
+      const totalDelay = fulfilled
+        .filter((r) => r.updatedAt.getTime() > r.requiredByTimestamp * 1000)
+        .reduce((sum, r) => {
+          const delayMs =
+            r.updatedAt.getTime() - r.requiredByTimestamp * 1000;
+          return sum + delayMs;
+        }, 0);
+      averageDelayHours = totalDelay / lateFulfillments / (1000 * 60 * 60);
+    }
+
+    const requestsByStatus: Record<string, number> = {};
+    requests.forEach((request) => {
+      requestsByStatus[request.status] =
+        (requestsByStatus[request.status] || 0) + 1;
+    });
+
+    return {
+      totalRequests: requests.length,
+      onTimeFulfillments,
+      lateFulfillments,
+      complianceRate,
+      averageDelayHours,
+      requestsByStatus,
+    };
+  }
+
+  async exportToCSV(
+    queryDto: QueryRequestsDto,
+    response: Response,
+  ): Promise<void> {
+    const { data } = await this.queryRequests({ ...queryDto, limit: 10000 });
+
+    const csv = this.reportGeneratorService.generateCSV(data, [
+      'requestNumber',
+      'status',
+      'hospitalId',
+      'triageScore',
+      'requiredByTimestamp',
+      'createdAt',
+    ]);
+
+    response.setHeader('Content-Type', 'text/csv');
+    response.setHeader(
+      'Content-Disposition',
+      'attachment; filename="blood-requests.csv"',
+    );
+    response.send(csv);
+  }
+
+  async exportToPDF(
+    queryDto: QueryRequestsDto,
+    response: Response,
+  ): Promise<void> {
+    const { data } = await this.queryRequests({ ...queryDto, limit: 10000 });
+
+    const pdfBuffer = await this.reportGeneratorService.generatePDF(data, {
+      title: 'Blood Requests Report',
+      columns: [
+        'requestNumber',
+        'status',
+        'hospitalId',
+        'triageScore',
+        'requiredByTimestamp',
+        'createdAt',
+      ],
+    });
+
+    response.setHeader('Content-Type', 'application/pdf');
+    response.setHeader(
+      'Content-Disposition',
+      'attachment; filename="blood-requests.pdf"',
+    );
+    response.send(pdfBuffer);
+  }
+
+  async initiateExport(
+    queryDto: QueryRequestsDto,
+    format: 'csv' | 'pdf',
+  ): Promise<{ exportId: string }> {
+    const exportId = await this.reportExportService.createExport({
+      type: 'blood-requests',
+      format,
+      query: queryDto,
+    });
+
+    this.logger.log(
+      `Initiated ${format} export for blood requests: ${exportId}`,
+    );
+
+    return { exportId };
+  }
+}

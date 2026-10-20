@@ -3,16 +3,16 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
-import { BloodRequestEntity, Urgency } from '../../blood-requests/entities/blood-request.entity';
-import { OrderEntity } from '../../orders/entities/order.entity';
-import { OrderStatus } from '../../orders/enums/order-status.enum';
-import { PolicyCenterService } from '../../policy-center/policy-center.service';
-import { AnomalyIncidentEntity } from '../entities/anomaly-incident.entity';
+import { BloodRequestEntity, Urgency } from '../blood-requests/entities/blood-request.entity';
+import { OrderEntity } from '../orders/entities/order.entity';
+import { OrderStatus } from '../orders/enums/order-status.enum';
+import { PolicyCenterService } from '../policy-center/policy-center.service';
+import { AnomalyIncidentEntity } from './entities/anomaly-incident.entity';
 import {
   AnomalyType,
   AnomalySeverity,
   AnomalyStatus,
-} from '../enums/anomaly-type.enum';
+} from './enums/anomaly-type.enum';
 
 @Injectable()
 export class AnomalyScoringService {
@@ -216,33 +216,4 @@ export class AnomalyScoringService {
         data.hospitalId ? 'a.hospital_id = :hospitalId' : 'a.hospital_id IS NULL',
         data.hospitalId ? { hospitalId: data.hospitalId } : {},
       )
-      .andWhere(
-        data.bloodType ? `a.metadata->>'bloodType' = :bloodType` : `a.metadata->>'bloodType' IS NULL`,
-        data.bloodType ? { bloodType: data.bloodType } : {},
-      );
-
-    const existing = await qb.getOne();
-
-    if (existing) {
-      await this.anomalyRepo.update(existing.id, {
-        description: data.description,
-        metadata: data.metadata ?? null,
-        severity: data.severity,
-        policyVersionRef: data.policyVersionRef ?? null,
-      });
-      return;
-    }
-
-    await this.anomalyRepo.save(
-      this.anomalyRepo.create({
-        ...data,
-        metadata: data.metadata ?? null,
-        orderId: data.orderId ?? null,
-        riderId: data.riderId ?? null,
-        hospitalId: data.hospitalId ?? null,
-        bloodRequestId: data.bloodRequestId ?? null,
-        policyVersionRef: data.policyVersionRef ?? null,
-      }),
-    );
-  }
-}
+      .

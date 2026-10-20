@@ -173,6 +173,7 @@ import type Redis from 'ioredis';
     InventoryModule,
     LocationHistoryModule,
     MapsModule,
+    MediaProcessingModule,
     MigrationSafetyModule,
     NotificationsModule,
     OnboardingModule,
@@ -194,16 +195,27 @@ import type Redis from 'ioredis';
     TrackingModule,
     TransparencyModule,
     UssdModule,
-    MediaProcessingModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
-    { provide: APP_GUARD, useClass: JwtAuthGuard },
-    { provide: APP_GUARD, useClass: RoleAwareThrottlerGuard },
-    { provide: APP_GUARD, useClass: PermissionsGuard },
-    { provide: APP_INTERCEPTOR, useClass: ApiCompatibilityInterceptor },
     CorrelationIdService,
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: PermissionsGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RoleAwareThrottlerGuard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: ApiCompatibilityInterceptor,
+    },
   ],
 })
 export class AppModule implements NestModule {

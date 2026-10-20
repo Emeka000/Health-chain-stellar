@@ -84,15 +84,12 @@ export class BloodUnitsService {
     }
 
     const unitNumber = await this.generateUniqueUnitNumber(dto.bloodType);
-    const expirationTimestamp = Math.floor(
-      new Date(dto.expirationDate).getTime() / 1000,
-    );
 
     const result = await this.sorobanService.registerBloodUnit({
       bankId: dto.bankId,
+      serialNumber: unitNumber,
       bloodType: dto.bloodType,
       quantityMl: dto.quantityMl,
-      expirationTimestamp,
       donorId: dto.donorId,
     });
 
@@ -132,6 +129,108 @@ export class BloodUnitsService {
       barcodeData: savedUnit.barcodeData,
       message: 'Blood unit registered successfully',
     };
+  }
+
+  private validateExpirationDate(expirationDate: string | Date): void {
+    const expiry = new Date(expirationDate);
+    if (Number.isNaN(expiry.getTime())) {
+      throw new BadRequestException('Invalid expiration date');
+    }
+    if (expiry.getTime() <= Date.now()) {
+      throw new BadRequestException('Expiration date must be in the future');
+    }
+  }
+
+  private async validateBloodBankAuthorization(
+    bankId: string,
+    user?: AuthenticatedUserContext,
+  ): Promise<void> {
+    if (!user) {
+      throw new ForbiddenException('Authentication required to register blood units');
+    }
+
+    if (user.role === 'admin') {
+      return;
+    }
+
+    if (user.organizationId && user.organizationId === bankId) {
+      return;
+    }
+
+    const authorized = await this.permissionsService.hasPermission(
+      user.id,
+      'blood-units:register',
+    );
+    if (!authorized) {
+      throw new ForbiddenException(
+        'You are not authorized to register blood units for this blood bank',
+      );
+    }
+  }
+
+  private async generateUniqueUnitNumber(bloodType: string): Promise<string> {
+    const prefix = `BU-${bloodType.replace(/[^A-Za-z0-9]/g, '').toUpperCase()}`;
+    const maxAttempts = 5;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const random = Math.random().toString(36).slice(2, 8).toUpperCase();
+      const candidate = `${prefix}-${Date.now().toString(36).toUpperCase()}-${random}`;
+      const existing = await this.bloodUnitRepository.findOne({
+        where: { unitNumber: candidate },
+      });
+      if (!existing) {
+        return candidate;
+      }
+    }
+
+    throw new ServiceUnavailableException(
+      'Unable to generate a unique blood unit number, please retry',
+    );
+  }
+
+  private async generateBarcode(data: {
+    unitNumber: string;
+    bloodType: string;
+    quantityMl: number;
+    bankId: string;
+    expirationDate: string | Date;
+    blockchainTransactionHash?: string;
+    blockchainUnitId?: string;
+  }): Promise<string> {
+    const payload = JSON.stringify({
+      unitNumber: data.unitNumber,
+      bloodType: data.bloodType,
+      quantityMl: data.quantityMl,
+      bankId: data.bankId,
+      expirationDate: new Date(data.expirationDate).toISOString(),
+      blockchainTransactionHash: data.blockchainTransactionHash,
+      blockchainUnitId: data.blockchainUnitId,
+    });
+
+    return QRCode.toDataURL(payload);
+  }
+
+  private async sendRegistrationNotification(unit: BloodUnitEntity): Promise<void> {
+    try {
+      await this.notificationsService.send({
+        channel: NotificationChannel.EMAIL,
+        recipientId: unit.registeredBy,
+        template: 'blood-unit-registered',
+        data: {
+          unitNumber: unit.unitNumber,
+          bloodType: unit.bloodType,
+          quantityMl: unit.quantityMl,
+          bankId: unit.bankId,
+          expirationDate: unit.expirationDate,
+        },
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Failed to send registration notification for unit ${unit.unitNumber}: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+      );
+    }
   }
 
   async registerBloodUnitsBulk(
@@ -251,167 +350,3 @@ export class BloodUnitsService {
       status: unit.status,
     };
   }
-
-  /**
-   * Phase 2 of inter-org transfer: Accept.
-   * Only the destination org may accept. The unit must still be IN_TRANSFER;
-   * a unit that was discarded or quarantined after initiation must not be
-   * revived as AVAILABLE. Closes #1506
-   */
-  async acceptOrganizationTransfer(
-    transferId: string,
-    user?: AuthenticatedUserContext,
-  ) {
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-
-    let unit: BloodUnit;
-    let transfer: TransferRecord;
-
-    try {
-      transfer = await queryRunner.manager.findOne(TransferRecord, {
-        where: { id: transferId },
-        lock: { mode: 'pessimistic_write' },
-      });
-
-      if (!transfer) {
-        throw new NotFoundException(`Transfer ${transferId} not found`);
-      }
-
-      if (transfer.status !== TransferStatus.PENDING) {
-        throw new BadRequestException(
-          `Transfer is not pending (current: ${transfer.status})`,
-        );
-      }
-
-      // Only the destination org may accept
-      if (
-        transfer.destinationOrgId !== (user as any)?.organizationId &&
-        user?.role !== 'admin'
-      ) {
-        throw new ForbiddenException(
-          'Only the destination organization can accept this transfer',
-        );
-      }
-
-      unit = await queryRunner.manager.findOne(BloodUnit, {
-        where: { id: transfer.bloodUnitId },
-        lock: { mode: 'pessimistic_write' },
-      });
-
-      if (!unit) {
-        throw new NotFoundException(
-          `Blood unit ${transfer.bloodUnitId} not found`,
-        );
-      }
-
-      // The unit must still be IN_TRANSFER. If it was discarded or
-      // quarantined after initiation, accepting must not revive it.
-      if (unit.status !== BloodStatus.IN_TRANSFER) {
-        throw new BadRequestException(
-          `Unit must be IN_TRANSFER to accept the transfer (current: ${unit.status})`,
-        );
-      }
-
-      unit.organizationId = transfer.destinationOrgId;
-      unit.status = BloodStatus.AVAILABLE;
-      await queryRunner.manager.save(unit);
-
-      transfer.status = TransferStatus.ACCEPTED;
-      transfer.acceptedByUserId = user?.id;
-      transfer.acceptedAt = new Date();
-      await queryRunner.manager.save(transfer);
-
-      await queryRunner.commitTransaction();
-    } catch (error) {
-      await queryRunner.rollbackTransaction();
-      throw error;
-    } finally {
-      await queryRunner.release();
-    }
-
-    this.eventEmitter.emit('blood-unit.transfer.accepted', {
-      unitId: unit.id,
-      transferId: transfer.id,
-      sourceOrgId: transfer.sourceOrgId,
-      destinationOrgId: transfer.destinationOrgId,
-      acceptedBy: user?.id,
-    });
-
-    return {
-      success: true,
-      unitId,
-      newOrganizationId: unit.organizationId,
-    };
-  }
-
-
-  async logTemperature(dto: LogTemperatureDto) {
-    const matchedUnit = await this.findByBlockchainUnitId(dto.unitId);
-
-    const result = await this.sorobanService.logTemperature({
-      unitId: dto.unitId,
-      temperature: dto.temperature,
-      timestamp: dto.timestamp || Math.floor(Date.now() / 1000),
-      bloodType: dto.bloodType,
-    });
-
-    if (
-      matchedUnit &&
-      (dto.temperature < this.minStorageTempC ||
-        dto.temperature > this.maxStorageTempC)
-    ) {
-      try {
-        const quarantineUnit = await this.dataSource
-          .getRepository(BloodUnit)
-          .findOne({ where: { blockchainUnitId: String(dto.unitId) } });
-
-        if (!quarantineUnit) {
-          throw new NotFoundException(
-            `Current blood unit not found for blockchain ID ${dto.unitId}`,
-          );
-        }
-
-        await this.quarantineService.createCase(
-          {
-            bloodUnitId: quarantineUnit.id,
-            triggerSource: QuarantineTriggerSource.TEMPERATURE_BREACH,
-            reasonCode: QuarantineReasonCode.STORAGE_ANOMALY,
-            reason: `Temperature ${dto.temperature}C breached threshold [${this.minStorageTempC}, ${this.maxStorageTempC}]`,
-            metadata: {
-              onChainUnitId: dto.unitId,
-              observedTemperature: dto.temperature,
-              threshold: {
-                min: this.minStorageTempC,
-                max: this.maxStorageTempC,
-              },
-            },
-            evidence: [
-              {
-                type: 'temperature_log',
-                fileId: `temp-log-${dto.unitId}-${Date.now()}`,
-                description: `Temperature reading: ${dto.temperature}C`,
-              },
-            ],
-          },
-          undefined,
-        );
-      } catch (error) {
-        this.logger.warn(
-          `Temperature breach quarantine trigger failed for unit ${matchedUnit.id}: ${
-            error instanceof Error ? error.message : 'unknown error'
-          }`,
-        );
-      }
-    }
-
-    return {
-      success: true,
-      transactionHash: result.transactionHash,
-      message: 'Temperature logged successfully',
-    };
-  }
-
-  /* … rest of file unchanged … */
-}

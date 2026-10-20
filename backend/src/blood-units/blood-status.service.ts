@@ -287,14 +287,121 @@ export class BloodStatusService {
         );
       } catch (error) {
         this.logger.error(
-          `Failed to release reservation for unit ${unit.id}: ${
-            error instanceof Error ? error.message : 'unknown error'
+          `Failed to release expired reservation for unit ${unit.id}: ${
+            error instanceof Error ? error.message : 'Unknown error'
           }`,
         );
       }
     }
   }
 
-  isValid
+  private assertOwnsUnit(
+    unit: BloodUnit,
+    user?: AuthenticatedUserContext,
+  ): void {
+    if (!user) {
+      return;
+    }
 
-/* … truncated 3340 chars — edit only what you need near the top … */
+    if (user.role === 'admin' || user.role === 'super_admin') {
+      return;
+    }
+
+    if (
+      user.organizationId &&
+      unit.organizationId &&
+      unit.organizationId !== user.organizationId
+    ) {
+      throw new ForbiddenException(
+        `You do not have permission to modify blood unit ${unit.id}`,
+      );
+    }
+  }
+
+  isValidTransition(from: BloodStatus, to: BloodStatus): boolean {
+    if (from === to) {
+      return false;
+    }
+
+    const allowed = ALLOWED_TRANSITIONS[from];
+    if (!allowed) {
+      return false;
+    }
+
+    return allowed.includes(to);
+  }
+
+  private validateTransition(from: BloodStatus, to: BloodStatus): void {
+    const workflowMessage = WORKFLOW_MANAGED_STATUSES[from];
+    if (workflowMessage) {
+      throw new BadRequestException(workflowMessage);
+    }
+
+    if (!this.isValidTransition(from, to)) {
+      throw new BadRequestException(
+        `Invalid status transition from ${from} to ${to}`,
+      );
+    }
+  }
+
+  private async syncStatusToBlockchain(
+    unit: BloodUnit,
+    previousStatus: BloodStatus,
+    newStatus: BloodStatus,
+    changedBy: string | null,
+  ): Promise<void> {
+    try {
+      const txHash = await this.sorobanService.recordStatusChange({
+        unitId: unit.id,
+        previousStatus,
+        newStatus,
+        changedBy,
+      });
+
+      await this.blockchainEventRepository.save(
+        this.blockchainEventRepository.create({
+          eventType: 'blood_status_changed',
+          transactionHash: txHash,
+          payload: {
+            unitId: unit.id,
+            previousStatus,
+            newStatus,
+            changedBy,
+          },
+        }),
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to sync status change to blockchain for unit ${unit.id}: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+      );
+    }
+  }
+
+  private async sendStatusChangeNotification(
+    unit: BloodUnit,
+    previousStatus: BloodStatus,
+    newStatus: BloodStatus,
+  ): Promise<void> {
+    try {
+      await this.notificationsService.send({
+        channel: NotificationChannel.IN_APP,
+        recipientId: unit.organizationId ?? unit.id,
+        title: 'Blood unit status changed',
+        message: `Blood unit ${unit.id} changed from ${previousStatus} to ${newStatus}`,
+        metadata: {
+          unitId: unit.id,
+          previousStatus,
+          newStatus,
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to send status change notification for unit ${unit.id}: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+      );
+    }
+  }
+}

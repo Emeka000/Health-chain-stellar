@@ -1,7 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { UssdStateMachine } from './ussd-state-machine.service';
 import { UssdSession, UssdRequest, UssdResponse } from './ussd.types';
+
+/**
+ * DI token for the order service used by the USSD module.
+ * Interfaces are erased at compile time, so a runtime token is required.
+ */
+export const ORDER_SERVICE = Symbol('ORDER_SERVICE');
 
 /**
  * Minimal interface that the USSD module expects from OrderService.
@@ -23,6 +29,7 @@ export class UssdService {
 
   constructor(
     private readonly stateMachine: UssdStateMachine,
+    @Inject(ORDER_SERVICE)
     private readonly orderService: IOrderService,
   ) {}
 

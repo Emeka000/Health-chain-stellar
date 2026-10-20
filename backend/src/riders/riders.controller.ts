@@ -12,6 +12,12 @@ import {
   Query,
   ValidationPipe,
 } from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { User } from '../auth/decorators/user.decorator';
@@ -28,16 +34,20 @@ import { WorkingHoursDto } from './dto/working-hours.dto';
 import { RiderEntity } from './entities/rider.entity';
 import { RiderStatus } from './enums/rider-status.enum';
 import { RidersService } from './riders.service';
+import { RiderSearchService } from './services/rider-search.service';
 
 @ApiTags('Riders')
 @ApiBearerAuth()
 @Controller('riders')
 export class RidersController {
-  constructor(private readonly ridersService: RidersService) {}
+  constructor(
+    private readonly ridersService: RidersService,
+    private readonly riderSearchService: RiderSearchService,
+  ) {}
 
   @RequirePermissions(Permission.VIEW_RIDERS)
-  @ApiOperation({ summary: 'Get' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @ApiOperation({ summary: 'List riders' })
+  @ApiResponse({ status: 200, description: 'Paginated list of riders' })
   @Get()
   findAll(
     @Query(
@@ -54,16 +64,16 @@ export class RidersController {
   }
 
   @RequirePermissions(Permission.VIEW_RIDERS)
-  @ApiOperation({ summary: 'Get available' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @ApiOperation({ summary: 'List available riders' })
+  @ApiResponse({ status: 200, description: 'List of currently available riders' })
   @Get('available')
   getAvailable() {
     return this.ridersService.getAvailableRiders();
   }
 
   @RequirePermissions(Permission.VIEW_RIDERS)
-  @ApiOperation({ summary: 'Get availability' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @ApiOperation({ summary: 'Query rider availability' })
+  @ApiResponse({ status: 200, description: 'Riders matching the availability query' })
   @Get('availability')
   queryAvailability(
     @Query(
@@ -75,16 +85,16 @@ export class RidersController {
   }
 
   @RequirePermissions(Permission.VIEW_RIDERS)
-  @ApiOperation({ summary: 'Get leaderboard' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @ApiOperation({ summary: 'Get rider leaderboard' })
+  @ApiResponse({ status: 200, description: 'Top riders ranked by performance' })
   @Get('leaderboard')
   getLeaderboard(@Query('limit') limit?: string) {
     return this.ridersService.getLeaderboard(limit ? parseInt(limit, 10) : 10);
   }
 
   @RequirePermissions(Permission.VIEW_RIDERS)
-  @ApiOperation({ summary: 'Get nearby' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @ApiOperation({ summary: 'Get nearby riders' })
+  @ApiResponse({ status: 200, description: 'Riders within the given radius' })
   @Get('nearby')
   getNearby(
     @Query('latitude') latitude: string,
@@ -99,16 +109,16 @@ export class RidersController {
   }
 
   @RequirePermissions(Permission.VIEW_RIDERS)
-  @ApiOperation({ summary: 'Get me' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @ApiOperation({ summary: 'Get current rider profile' })
+  @ApiResponse({ status: 200, description: 'Rider profile for the authenticated user' })
   @Get('me')
   getMe(@User('id') userId: string) {
     return this.ridersService.findByUserId(userId);
   }
 
   @RequirePermissions(Permission.VIEW_RIDERS)
-  @ApiOperation({ summary: 'Get search' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @ApiOperation({ summary: 'Search riders' })
+  @ApiResponse({ status: 200, description: 'Paginated search results' })
   @Get('search')
   search(
     @Query(
@@ -116,35 +126,35 @@ export class RidersController {
     )
     query: PaginationQueryDto,
   ) {
-    return this.ridersService.search(query);
+    return this.riderSearchService.searchRiders(query);
   }
 
   @RequirePermissions(Permission.VIEW_RIDERS)
-  @ApiOperation({ summary: 'Get statistics' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @ApiOperation({ summary: 'Get rider statistics' })
+  @ApiResponse({ status: 200, description: 'Aggregated rider statistics' })
   @Get('statistics')
   getStatistics() {
     return this.ridersService.getStatistics();
   }
 
   @RequirePermissions(Permission.VIEW_RIDERS)
-  @ApiOperation({ summary: 'Get :id' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @ApiOperation({ summary: 'Get rider by ID' })
+  @ApiResponse({ status: 200, description: 'Rider details' })
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.ridersService.findOne(id);
   }
 
   @RequirePermissions(Permission.VIEW_RIDERS)
-  @ApiOperation({ summary: 'Get :id performance' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @ApiOperation({ summary: 'Get rider performance' })
+  @ApiResponse({ status: 200, description: 'Performance metrics for the rider' })
   @Get(':id/performance')
   getPerformance(@Param('id') id: string) {
     return this.ridersService.getPerformance(id);
   }
 
-  @ApiOperation({ summary: 'Post register' })
-  @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @ApiOperation({ summary: 'Register as a rider' })
+  @ApiResponse({ status: 201, description: 'Rider registration created' })
   @Post('register')
   register(
     @User('id') userId: string,
@@ -154,16 +164,16 @@ export class RidersController {
   }
 
   @RequirePermissions(Permission.CREATE_RIDER)
-  @ApiOperation({ summary: 'Post' })
-  @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @ApiOperation({ summary: 'Create rider' })
+  @ApiResponse({ status: 201, description: 'Rider created' })
   @Post()
   create(@Body() createRiderDto: CreateRiderDto) {
     return this.ridersService.create(createRiderDto);
   }
 
   @RequirePermissions(Permission.UPDATE_RIDER)
-  @ApiOperation({ summary: 'Patch :id' })
-  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
+  @ApiOperation({ summary: 'Update rider' })
+  @ApiResponse({ status: 200, description: 'Rider updated' })
   @Patch(':id')
   async update(
     @Param('id') id: string,
@@ -175,16 +185,16 @@ export class RidersController {
   }
 
   @RequirePermissions(Permission.MANAGE_RIDERS)
-  @ApiOperation({ summary: 'Patch :id verify' })
-  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
+  @ApiOperation({ summary: 'Verify rider' })
+  @ApiResponse({ status: 200, description: 'Rider verified' })
   @Patch(':id/verify')
   verify(@Param('id') id: string) {
     return this.ridersService.verify(id);
   }
 
   @RequirePermissions(Permission.UPDATE_RIDER)
-  @ApiOperation({ summary: 'Patch :id status' })
-  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
+  @ApiOperation({ summary: 'Update rider status' })
+  @ApiResponse({ status: 200, description: 'Rider status updated' })
   @Patch(':id/status')
   async updateStatus(
     @Param('id') id: string,
@@ -196,8 +206,8 @@ export class RidersController {
   }
 
   @RequirePermissions(Permission.UPDATE_RIDER)
-  @ApiOperation({ summary: 'Patch :id location' })
-  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
+  @ApiOperation({ summary: 'Update rider location' })
+  @ApiResponse({ status: 200, description: 'Rider location updated' })
   @Patch(':id/location')
   async updateLocation(
     @Param('id') id: string,
@@ -209,8 +219,8 @@ export class RidersController {
   }
 
   @RequirePermissions(Permission.UPDATE_RIDER)
-  @ApiOperation({ summary: 'Patch :id working hours' })
-  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
+  @ApiOperation({ summary: 'Set rider working hours' })
+  @ApiResponse({ status: 200, description: 'Working hours updated' })
   @Patch(':id/working-hours')
   async setWorkingHours(
     @Param('id') id: string,
@@ -222,8 +232,8 @@ export class RidersController {
   }
 
   @RequirePermissions(Permission.UPDATE_RIDER)
-  @ApiOperation({ summary: 'Patch :id preferred areas' })
-  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
+  @ApiOperation({ summary: 'Set rider preferred areas' })
+  @ApiResponse({ status: 200, description: 'Preferred areas updated' })
   @Patch(':id/preferred-areas')
   async setPreferredAreas(
     @Param('id') id: string,
@@ -235,31 +245,27 @@ export class RidersController {
   }
 
   @RequirePermissions(Permission.DELETE_RIDER)
-  @ApiOperation({ summary: 'Delete :id' })
-  @ApiResponse({ status: 200, description: 'Resource deleted successfully' })
+  @ApiOperation({ summary: 'Delete rider' })
+  @ApiResponse({ status: 204, description: 'Rider deleted' })
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@Param('id') id: string) {
+  async remove(
+    @Param('id') id: string,
+    @User() user: { id: string; permissions?: Permission[] },
+  ) {
+    await this.assertRiderAccess(id, user);
     return this.ridersService.remove(id);
   }
 
-  /**
-   * Ensures the caller may act on the given rider id. Admins (MANAGE_RIDERS)
-   * keep full access; everyone else may only act on their own rider record.
-   */
   private async assertRiderAccess(
-    id: string,
+    riderId: string,
     user: { id: string; permissions?: Permission[] },
   ): Promise<void> {
-    if (user?.permissions?.includes(Permission.MANAGE_RIDERS)) {
-      return;
-    }
-
-    const rider = await this.ridersService.findByUserId(user.id);
-    if (!rider || rider.id !== id) {
-      throw new ForbiddenException(
-        'You are not allowed to modify another rider\'s record',
-      );
+    const rider = await this.ridersService.findOne(id);
+    const isOwner = rider.userId === user.id;
+    const canManage = user.permissions?.includes(Permission.MANAGE_RIDERS);
+    if (!isOwner && !canManage) {
+      throw new ForbiddenException('You do not have access to this rider');
     }
   }
 }

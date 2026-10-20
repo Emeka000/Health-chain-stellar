@@ -2,6 +2,8 @@ import { BullModule } from '@nestjs/bullmq';
 import { forwardRef, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { CompensationModule } from '../common/compensation/compensation.module';
 import { SorobanModule } from '../soroban/soroban.module';
@@ -74,6 +76,16 @@ import { SorobanService } from './services/soroban.service';
         inject: [ConfigService],
       },
     ),
+    BullModule.registerQueueEventsAsync({
+      name: 'soroban-tx-queue',
+      useFactory: (configService: ConfigService) => ({
+        connection: {
+          host: configService.get<string>('REDIS_HOST'),
+          port: configService.get<number>('REDIS_PORT'),
+        },
+      }),
+      inject: [ConfigService],
+    }),
   ],
   providers: [
     SorobanService,

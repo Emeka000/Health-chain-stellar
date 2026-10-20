@@ -219,167 +219,35 @@ impl MatchingContract {
                     // Only usable units count toward the cap (#1457). The type
                     // index also holds Reserved/Delivered/Expired/... units;
                     // letting them fill the cap would hide Available units
-                    // further down the index and cause false "no match" results.
-                    if unit.status != BloodStatus::Available || unit.expiration_timestamp <= now {
-                        continue;
+                    if unit.status == BloodStatus::Available {
+                        candidates.push_back(unit);
                     }
-                    candidates.push_back(unit);
                 }
-            }
-            if candidates.len() >= MAX_MATCH_CANDIDATES.try_into().unwrap() {
-                break;
             }
         }
 
-        let matched = select_units(
-            env,
-            candidates,
-            request.blood_type,
-            request.urgency,
-            request.quantity_ml,
-            Some(&request.hospital_id),
-            now,
-        );
+        let selected = select_units(env, &candidates, request.blood_type, request.quantity_ml, now);
 
-        let total_matched_ml: u32 = {
-            let mut sum = 0u32;
-            for i in 0..matched.len() {
-                sum = sum.saturating_add(matched.get(i).unwrap().quantity_ml);
-            }
-            sum
-        };
-        let remaining_ml = request.quantity_ml.saturating_sub(total_matched_ml);
-        let partial_fulfillment = total_matched_ml > 0 && remaining_ml > 0;
+        let mut matched: Vec<MatchedUnit> = Vec::new(env);
+        let mut total_ml: u32 = 0;
+        for i in 0..selected.len() {
+            let unit = selected.get(i).unwrap();
+            total_ml = total_ml.saturating_add(unit.quantity_ml);
+            matched.push_back(MatchedUnit {
+                blood_unit_id: unit.id,
+                blood_type: unit.blood_type,
+                quantity_ml: unit.quantity_ml,
+                score: score_unit(&unit, request.blood_type, now),
+            });
+        }
 
         Ok(MatchResult {
             request_id,
             matched_units: matched,
-            total_matched_ml,
-            remaining_ml,
-            partial_fulfillment,
+            total_matched_ml: total_ml,
+            is_partial: total_ml < request.quantity_ml,
         })
     }
-
-    /// Match multiple requests in urgency-priority order.
-    ///
-    /// Requests are sorted by urgency (Critical → Scheduled) before matching
-    /// so that critical requests get first pick of available inventory.
-    /// Within the same urgency level, requests with an earlier
-    /// `required_by_timestamp` are processed first.
-    ///
-    /// Uses insertion sort — O(n²) worst-case but acceptable for batches up to
-    /// `MAX_BATCH_SIZE`. Callers that exceed `MAX_BATCH_SIZE` receive
-    /// `MatchingError::BatchTooLarge` rather than hitting the instruction limit.
-    pub fn match_multiple_requests(
-        env: Env,
-        request_ids: Vec<u64>,
-    ) -> Result<Vec<MatchResult>, MatchingError> {
-        Self::require_initialized(&env)?;
-        Self::require_not_paused(&env)?;
-
-        if request_ids.len() > MAX_BATCH_SIZE {
-            return Err(MatchingError::BatchTooLarge);
-        }
-
-        let req_addr: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::RequestsContract)
-            .unwrap();
-        let req_client = RequestsContractClient::new(&env, &req_addr);
-
-        // Load all requests in one pass, skipping any that cannot be loaded
-        // or are no longer Pending rather than aborting the whole batch
-        // (issue #1321). A single stale or missing request ID must not
-        // discard results for every other valid request in the batch.
-        let mut requests: Vec<BloodRequest> = Vec::new(&env);
-        for i in 0..request_ids.len() {
-            let rid = request_ids.get(i).unwrap();
-            // Skip requests that don't exist or can't be loaded.
-            let req = match req_client.try_get_request(&rid).ok().and_then(|r| r.ok()) {
-                Some(r) => r,
-                None => continue,
-            };
-            // Skip requests that are no longer Pending (e.g. cancelled or
-            // approved concurrently between submission and execution).
-            if req.status != RequestStatus::Pending {
-                continue;
-            }
-            requests.push_back(req);
-        }
-
-        // Insertion sort: O(n²) worst-case but O(n) for already-sorted input.
-        // Batch sizes are bounded by the transaction instruction limit so n is small.
-        let len = requests.len();
-        for i in 1..len {
-            let mut j = i;
-            while j > 0 {
-                let a = requests.get(j - 1).unwrap();
-                let b = requests.get(j).unwrap();
-                let a_pri = a.urgency.priority();
-                let b_pri = b.urgency.priority();
-                let swap = if a_pri != b_pri {
-                    a_pri < b_pri
-                } else {
-                    a.required_by_timestamp > b.required_by_timestamp
-                };
-                if swap {
-                    requests.set(j - 1, b);
-                    requests.set(j, a);
-                    j -= 1;
-                } else {
-                    break;
-                }
-            }
-        }
-
-        // Track units already assigned earlier in this batch so a later
-        // request in the same call cannot be matched to the same unit as an
-        // earlier one (each sub-match otherwise sees inventory as untouched).
-        let mut assigned: Vec<u64> = Vec::new(&env);
-        let mut results: Vec<MatchResult> = Vec::new(&env);
-        for i in 0..requests.len() {
-            let req = requests.get(i).unwrap();
-            // Skip individual requests that fail to match (e.g. the request
-            // transitioned away from Pending between the load pass above and
-            // this execution pass) instead of aborting the entire batch.
-            let result = match Self::match_request_excluding(&env, req.id, &assigned) {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
-            for j in 0..result.matched_units.len() {
-                assigned.push_back(result.matched_units.get(j).unwrap().unit_id);
-            }
-            results.push_back(result);
-        }
-
-        Ok(results)
-    }
-
-    // ── Query helpers ────────────────────────────────────────────────────────
-
-    /// Return the ordered list of blood types that can donate to `recipient`.
-    pub fn get_compatible_types(env: Env, recipient: BloodType) -> Vec<BloodType> {
-        compatible_donor_types(&env, recipient)
-    }
-
-    /// Check whether `donor` can donate to `recipient`.
-    pub fn check_compatibility(_env: Env, donor: BloodType, recipient: BloodType) -> bool {
-        is_compatible(donor, recipient)
-    }
-
-    // ── Admin ────────────────────────────────────────────────────────────────
-
-    pub fn get_admin(env: Env) -> Result<Address, MatchingError> {
-        Self::require_initialized(&env)?;
-        Ok(env.storage().instance().get(&DataKey::Admin).unwrap())
-    }
-
-    pub fn is_initialized(env: Env) -> bool {
-        env.storage().instance().has(&DataKey::Initialized)
-    }
-
-    // ── Internal ─────────────────────────────────────────────────────────────
 
     fn require_initialized(env: &Env) -> Result<(), MatchingError> {
         if !env.storage().instance().has(&DataKey::Initialized) {

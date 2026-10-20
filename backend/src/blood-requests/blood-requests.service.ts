@@ -212,14 +212,147 @@ export class BloodRequestsService {
       const chainPayload = dto.items.map((i) => ({
         bloodBankId: i.bloodBankId || dto.hospitalId,
         bloodType: i.bloodType.trim(),
+        component: i.component,
         quantity: i.quantityMl ?? i.quantity,
       }));
 
-      let transactionHash: string;
-      try {
-        const chainResult = await this.sorobanService.submitTransactionAndWait({
-          contractMethod: LIFEBANK_REQUESTS_METHODS.createRequest,
-          args: [requestNumber, dto.hospitalId, JSON.stringify(chainPayload)],
-          idempotencyKey
+      const idempotencyKey = `blood-request:${requestNumber}`;
+      const chainResult = await this.sorobanService.invokeContractMethod({
+        contractId: LIFEBANK_REQUESTS_METHODS.CONTRACT_ID,
+        method: LIFEBANK_REQUESTS_METHODS.CREATE_REQUEST,
+        args: {
+          requestNumber,
+          hospitalId: dto.hospitalId,
+          requiredBy: requiredBy.toISOString(),
+          urgency,
+          items: chainPayload,
+          idempotencyKey,
+        },
+      });
 
-/* … truncated 5683 chars — edit only what you need near the top … */
+      // 3. Persist the request and its items
+      const request = this.bloodRequestRepo.create({
+        requestNumber,
+        hospitalId: dto.hospitalId,
+        requiredBy,
+        urgency,
+        urgencyLevel,
+        status: RequestStatus.PENDING,
+        slaResponseDueAt,
+        chainRequestId: chainResult?.requestId ?? null,
+        idempotencyKey,
+        notes: dto.notes ?? null,
+        createdBy: user.id,
+      });
+      const saved = await this.bloodRequestRepo.save(request);
+
+      const items = dto.items.map((item, index) =>
+        this.bloodRequestItemRepo.create({
+          requestId: saved.id,
+          bloodType: item.bloodType.trim(),
+          component: item.component,
+          quantityMl: item.quantityMl ?? item.quantity,
+          bloodBankId: item.bloodBankId || dto.hospitalId,
+          priority: item.priority ?? ItemPriority.ROUTINE,
+          chainItemId: chainResult?.itemIds?.[index] ?? null,
+        }),
+      );
+      await this.bloodRequestItemRepo.save(items);
+
+      // 4. Write status history
+      await this.requestStatusHistoryRepo.save(
+        this.requestStatusHistoryRepo.create({
+          requestId: saved.id,
+          fromStatus: null,
+          toStatus: RequestStatus.PENDING,
+          changedBy: user.id,
+          reason: 'Blood request created',
+        }),
+      );
+
+      // 5. Enqueue for async processing
+      await this.enqueue(saved);
+
+      return {
+        message: 'Blood request created successfully',
+        data: saved,
+      };
+    } catch (error) {
+      // Compensate: release any reserved inventory
+      for (const r of reserved) {
+        try {
+          await this.inventoryService.releaseStock(
+            r.bloodBankId,
+            r.bloodType,
+            r.quantity,
+            r.component,
+          );
+        } catch (releaseError) {
+          this.logger.error(
+            `Failed to release reserved stock for ${r.bloodType} at ${r.bloodBankId}`,
+            releaseError instanceof Error ? releaseError.stack : undefined,
+          );
+        }
+      }
+
+      if (error instanceof BloodRequestIrrecoverableError) {
+        await this.compensationService.compensate({
+          action: CompensationAction.RELEASE_INVENTORY,
+          payload: { reserved },
+        });
+      }
+
+      throw error;
+    }
+  }
+
+  async findOne(id: string): Promise<BloodRequestEntity> {
+    const request = await this.bloodRequestRepo.findOne({
+      where: { id },
+      relations: ['items'],
+    });
+    if (!request) {
+      throw new BadRequestException(`Blood request ${id} not found`);
+    }
+    return request;
+  }
+
+  async findByHospital(hospitalId: string): Promise<BloodRequestEntity[]> {
+    return this.bloodRequestRepo.find({
+      where: { hospitalId },
+      relations: ['items'],
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  async updateStatus(
+    id: string,
+    status: BloodRequestStatus,
+    changedBy: string,
+    reason?: string,
+  ): Promise<BloodRequestEntity> {
+    const request = await this.findOne(id);
+    const fromStatus = request.status;
+    request.status = status as unknown as RequestStatus;
+    const saved = await this.bloodRequestRepo.save(request);
+
+    await this.requestStatusHistoryRepo.save(
+      this.requestStatusHistoryRepo.create({
+        requestId: saved.id,
+        fromStatus,
+        toStatus: status as unknown as RequestStatus,
+        changedBy,
+        reason: reason ?? null,
+      }),
+    );
+
+    return saved;
+  }
+
+  async getStatusHistory(id: string): Promise<RequestStatusHistoryEntity[]> {
+    return this.requestStatusHistoryRepo.find({
+      where: { requestId: id },
+      order: { createdAt: 'ASC' },
+    });
+  }
+}

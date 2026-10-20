@@ -251,103 +251,238 @@ export class BloodMatchingService {
   }
 
   /**
-   * Finds candidate units under a pessimistic write lock, scores them, picks
-   * the best matches, and reserves them — all inside the caller's
-   * transaction — so concurrent callers can never both walk away thinking
-   * they secured the same unit.
+   * Loads candidate units inside the transaction, scores them, selects the
+   * best subset that fulfils the request, and reserves the selected units.
    */
   private async findAndReserveMatchingUnits(
     queryRunner: QueryRunner,
-    bloodTypes: string[],
+    compatibleTypes: string[],
     request: MatchingRequest,
   ): Promise<MatchResult[]> {
     const now = new Date();
 
-    const candidateUnits = await queryRunner.manager.find(BloodUnit, {
+    const candidates = await queryRunner.manager.find(BloodUnit, {
       where: {
-        bloodType: bloodTypes as any,
+        bloodType: In(compatibleTypes) as any,
         status: BloodStatus.AVAILABLE,
-        expiresAt: MoreThanOrEqual(now),
+        expirationDate: MoreThanOrEqual(now),
       },
-      order: {
-        expiresAt: 'ASC', // FIFO - oldest expiration first
-      },
-      lock: { mode: 'pessimistic_write' },
+      order: { expirationDate: 'ASC' },
     });
 
-    const scoredMatches = await this.scoreMatches(candidateUnits, request);
-    scoredMatches.sort((a, b) => b.matchScore - a.matchScore);
-    const selectedMatches = this.selectBestMatches(
-      scoredMatches,
-      request.quantityMl,
-    );
+    if (candidates.length === 0) {
+      return [];
+    }
+
+    const scored = this.scoreMatches(candidates, request);
+    const selected = this.selectBestMatches(scored, request.quantityMl);
+
+    if (selected.length === 0) {
+      return [];
+    }
 
     const reservedUntil = new Date(
       now.getTime() + DEFAULT_RESERVATION_TTL_MINUTES * 60 * 1000,
     );
 
-    for (const match of selectedMatches) {
-      const result = await queryRunner.manager.update(
-        BloodUnit,
-        { id: match.bloodUnitId, status: BloodStatus.AVAILABLE },
-        {
-          status: BloodStatus.RESERVED,
-          reservedFor: request.requestId,
-          reservedUntil,
-        } as any,
-      );
-      if (!result.affected) {
-        throw new ConflictException(
-          `Blood unit ${match.bloodUnitId} is no longer available`,
-        );
-      }
+    const selectedIds = selected.map((match) => match.bloodUnitId);
+    await queryRunner.manager.update(
+      BloodUnit,
+      { id: In(selectedIds) as any },
+      {
+        status: BloodStatus.RESERVED,
+        reservedUntil,
+      } as any,
+    );
 
-      // Record the status transition so the reservation is auditable and can
-      // be reconciled / released by the expiry sweeper.
-      await queryRunner.manager.insert(BloodStatusHistory as any, {
-        bloodUnitId: match.bloodUnitId,
-        previousStatus: BloodStatus.AVAILABLE,
-        newStatus: BloodStatus.RESERVED,
-        reason: `Reserved for blood request ${request.requestId}`,
-        changedBy: request.hospitalId,
-        changedAt: now,
-      } as any);
-
-      // Best-effort on-chain sync so the ledger reflects the reservation.
-      await this.syncReservationOnChain(queryRunner, match.bloodUnitId);
-    }
-
-    return selectedMatches;
+    return selected;
   }
 
   /**
-   * Best-effort on-chain sync for a reserved unit. Failures are logged but do
-   * not abort the reservation, matching the existing non-blocking sync
-   * behaviour elsewhere in the service.
+   * Scores every candidate unit against the request and returns them sorted
+   * from best to worst match.
    */
-  private async syncReservationOnChain(
-    queryRunner: QueryRunner,
-    bloodUnitId: string,
-  ): Promise<void> {
-    try {
-      const unit = await queryRunner.manager.findOne(BloodUnit, {
-        where: { id: bloodUnitId },
-      });
-      if (!unit) return;
-
-      const syncFn = (this as any).syncUnitOnChain;
-      if (typeof syncFn === 'function') {
-        await syncFn.call(this, unit);
-      }
-    } catch (error) {
-      this.logger.warn(
-        `On-chain sync failed for reserved unit ${bloodUnitId}: ${
-          (error as Error).message
-        }`,
+  scoreMatches(
+    units: BloodUnit[],
+    request: MatchingRequest,
+  ): MatchResult[] {
+    const results: MatchResult[] = units.map((unit) => {
+      const matchScore = this.calculateMatchScore(unit, request);
+      const matchType = this.determineMatchType(unit, request);
+      const distance = this.calculateDistance(
+        request.latitude,
+        request.longitude,
+        (unit as any).bank?.latitude,
+        (unit as any).bank?.longitude,
       );
-    }
+
+      return {
+        bloodUnitId: unit.id,
+        bloodType: unit.bloodType,
+        bankId: (unit as any).bankId ?? (unit as any).bank?.id,
+        quantityMl: unit.quantityMl,
+        expirationDate: unit.expirationDate,
+        matchScore,
+        matchType,
+        explanation: this.buildExplanation(unit, request, matchType),
+        distance,
+      };
+    });
+
+    return results.sort((a, b) => b.matchScore - a.matchScore);
   }
 
-  private asyn
+  /**
+   * Greedily selects the highest-scoring units until the requested quantity is
+   * met (or candidates are exhausted).
+   */
+  selectBestMatches(
+    matches: MatchResult[],
+    requestedQuantityMl: number,
+  ): MatchResult[] {
+    const selected: MatchResult[] = [];
+    let remaining = requestedQuantityMl;
 
-/* … truncated 4901 chars — edit only what you need near the top … */
+    for (const match of matches) {
+      if (remaining <= 0) break;
+      selected.push(match);
+      remaining -= match.quantityMl;
+    }
+
+    return selected;
+  }
+
+  /**
+   * Computes a 0-100 score for a candidate unit. Higher is better. Combines
+   * blood-type compatibility, expiration proximity, urgency and distance.
+   */
+  calculateMatchScore(
+    unit: BloodUnit,
+    request: MatchingRequest,
+  ): number {
+    return this.calculateMatchingScore(unit, request);
+  }
+
+  calculateMatchingScore(
+    unit: BloodUnit,
+    request: MatchingRequest,
+  ): number {
+    let score = 0;
+
+    // Blood type compatibility (max 40)
+    if (unit.bloodType === request.bloodType) {
+      score += 40;
+    } else if (this.isBloodTypeCompatible(unit.bloodType, request.bloodType)) {
+      score += 25;
+    }
+
+    // Expiration proximity (max 30): fresher units score higher
+    const daysUntilExpiration = this.getDaysUntilExpiration(unit.expirationDate);
+    if (daysUntilExpiration >= 30) {
+      score += 30;
+    } else if (daysUntilExpiration > 0) {
+      score += Math.round((daysUntilExpiration / 30) * 30);
+    }
+
+    // Urgency weight (max 20)
+    const urgencyWeight = this.urgencyWeights[request.urgency] ?? 1;
+    score += Math.round((urgencyWeight / 4) * 20);
+
+    // Distance bonus (max 10): closer banks score higher
+    const distance = this.calculateDistance(
+      request.latitude,
+      request.longitude,
+      (unit as any).bank?.latitude,
+      (unit as any).bank?.longitude,
+    );
+    if (distance !== undefined) {
+      score += Math.max(0, 10 - Math.min(distance, 100) / 10);
+    }
+
+    return Math.round(score);
+  }
+
+  determineMatchType(
+    unit: BloodUnit,
+    request: MatchingRequest,
+  ): 'exact' | 'compatible' | 'emergency' | 'partial' {
+    if (unit.bloodType === request.bloodType) {
+      return 'exact';
+    }
+    if (request.urgency === 'critical') {
+      return 'emergency';
+    }
+    if (this.isBloodTypeCompatible(unit.bloodType, request.bloodType)) {
+      return 'compatible';
+    }
+    return 'partial';
+  }
+
+  getCompatibilityMatrix(): BloodTypeCompatibility {
+    return this.compatibilityMatrix;
+  }
+
+  getDaysUntilExpiration(expirationDate: Date): number {
+    const now = new Date();
+    const diffMs = new Date(expirationDate).getTime() - now.getTime();
+    return Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  }
+
+  isBloodTypeCompatible(donorType: string, recipientType: string): boolean {
+    const compatibility = this.compatibilityMatrix[donorType];
+    if (!compatibility) {
+      return false;
+    }
+    return compatibility.canDonateTo.includes(recipientType);
+  }
+
+  /**
+   * Haversine distance in kilometres between two coordinate pairs. Returns
+   * undefined when any coordinate is missing.
+   */
+  calculateDistance(
+    lat1?: number,
+    lon1?: number,
+    lat2?: number,
+    lon2?: number,
+  ): number | undefined {
+    if (
+      lat1 === undefined ||
+      lon1 === undefined ||
+      lat2 === undefined ||
+      lon2 === undefined
+    ) {
+      return undefined;
+    }
+
+    const toRad = (deg: number) => (deg * Math.PI) / 180;
+    const earthRadiusKm = 6371;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(lat1)) *
+        Math.cos(toRad(lat2)) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return earthRadiusKm * c;
+  }
+
+  private buildExplanation(
+    unit: BloodUnit,
+    request: MatchingRequest,
+    matchType: 'exact' | 'compatible' | 'emergency' | 'partial',
+  ): string {
+    switch (matchType) {
+      case 'exact':
+        return `Exact blood type match (${unit.bloodType})`;
+      case 'emergency':
+        return `Emergency release: ${unit.bloodType} compatible with ${request.bloodType}`;
+      case 'compatible':
+        return `${unit.bloodType} is compatible with recipient ${request.bloodType}`;
+      default:
+        return `Partial compatibility for ${request.bloodType}`;
+    }
+  }
+}

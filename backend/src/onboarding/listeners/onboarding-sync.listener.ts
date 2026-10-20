@@ -48,7 +48,6 @@ export class OnboardingSyncListener {
     await this.onboardingRepo.update(onboardingId, {
       status: OnboardingStatus.ACTIVATED,
       contractTxHash: event.transactionHash,
-      reconciliationStatus: 'RECONCILED',
     });
   }
 
@@ -71,7 +70,7 @@ export class OnboardingSyncListener {
     });
 
     await this.onboardingRepo.update(onboardingId, {
-      reconciliationStatus: 'FAILED',
+      status: OnboardingStatus.APPROVED,
     });
   }
 }

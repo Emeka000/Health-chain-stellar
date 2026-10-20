@@ -151,6 +151,20 @@ pub fn is_rider_authorized(env: &Env, rider: &Address) -> bool {
         .unwrap_or(false)
 }
 
+pub fn set_request_rider(env: &Env, request_id: u64, rider: &Address) {
+    let key = DataKey::RequestRider(request_id);
+    env.storage().persistent().set(&key, rider);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+}
+
+pub fn get_request_rider(env: &Env, request_id: u64) -> Option<Address> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RequestRider(request_id))
+}
+
 pub fn set_request(env: &Env, request: &BloodRequest) {
     let key = DataKey::Request(request.id);
     env.storage().persistent().set(&key, request);

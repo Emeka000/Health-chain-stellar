@@ -37,6 +37,9 @@ export class OrganizationEntity extends BaseEntity {
   @Column({ name: 'phone_number', type: 'varchar', length: 40, nullable: true })
   phoneNumber?: string | null;
 
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  phone?: string | null;
+
   @Column({ type: 'text', nullable: true })
   address?: string | null;
 
@@ -155,6 +158,21 @@ export class OrganizationEntity extends BaseEntity {
 
   @Column({ name: 'blockchain_address', type: 'varchar', length: 128, nullable: true })
   blockchainAddress?: string | null;
+
+  @Column({ name: 'sync_status', type: 'varchar', length: 40, nullable: true })
+  syncStatus?: string | null;
+
+  @Column({ name: 'sync_retry_count', type: 'int', default: 0, nullable: true })
+  syncRetryCount?: number | null;
+
+  @Column({ name: 'verification_tx_hash', type: 'varchar', length: 128, nullable: true })
+  verificationTxHash?: string | null;
+
+  @Column({ name: 'synced_at', type: 'timestamp', nullable: true })
+  syncedAt?: Date | null;
+
+  @Column({ name: 'soroban_verified_at', type: 'timestamp', nullable: true })
+  sorobanVerifiedAt?: Date | null;
 
   @OneToMany(() => UserEntity, (user) => user.organization)
   users: UserEntity[];

@@ -14,6 +14,12 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 
 import { memoryStorage } from 'multer';
 
@@ -51,8 +57,8 @@ export class OrganizationsController {
   ) {}
 
   @Public()
-  @ApiOperation({ summary: 'Post register' })
-  @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @ApiOperation({ summary: 'Register a new organization' })
+  @ApiResponse({ status: 201, description: 'Organization registered successfully' })
   @Post('register')
   @UseInterceptors(
     FileFieldsInterceptor(
@@ -78,16 +84,16 @@ export class OrganizationsController {
   }
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
-  @ApiOperation({ summary: 'Get pending' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @ApiOperation({ summary: 'List organizations pending approval' })
+  @ApiResponse({ status: 200, description: 'Pending organizations retrieved successfully' })
   @Get('pending')
   listPending() {
     return this.organizationsService.listPending();
   }
 
   @Public()
-  @ApiOperation({ summary: 'Get search' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @ApiOperation({ summary: 'Search organizations' })
+  @ApiResponse({ status: 200, description: 'Matching organizations retrieved successfully' })
   @Get('search')
   search(
     @Query(
@@ -103,8 +109,8 @@ export class OrganizationsController {
   }
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
-  @ApiOperation({ summary: 'Patch :id approve' })
-  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
+  @ApiOperation({ summary: 'Approve an organization' })
+  @ApiResponse({ status: 200, description: 'Organization approved successfully' })
   @Patch(':id/approve')
   approve(
     @Param('id', ParseUUIDPipe) id: string,
@@ -114,8 +120,8 @@ export class OrganizationsController {
   }
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
-  @ApiOperation({ summary: 'Patch :id reject' })
-  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
+  @ApiOperation({ summary: 'Reject an organization' })
+  @ApiResponse({ status: 200, description: 'Organization rejected successfully' })
   @Patch(':id/reject')
   reject(
     @Param('id', ParseUUIDPipe) id: string,
@@ -125,8 +131,8 @@ export class OrganizationsController {
     return this.organizationsService.reject(id, dto, req.user.id);
   }
 
-  @ApiOperation({ summary: 'Post :id reviews' })
-  @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @ApiOperation({ summary: 'Submit a review for an organization' })
+  @ApiResponse({ status: 201, description: 'Review submitted successfully' })
   @Post(':id/reviews')
   submitReview(
     @Param('id', ParseUUIDPipe) organizationId: string,
@@ -140,8 +146,8 @@ export class OrganizationsController {
     );
   }
 
-  @ApiOperation({ summary: 'Get :id reviews' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @ApiOperation({ summary: 'List reviews for an organization' })
+  @ApiResponse({ status: 200, description: 'Organization reviews retrieved successfully' })
   @Get(':id/reviews')
   listReviews(
     @Param('id', ParseUUIDPipe) organizationId: string,
@@ -160,8 +166,8 @@ export class OrganizationsController {
     );
   }
 
-  @ApiOperation({ summary: 'Post reviews :reviewId report' })
-  @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @ApiOperation({ summary: 'Report an organization review' })
+  @ApiResponse({ status: 201, description: 'Review reported successfully' })
   @Post('reviews/:reviewId/report')
   reportReview(
     @Param('reviewId', ParseUUIDPipe) reviewId: string,
@@ -176,8 +182,8 @@ export class OrganizationsController {
   }
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
-  @ApiOperation({ summary: 'Patch reviews :reviewId moderate' })
-  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
+  @ApiOperation({ summary: 'Moderate an organization review' })
+  @ApiResponse({ status: 200, description: 'Review moderated successfully' })
   @Patch('reviews/:reviewId/moderate')
   moderateReview(
     @Param('reviewId', ParseUUIDPipe) reviewId: string,
@@ -191,8 +197,8 @@ export class OrganizationsController {
     );
   }
 
-  @ApiOperation({ summary: 'Delete reviews :reviewId' })
-  @ApiResponse({ status: 200, description: 'Resource deleted successfully' })
+  @ApiOperation({ summary: 'Delete an organization review' })
+  @ApiResponse({ status: 200, description: 'Review deleted successfully' })
   @Delete('reviews/:reviewId')
   deleteReview(
     @Param('reviewId', ParseUUIDPipe) reviewId: string,
@@ -210,8 +216,8 @@ export class OrganizationsController {
   // =========================================================================
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
-  @ApiOperation({ summary: 'Post :id verify on chain' })
-  @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @ApiOperation({ summary: 'Sync organization verification to the blockchain' })
+  @ApiResponse({ status: 201, description: 'Verification synced to blockchain successfully' })
   @Post(':id/verify-on-chain')
   verifyOnChain(
     @Param('id', ParseUUIDPipe) organizationId: string,
@@ -221,8 +227,8 @@ export class OrganizationsController {
   }
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
-  @ApiOperation({ summary: 'Post :id revoke verification' })
-  @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @ApiOperation({ summary: 'Revoke organization verification on the blockchain' })
+  @ApiResponse({ status: 201, description: 'Verification revoked successfully' })
   @Post(':id/revoke-verification')
   revokeVerification(
     @Param('id', ParseUUIDPipe) organizationId: string,
@@ -235,8 +241,8 @@ export class OrganizationsController {
   }
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
-  @ApiOperation({ summary: 'Post :id retry sync' })
-  @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @ApiOperation({ summary: 'Retry organization verification sync' })
+  @ApiResponse({ status: 201, description: 'Verification sync retried successfully' })
   @Post(':id/retry-sync')
   retrySyncVerification(
     @Param('id', ParseUUIDPipe) organizationId: string,
@@ -245,105 +251,50 @@ export class OrganizationsController {
   }
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
-  @ApiOperation({ summary: 'Get :id sync status' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
-  @Get(':id/sync-status')
-  getSyncStatus(
-    @Param('id', ParseUUIDPipe) organizationId: string,
-  ) {
-    return this.verificationSyncService.getSyncStatus(organizationId);
-  }
-
-  @RequirePermissions(Permission.ADMIN_ACCESS)
-  @ApiOperation({ summary: 'Get verification pending syncs' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
-  @Get('verification/pending-syncs')
-  listPendingSyncs() {
-    return this.verificationSyncService.listPendingSyncs();
-  }
-
-  @RequirePermissions(Permission.ADMIN_ACCESS)
-  @ApiOperation({ summary: 'Post :id check mismatch' })
-  @ApiResponse({ status: 201, description: 'Resource created successfully' })
-  @Post(':id/check-mismatch')
-  checkSyncMismatch(
-    @Param('id', ParseUUIDPipe) organizationId: string,
-  ) {
-    return this.verificationSyncService.checkSyncMismatch(organizationId);
-  }
-
-  // =========================================================================
-  // Verification Lifecycle Endpoints
-  // =========================================================================
-
-  @RequirePermissions(Permission.ADMIN_ACCESS)
-  @ApiOperation({ summary: 'Post :id suspend' })
-  @ApiResponse({ status: 201, description: 'Resource created successfully' })
-  @Post(':id/suspend')
+  @ApiOperation({ summary: 'Suspend an organization' })
+  @ApiResponse({ status: 200, description: 'Organization suspended successfully' })
+  @Patch(':id/suspend')
   suspend(
     @Param('id', ParseUUIDPipe) id: string,
-    @Req() req: { user: { id: string } },
     @Body() dto: SuspendOrganizationDto,
+    @Req() req: { user: { id: string } },
   ) {
-    return this.lifecycleService.suspend(id, req.user.id, dto);
+    return this.lifecycleService.suspend(id, dto, req.user.id);
   }
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
-  @ApiOperation({ summary: 'Post :id reinstate' })
-  @ApiResponse({ status: 201, description: 'Resource created successfully' })
-  @Post(':id/reinstate')
+  @ApiOperation({ summary: 'Reinstate a suspended organization' })
+  @ApiResponse({ status: 200, description: 'Organization reinstated successfully' })
+  @Patch(':id/reinstate')
   reinstate(
     @Param('id', ParseUUIDPipe) id: string,
-    @Req() req: { user: { id: string } },
     @Body() dto: ReinstateOrganizationDto,
+    @Req() req: { user: { id: string } },
   ) {
-    return this.lifecycleService.reinstate(id, req.user.id, dto);
+    return this.lifecycleService.reinstate(id, dto, req.user.id);
   }
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
-  @ApiOperation({ summary: 'Post :id unverify' })
-  @ApiResponse({ status: 201, description: 'Resource created successfully' })
-  @Post(':id/unverify')
+  @ApiOperation({ summary: 'Unverify an organization' })
+  @ApiResponse({ status: 200, description: 'Organization unverified successfully' })
+  @Patch(':id/unverify')
   unverify(
     @Param('id', ParseUUIDPipe) id: string,
-    @Req() req: { user: { id: string } },
     @Body() dto: UnverifyOrganizationDto,
+    @Req() req: { user: { id: string } },
   ) {
-    return this.lifecycleService.unverify(id, req.user.id, dto);
+    return this.lifecycleService.unverify(id, dto, req.user.id);
   }
 
-  @ApiOperation({ summary: 'Post :id reapply' })
-  @ApiResponse({ status: 201, description: 'Resource created successfully' })
-  @Post(':id/reapply')
+  @Public()
+  @ApiOperation({ summary: 'Reapply for organization verification' })
+  @ApiResponse({ status: 200, description: 'Reapplication submitted successfully' })
+  @Patch(':id/reapply')
   reapply(
     @Param('id', ParseUUIDPipe) id: string,
-    @Req() req: { user: { id: string; role?: string; organizationId?: string | null } },
     @Body() dto: ReapplyOrganizationDto,
+    @Req() req: { user: { id: string } },
   ) {
-    return this.lifecycleService.reapply(id, req.user, dto);
-  }
-
-  @RequirePermissions(Permission.ADMIN_ACCESS)
-  @ApiOperation({ summary: 'Get :id lifecycle history' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
-  @Get(':id/lifecycle-history')
-  getLifecycleHistory(@Param('id', ParseUUIDPipe) id: string) {
-    return this.lifecycleService.getHistory(id);
-  }
-
-  @RequirePermissions(Permission.ADMIN_ACCESS)
-  @ApiOperation({ summary: 'Get :id grace period' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
-  @Get(':id/grace-period')
-  getGracePeriod(@Param('id', ParseUUIDPipe) id: string) {
-    return this.lifecycleService.getActiveGracePeriod(id);
-  }
-
-  @RequirePermissions(Permission.ADMIN_ACCESS)
-  @ApiOperation({ summary: 'Get :id restriction level' })
-  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
-  @Get(':id/restriction-level')
-  getRestrictionLevel(@Param('id', ParseUUIDPipe) id: string) {
-    return this.lifecycleService.getRestrictionLevel(id);
+    return this.lifecycleService.reapply(id, dto, req.user.id);
   }
 }

@@ -132,6 +132,18 @@ describe('BloodRequestsService', () => {
       expect(mockBloodRequestRepo.save).toHaveBeenCalled();
       expect(result.data.status).toBe(BloodRequestStatus.PENDING);
     });
+
+    it('writes a status-history entry after on-chain submission', async () => {
+      await service.create(validDto(), adminUser as any);
+      expect(mockRequestStatusHistoryRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: BloodRequestStatus.PENDING }),
+      );
+    });
+
+    it('enqueues the request on the blood-request queue after submission', async () => {
+      await service.create(validDto(), adminUser as any);
+      expect(mockQueue.add).toHaveBeenCalled();
+    });
   });
 
   // ── Validation ──────────────────────────────────────────────────────────────
@@ -140,6 +152,30 @@ describe('BloodRequestsService', () => {
     it('throws BadRequestException when requiredBy is in the past', async () => {
       const dto = { ...validDto(), requiredBy: new Date(Date.now() - 1000).toISOString() };
       await expect(service.create(dto as any, adminUser as any)).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  // ── #1524 behaviour ─────────────────────────────────────────────────────────
+
+  describe('create — #1524 chain failure handling', () => {
+    it('releases reserved stock and rethrows when on-chain submission fails', async () => {
+      mockChainService.submitToChain.mockRejectedValueOnce(
+        new BloodRequestIrrecoverableError('chain down', CompensationAction.RELEASE_STOCK),
+      );
+
+      await expect(service.create(validDto(), adminUser as any)).rejects.toThrow(
+        BloodRequestIrrecoverableError,
+      );
+      expect(mockInventoryService.releaseStockByBankAndType).toHaveBeenCalled();
+    });
+
+    it('does not enqueue a job when on-chain submission fails', async () => {
+      mockChainService.submitToChain.mockRejectedValueOnce(
+        new BloodRequestIrrecoverableError('chain down', CompensationAction.RELEASE_STOCK),
+      );
+
+      await expect(service.create(validDto(), adminUser as any)).rejects.toThrow();
+      expect(mockQueue.add).not.toHaveBeenCalled();
     });
   });
 });

@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Request } from 'express';
 
 import { CreateDeliveryProofDto } from './dto/create-delivery-proof.dto';
 import { DeliveryProofQueryDto } from './dto/delivery-proof-query.dto';
@@ -52,6 +53,7 @@ export class DeliveryProofController {
   @ApiOperation({ summary: 'Upload a delivery proof photo' })
   @ApiResponse({ status: 201, description: 'Photo uploaded' })
   @UseInterceptors(FileInterceptor('image'))
+  @RequirePermissions(Permission.DELIVERY_PROOF_CREATE)
   async uploadPhoto(
     @Param('orderId', new ParseUUIDPipe({ version: '4' })) orderId: string,
     @UploadedFile() file: any, // Express.Multer.File
@@ -60,7 +62,7 @@ export class DeliveryProofController {
   ) {
     return this.deliveryProofService.uploadPhoto(
       orderId,
-      dto,
+      file,
       req.user as AuthenticatedUser,
     );
   }
@@ -77,7 +79,7 @@ export class DeliveryProofController {
   @ApiOperation({ summary: 'Query delivery proofs' })
   @ApiResponse({ status: 200, description: 'Delivery proofs listed' })
   @RequirePermissions(Permission.DELIVERY_PROOF_READ)
-  query(@Query() query: QueryDeliveryProofDto, @Req() req: Request) {
+  query(@Query() query: DeliveryProofQueryDto, @Req() req: Request) {
     return this.deliveryProofService.query(query, req.user as AuthenticatedUser);
   }
 

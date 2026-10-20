@@ -38,6 +38,9 @@ use inventory_client::InventoryContractClient;
 
 const CONTRACT_VERSION: u32 = 1;
 
+/// Inventory's `ContractError::ReservationNotFound` discriminant.
+const INVENTORY_RESERVATION_NOT_FOUND: u32 = 150;
+
 /// Maximum number of entries accepted by `batch_create_requests`.
 /// Mirrors the sibling matching contract's `MAX_BATCH_SIZE` so callers hit a
 /// dedicated error instead of the instruction or storage-write limit.
@@ -100,7 +103,15 @@ impl RequestContract {
             // Use cross-contract authorization: the requests contract itself is
             // the authorized intermediary. The inventory contract verifies that
             // this function is called FROM the requests contract address.
-            inv_client.release_reservation_by_contract(&requests_contract, &res_id);
+            // A reservation that was already expired via `expire_reservation` has
+            // nothing left to release, so `ReservationNotFound` counts as released
+            // and the cancellation/rejection still goes through.
+            let not_found = soroban_sdk::Error::from_contract_error(INVENTORY_RESERVATION_NOT_FOUND);
+            match inv_client.try_release_reservation_by_contract(&requests_contract, &res_id) {
+                Ok(Ok(())) => {}
+                Err(Ok(err)) if err == not_found => {}
+                _ => panic!("inventory reservation release failed"),
+            }
             request.reservation_id = None;
             true
         } else {
@@ -175,6 +186,26 @@ impl RequestContract {
         storage::require_initialized(&env)?;
         storage::get_admin(&env).require_auth();
         storage::revoke_rider(&env, &rider);
+        Ok(())
+    }
+
+    /// Assign the authorized rider that is allowed to pick up an Approved request.
+    /// Admin only. May be called again to reassign before pickup.
+    pub fn assign_rider(env: Env, request_id: u64, rider: Address) -> Result<(), ContractError> {
+        storage::require_initialized(&env)?;
+        storage::get_admin(&env).require_auth();
+
+        if !storage::is_rider_authorized(&env, &rider) {
+            return Err(ContractError::NotAuthorizedRider);
+        }
+
+        let request =
+            storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
+        if request.status != RequestStatus::Approved {
+            return Err(ContractError::InvalidRequestStatus);
+        }
+
+        storage::set_request_rider(&env, request_id, &rider);
         Ok(())
     }
 
@@ -323,6 +354,12 @@ impl RequestContract {
             return Err(ContractError::NotRequestOwner);
         }
 
+        // Units in an InProgress request are already on a rider's vehicle;
+        // cancelling would release their reservation while they are in transit.
+        if request.status == RequestStatus::InProgress {
+            return Err(ContractError::InvalidRequestStatus);
+        }
+
         Self::cancel_internal(&env, &mut request, &caller, reason)
     }
 
@@ -430,6 +467,11 @@ impl RequestContract {
 
         let mut request =
             storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
+
+        // A rider may only pick up a request the admin assigned to it.
+        if !is_admin && storage::get_request_rider(&env, request_id) != Some(caller.clone()) {
+            return Err(ContractError::Unauthorized);
+        }
 
         if request.status == new_status {
             return Err(ContractError::InvalidRequestStatus);

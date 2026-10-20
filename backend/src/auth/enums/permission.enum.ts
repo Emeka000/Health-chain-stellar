@@ -14,12 +14,15 @@ export enum Permission {
   UPDATE_RIDER = 'update:rider',
   DELETE_RIDER = 'delete:rider',
   MANAGE_RIDERS = 'manage:riders',
+  ASSIGN_RIDER = 'assign:rider',
 
   // ── Hospitals ────────────────────────────────────────────────────────
   VIEW_HOSPITALS = 'view:hospitals',
   CREATE_HOSPITAL = 'create:hospital',
   UPDATE_HOSPITAL = 'update:hospital',
   DELETE_HOSPITAL = 'delete:hospital',
+  VIEW_HOSPITAL_OVERRIDES = 'view:hospital-overrides',
+  MANAGE_HOSPITAL_OVERRIDES = 'manage:hospital-overrides',
 
   // ── Inventory ────────────────────────────────────────────────────────
   VIEW_INVENTORY = 'view:inventory',
@@ -27,6 +30,7 @@ export enum Permission {
   UPDATE_INVENTORY = 'update:inventory',
   DELETE_INVENTORY = 'delete:inventory',
   INVENTORY_WRITE = 'inventory:write',
+  MANAGE_INVENTORY = 'manage:inventory',
 
   // ── Blood Units ──────────────────────────────────────────────────────
   VIEW_BLOODUNIT_TRAIL = 'view:bloodunit:trail',
@@ -35,6 +39,7 @@ export enum Permission {
   LOG_TEMPERATURE = 'log:temperature',
   UPDATE_BLOOD_STATUS = 'update:blood-status',
   VIEW_BLOOD_STATUS_HISTORY = 'view:blood-status-history',
+  ALLOCATE_BLOOD_UNITS = 'allocate:blood-units',
 
   // ── Dispatch ─────────────────────────────────────────────────────────
   VIEW_DISPATCH = 'view:dispatch',
@@ -82,6 +87,15 @@ export enum Permission {
 
   // ── Blood Requests ──────────────────────────────────────────────────
   VIEW_BLOOD_REQUESTS = 'view:blood-requests',
+
+  // ── Incident Reviews ────────────────────────────────────────────────
+  CREATE_INCIDENT_REVIEW = 'create:incident-review',
+  VIEW_INCIDENT_REVIEWS = 'view:incident-reviews',
+  MANAGE_INCIDENT_REVIEWS = 'manage:incident-reviews',
+
+  // ── Regions ─────────────────────────────────────────────────────────
+  VIEW_REGIONS = 'view:regions',
+  MANAGE_REGIONS = 'manage:regions',
 
   // ── Reporting ───────────────────────────────────────────────────────
   DOWNLOAD_REPORTS = 'download:reports',

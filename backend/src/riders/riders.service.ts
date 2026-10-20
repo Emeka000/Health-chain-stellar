@@ -261,6 +261,45 @@ export class RidersService {
   }
 
   /**
+   * Aggregated rider statistics for the admin dashboard.
+   */
+  async getStatistics(): Promise<{
+    message: string;
+    data: {
+      total: number;
+      byStatus: Record<string, number>;
+      verified: number;
+      available: number;
+    };
+  }> {
+    const riders = await this.riderRepository.find();
+
+    const byStatus: Record<string, number> = {};
+    let verified = 0;
+    let available = 0;
+
+    for (const rider of riders) {
+      byStatus[rider.status] = (byStatus[rider.status] ?? 0) + 1;
+      if (rider.isVerified) {
+        verified += 1;
+      }
+      if (rider.status === RiderStatus.AVAILABLE) {
+        available += 1;
+      }
+    }
+
+    return {
+      message: 'Rider statistics retrieved successfully',
+      data: {
+        total: riders.length,
+        byStatus,
+        verified,
+        available,
+      },
+    };
+  }
+
+  /**
    * Counts in-flight dispatches per rider so dispatch scoring reflects
    * current workload rather than lifetime completed deliveries.
    */

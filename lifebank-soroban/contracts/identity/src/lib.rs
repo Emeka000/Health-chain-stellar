@@ -186,6 +186,7 @@ pub struct Organization {
     pub verified_timestamp: Option<u64>,
     pub rating: u32,
     pub total_ratings: u32,
+    pub rating_sum: u64,
     pub location_hash: BytesN<32>,
 }
 
@@ -495,6 +496,7 @@ impl IdentityContract {
             verified_timestamp: None,
             rating: 0,
             total_ratings: 0,
+            rating_sum: 0,
             location_hash,
         };
 
@@ -707,7 +709,10 @@ impl IdentityContract {
     }
 
     /// Return up to `limit` top-rated verified organizations of the given type.
-    /// Enforces a hard cap of 50 results; sort is O(n * take) bounded by CAP².
+    /// Enforces a hard cap of 50 results. Walks every verified organization
+    /// page by page and keeps a bounded, rating-sorted buffer of the best
+    /// `take` entries, so the ranking covers the whole registry, not just the
+    /// first registered organizations. Ties keep registration order.
     pub fn get_top_rated_organizations(
         env: Env,
         org_type: OrgType,
@@ -715,40 +720,36 @@ impl IdentityContract {
     ) -> Vec<Organization> {
         const CAP: u32 = 50;
         let take = limit.min(CAP);
-        let all = Self::get_verified_organizations(env.clone(), org_type, 0, CAP).items;
-        let n = all.len();
-
-        // Track which indices have been selected already
-        let mut selected: Vec<u32> = Vec::new(&env);
         let mut results: Vec<Organization> = Vec::new(&env);
+        if take == 0 {
+            return results;
+        }
 
-        for _ in 0..take {
-            let mut best_rating = u32::MAX;
-            let mut best_idx = n; // sentinel = not found
-                                  // Find the highest-rated not-yet-selected entry
-            for i in 0..n {
-                let mut skip = false;
-                for k in 0..selected.len() {
-                    if selected.get(k).unwrap() == i {
-                        skip = true;
+        let mut start = 0;
+        loop {
+            let page =
+                Self::get_verified_organizations(env.clone(), org_type.clone(), start, CAP);
+            for i in 0..page.items.len() {
+                let org = page.items.get(i).unwrap();
+                // Insert before the first entry with a lower rating
+                let mut pos = results.len();
+                for j in 0..results.len() {
+                    if org.rating > results.get(j).unwrap().rating {
+                        pos = j;
                         break;
                     }
                 }
-                if skip {
-                    continue;
-                }
-                let r = all.get(i).unwrap().rating;
-                // We want maximum; re-use best_rating as "highest so far"
-                if best_idx == n || r > best_rating {
-                    best_rating = r;
-                    best_idx = i;
+                if pos < take {
+                    results.insert(pos, org);
+                    if results.len() > take {
+                        results.pop_back();
+                    }
                 }
             }
-            if best_idx == n {
-                break;
-            } // no more candidates
-            selected.push_back(best_idx);
-            results.push_back(all.get(best_idx).unwrap());
+            match page.next_start {
+                Some(next) => start = next,
+                None => break,
+            }
         }
         results
     }
@@ -772,6 +773,64 @@ impl IdentityContract {
             env, admin, org_id, reason,
         )?;
         Ok(())
+    }
+
+    /// Get verification metadata for an organization
+    pub fn get_verification_metadata(
+        env: Env,
+        org_id: Address,
+    ) -> Result<verification::VerificationMetadata, Error> {
+        <verification::VerificationImpl as verification::VerificationTrait>::get_verification_metadata(
+            env, org_id,
+        )
+    }
+
+    /// Check if an organization is verified
+    pub fn is_organization_verified(env: Env, org_id: Address) -> Result<bool, Error> {
+        <verification::VerificationImpl as verification::VerificationTrait>::is_organization_verified(
+            env, org_id,
+        )
+    }
+
+    /// Get the verification timestamp of an organization
+    pub fn get_verification_timestamp(env: Env, org_id: Address) -> Result<Option<u64>, Error> {
+        <verification::VerificationImpl as verification::VerificationTrait>::get_verification_timestamp(
+            env, org_id,
+        )
+    }
+
+    /// Get the last N verification events for an organization
+    pub fn get_verification_events(
+        env: Env,
+        org_id: Address,
+        limit: u32,
+    ) -> Result<Vec<verification::VerificationEvent>, Error> {
+        <verification::VerificationImpl as verification::VerificationTrait>::get_verification_events(
+            env, org_id, limit,
+        )
+    }
+
+    /// Batch verify organizations (admin only). Returns the number newly verified.
+    pub fn batch_verify_organizations(
+        env: Env,
+        admin: Address,
+        org_ids: Vec<Address>,
+    ) -> Result<u32, Error> {
+        <verification::VerificationImpl as verification::VerificationTrait>::batch_verify_organizations(
+            env, admin, org_ids,
+        )
+    }
+
+    /// Batch revoke organizations (admin only). Returns the number newly revoked.
+    pub fn batch_revoke_organizations(
+        env: Env,
+        admin: Address,
+        org_ids: Vec<Address>,
+        reason: String,
+    ) -> Result<u32, Error> {
+        <verification::VerificationImpl as verification::VerificationTrait>::batch_revoke_organizations(
+            env, admin, org_ids, reason,
+        )
     }
 
     // -----------------------------------------------------------------------
@@ -809,9 +868,10 @@ impl IdentityContract {
             .get(&org_key)
             .ok_or(Error::OrganizationNotFound)?;
 
-        let total_rating = organization.rating * organization.total_ratings;
+        // Accumulate the exact sum so the floored average never feeds back into future updates
+        organization.rating_sum += rating as u64;
         organization.total_ratings += 1;
-        organization.rating = (total_rating + rating) / organization.total_ratings;
+        organization.rating = (organization.rating_sum / organization.total_ratings as u64) as u32;
 
         env.storage().persistent().set(&org_key, &organization);
         env.storage()
@@ -1037,12 +1097,39 @@ impl IdentityContract {
             return Err(Error::OrganizationNotFound);
         }
 
-        // Verifier must be an authorized courier (Rider), the recipient who
-        // received the delivery, or the org that dispatched it. This prevents
-        // an arbitrary, unrelated address from fabricating a delivery proof.
+        // The delivery must match the real request: the recipient must be the
+        // requesting hospital, the org must be the one that fulfilled it, and
+        // the delivered quantity cannot exceed what was requested. Fails closed
+        // if the requests contract is unavailable.
+        let requests_contract: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::RequestsContract)
+            .ok_or(Error::Unauthorized)?;
+
+        let requests_client = request_client::RequestContractClient::new(&env, &requests_contract);
+        let request = requests_client
+            .try_get_request(&request_id)
+            .map_err(|_| Error::Unauthorized)?
+            .map_err(|_| Error::Unauthorized)?;
+
+        if request.hospital_id != recipient {
+            return Err(Error::Unauthorized);
+        }
+
+        if request.fulfilled_by != Some(org_id.clone()) {
+            return Err(Error::Unauthorized);
+        }
+
+        if quantity_delivered > request.quantity_ml {
+            return Err(Error::InvalidDeliveryProof);
+        }
+
+        // Verifier must be an authorized courier (Rider) or the recipient who
+        // received the delivery. The org that fulfilled the request is not an
+        // authorized verifier of its own delivery.
         let is_authorized = Self::has_role_internal(env.clone(), verifier.clone(), Role::Rider)
-            || verifier == recipient
-            || verifier == org_id;
+            || verifier == recipient;
         if !is_authorized {
             return Err(Error::Unauthorized);
         }

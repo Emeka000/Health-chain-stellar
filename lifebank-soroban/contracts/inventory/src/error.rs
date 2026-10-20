@@ -18,6 +18,7 @@ pub enum ContractError {
     InvalidTimestamp = 115,
     InvalidQuantity = 116,
     InvalidExpiration = 117,
+    BatchTooLarge = 118,
 
     // State errors (120-129)
     AlreadyExists = 120,
@@ -40,6 +41,7 @@ pub enum ContractError {
     ReservationNotFound = 150,
     ReservationExpired = 151,
     NotReservationOwner = 152,
+    ReservationNotExpired = 153,
 
     // Circuit breaker (160)
     ContractPaused = 160,
