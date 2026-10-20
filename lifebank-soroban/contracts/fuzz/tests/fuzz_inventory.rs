@@ -72,7 +72,7 @@ proptest! {
         let mut unit_ids = SorobanVec::new(&env);
         unit_ids.push_back(unit_id);
 
-        let result = client.try_reserve_blood(&bank, &unit_ids, &1u64, &duration);
+        let result = client.try_reserve_blood(&bank, &bank, &unit_ids, &1u64, &duration);
 
         // Should either succeed or return a valid error, never panic
         match result {
@@ -160,7 +160,7 @@ proptest! {
             let mut batch = SorobanVec::new(&env);
             batch.push_back((all_unit_ids, 1u64, 3600u64));
 
-            let result = client.try_batch_reserve_blood(&bank, &batch);
+            let result = client.try_batch_reserve_blood(&bank, &bank, &batch);
 
             // Should handle gracefully without panic
             match result {
@@ -205,7 +205,7 @@ proptest! {
         let mut unit_ids = SorobanVec::new(&env);
         unit_ids.push_back(unit_id);
 
-        let result = client.try_reserve_blood(&bank, &unit_ids, &1u64, &3600u64);
+        let result = client.try_reserve_blood(&bank, &bank, &unit_ids, &1u64, &3600u64);
 
         // MUST fail with BloodUnitExpired error
         assert!(result.is_err(), "Expired unit was allowed to be reserved!");
@@ -240,7 +240,7 @@ mod unit_tests {
         // The current contract allows zero-duration reservations; keep the fuzz
         // check aligned with the implemented behavior and only assert that it
         // does not panic.
-        let result = client.try_reserve_blood(&bank, &unit_ids, &1u64, &0u64);
+        let result = client.try_reserve_blood(&bank, &bank, &unit_ids, &1u64, &0u64);
         assert!(result.is_ok() || result.is_err());
     }
 

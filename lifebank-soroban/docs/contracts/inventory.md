@@ -161,13 +161,14 @@ Updates multiple units to the same status atomically. Validates all units first;
 pub fn reserve_blood(
     env: Env,
     requester: Address,
+    hospital_id: Address,
     unit_ids: Vec<u64>,
     request_id: u64,
     duration_seconds: u64,
 ) -> Result<u64, ContractError>
 ```
 
-Creates a time-bounded reservation for a set of blood units. `requester` must be an authorized bank and must own all specified units.
+Creates a time-bounded reservation for a set of blood units. `requester` must be an authorized bank and must own all specified units. `hospital_id` is the recipient hospital recorded in the registry when a registry is configured.
 
 - All units must be `Available` and not expired.
 - Transitions all units to `Reserved`.
@@ -193,6 +194,7 @@ Releases a reservation, returning all `Reserved` units to `Available`. Can be ca
 pub fn batch_reserve_blood(
     env: Env,
     requester: Address,
+    hospital_id: Address,
     batch: Vec<(Vec<u64>, u64, u64)>,
 ) -> Result<Vec<u64>, ContractError>
 ```

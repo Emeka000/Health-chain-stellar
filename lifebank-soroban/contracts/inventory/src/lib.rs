@@ -41,6 +41,7 @@ mod registry_client {
         let func = Symbol::new(env, "inventory_reserve_unit");
         let args: Vec<Val> = vec![
             &env,
+            env.current_contract_address().into_val(env),
             bank_id.clone().into_val(env),
             unit_id.into_val(env),
             hospital_id.clone().into_val(env),
@@ -55,7 +56,12 @@ mod registry_client {
     /// Returns `true` on success, `false` if the registry call failed.
     pub fn release_unit(env: &Env, registry_id: &Address, bank_id: &Address, unit_id: u64) -> bool {
         let func = Symbol::new(env, "inventory_release_unit");
-        let args: Vec<Val> = vec![&env, bank_id.clone().into_val(env), unit_id.into_val(env)];
+        let args: Vec<Val> = vec![
+            &env,
+            env.current_contract_address().into_val(env),
+            bank_id.clone().into_val(env),
+            unit_id.into_val(env),
+        ];
         matches!(
             env.try_invoke_contract::<(), InvokeError>(registry_id, &func, args),
             Ok(Ok(()))
@@ -878,7 +884,8 @@ impl InventoryContract {
     /// registry via a cross-contract call.
     ///
     /// # Arguments
-    /// * `requester`        - Hospital address (must be authorized blood bank)
+    /// * `requester`        - Blood bank address (must be authorized blood bank)
+    /// * `hospital_id`      - Hospital the units are reserved for (recorded in the registry)
     /// * `unit_ids`         - IDs of blood units to reserve
     /// * `request_id`       - Caller-supplied correlation ID
     /// * `duration_seconds` - How long the reservation is valid
@@ -893,12 +900,20 @@ impl InventoryContract {
     pub fn reserve_blood(
         env: Env,
         requester: Address,
+        hospital_id: Address,
         unit_ids: Vec<u64>,
         request_id: u64,
         duration_seconds: u64,
     ) -> Result<u64, ContractError> {
         requester.require_auth();
-        Self::reserve_blood_after_auth(env, requester, unit_ids, request_id, duration_seconds)
+        Self::reserve_blood_after_auth(
+            env,
+            requester,
+            hospital_id,
+            unit_ids,
+            request_id,
+            duration_seconds,
+        )
     }
 
     /// Body of `reserve_blood` once `requester` has authorized. Split out so
@@ -907,6 +922,7 @@ impl InventoryContract {
     fn reserve_blood_after_auth(
         env: Env,
         requester: Address,
+        hospital_id: Address,
         unit_ids: Vec<u64>,
         request_id: u64,
         duration_seconds: u64,
@@ -996,11 +1012,9 @@ impl InventoryContract {
         if let Some(ref reg) = registry_id {
             for i in 0..unit_ids.len() {
                 let unit_id = unit_ids.get(i).ok_or(ContractError::NotFound)?;
-                // We use the requester as bank_id since they own the unit
-                // (already verified above). The hospital address is not part
-                // of this contract's reservation model, so we pass the
-                // requester as a placeholder hospital identifier.
-                if !registry_client::reserve_unit(&env, reg, &requester, unit_id, &requester) {
+                // The requester is the bank that owns the unit (verified above);
+                // hospital_id is the recipient the registry indexes the unit under.
+                if !registry_client::reserve_unit(&env, reg, &requester, unit_id, &hospital_id) {
                     return Err(ContractError::RegistryCallFailed);
                 }
             }
@@ -1202,6 +1216,7 @@ impl InventoryContract {
     pub fn batch_reserve_blood(
         env: Env,
         requester: Address,
+        hospital_id: Address,
         batch: Vec<(Vec<u64>, u64, u64)>,
     ) -> Result<Vec<u64>, ContractError> {
         requester.require_auth();
@@ -1221,6 +1236,7 @@ impl InventoryContract {
             let res_id = Self::reserve_blood_after_auth(
                 env.clone(),
                 requester.clone(),
+                hospital_id.clone(),
                 unit_ids,
                 request_id,
                 duration_seconds,

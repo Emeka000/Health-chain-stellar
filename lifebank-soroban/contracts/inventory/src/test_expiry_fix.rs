@@ -42,7 +42,7 @@ mod expiry_tests {
         let mut unit_ids = soroban_sdk::Vec::new(&env);
         unit_ids.push_back(unit_id);
 
-        let result = client.try_reserve_blood(&bank, &unit_ids, &1u64, &3600u64);
+        let result = client.try_reserve_blood(&bank, &bank, &unit_ids, &1u64, &3600u64);
 
         // MUST fail with BloodUnitExpired error
         assert!(
@@ -73,7 +73,7 @@ mod expiry_tests {
         let mut unit_ids = soroban_sdk::Vec::new(&env);
         unit_ids.push_back(unit_id);
 
-        let result = client.try_reserve_blood(&bank, &unit_ids, &1u64, &7200u64);
+        let result = client.try_reserve_blood(&bank, &bank, &unit_ids, &1u64, &7200u64);
 
         // Should succeed
         assert!(result.is_ok(), "Fresh blood unit could not be reserved");
@@ -117,7 +117,7 @@ mod expiry_tests {
         const MAX_DURATION_SECS: u64 = 86_400 * 7;
         const LEDGER_CLOSE_SECS: u64 = 5;
 
-        let reservation_id = client.reserve_blood(&bank, &unit_ids, &1u64, &MAX_DURATION_SECS);
+        let reservation_id = client.reserve_blood(&bank, &bank, &unit_ids, &1u64, &MAX_DURATION_SECS);
 
         // Advance ledger to just before the TTL would expire
         // (duration_ledgers - 1, ignoring the small buffer which only helps us).
@@ -171,7 +171,7 @@ mod expiry_tests {
         unit_ids.push_back(unit_id);
 
         // 1-second duration — degenerate case
-        let reservation_id = client.reserve_blood(&bank, &unit_ids, &42u64, &1u64);
+        let reservation_id = client.reserve_blood(&bank, &bank, &unit_ids, &42u64, &1u64);
 
         // Must be immediately readable without advancing the ledger at all.
         let reservation = client.get_reservation(&reservation_id);
@@ -211,7 +211,7 @@ mod expiry_tests {
         let mut unit_ids = soroban_sdk::Vec::new(&env);
         unit_ids.push_back(unit_id);
 
-        let result = client.try_reserve_blood(&bank, &unit_ids, &1u64, &1u64);
+        let result = client.try_reserve_blood(&bank, &bank, &unit_ids, &1u64, &1u64);
         assert!(
             result.is_ok(),
             "Unit must be reservable 1 second before expiry"
@@ -245,7 +245,7 @@ mod expiry_tests {
         let mut unit_ids = soroban_sdk::Vec::new(&env);
         unit_ids.push_back(unit_id);
 
-        let result = client.try_reserve_blood(&bank, &unit_ids, &1u64, &1u64);
+        let result = client.try_reserve_blood(&bank, &bank, &unit_ids, &1u64, &1u64);
         assert!(
             result.is_err(),
             "Unit must be rejected at expiration_timestamp"

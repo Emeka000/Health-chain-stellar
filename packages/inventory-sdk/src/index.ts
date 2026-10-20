@@ -109,6 +109,8 @@ export interface UpdateStatusParams {
 
 export interface ReserveBloodParams {
   requester: string;
+  /** Hospital the units are reserved for. */
+  hospital: string;
   unitIds: bigint[];
   requestId: bigint;
   /** How long the reservation is valid, in seconds. */
@@ -205,7 +207,7 @@ export class Client extends BaseContractClient {
   /**
    * Reserve one or more blood units for a hospital requester.
    *
-   * Mirrors: `reserve_blood(env, requester, unit_ids, request_id, duration_seconds)`
+   * Mirrors: `reserve_blood(env, requester, hospital_id, unit_ids, request_id, duration_seconds)`
    */
   async reserve_blood(
     params: ReserveBloodParams,
@@ -215,6 +217,7 @@ export class Client extends BaseContractClient {
     );
     const args: xdr.ScVal[] = [
       addressToScVal(params.requester),
+      addressToScVal(params.hospital),
       unitIdsVec,
       toScVal(params.requestId),
       toScVal(params.durationSeconds),
