@@ -13,7 +13,7 @@ import { exportToExcel, exportToPdf } from './export.helper';
 
 @ApiTags('Organizations')
 @ApiBearerAuth()
-@Controller('api/v1/organization/stats')
+@Controller('organization/stats')
 export class OrgStatsController {
   constructor(private readonly statsService: OrgStatsService) {}
 

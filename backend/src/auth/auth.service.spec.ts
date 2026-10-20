@@ -861,7 +861,7 @@ describe('AuthService', () => {
         emailVerified: true,
       }) as UserEntity;
 
-    it('stores ip, userAgent and geoHint in Redis session hash', async () => {
+    it('stores server-observed IP and userAgent but not client geoHint', async () => {
       const user = await makeUser();
       (userRepository.findOne as jest.Mock).mockResolvedValue(user);
       (userRepository.save as jest.Mock).mockResolvedValue(user);
@@ -879,9 +879,9 @@ describe('AuthService', () => {
         expect.objectContaining({
           ipAddress: '1.2.3.4',
           userAgent: 'TestAgent/1.0',
-          geoHint: 'Lagos, NG',
         }),
       );
+      expect(mockRedis.hset.mock.calls[0][1]).not.toHaveProperty('geoHint');
     });
 
     it('omits metadata keys when not provided', async () => {

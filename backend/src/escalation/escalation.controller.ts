@@ -14,7 +14,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 @UseGuards(JwtAuthGuard)
 @ApiTags('Escalations')
 @ApiBearerAuth()
-@Controller('api/v1/escalations')
+@Controller('escalations')
 export class EscalationController {
   constructor(private readonly escalationService: EscalationService) {}
 

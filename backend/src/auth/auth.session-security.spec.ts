@@ -295,7 +295,6 @@ describe('SessionRiskService – device mismatch & geo-velocity (#639)', () => {
     sessionRepo.find.mockResolvedValue([]);
     const result = await riskService.scoreSession('u1', 's1', {
       userAgent: 'Mozilla/5.0 Chrome/120',
-      geoHint: '37.77,-122.41',
     });
     expect(result.level).toBe('low');
     expect(result.score).toBe(0);
@@ -322,23 +321,21 @@ describe('SessionRiskService – device mismatch & geo-velocity (#639)', () => {
     expect(result.score).toBeGreaterThanOrEqual(25);
   });
 
-  it('flags geo-velocity for impossible travel', async () => {
-    const oneHourAgo = new Date(Date.now() - 3_600_000);
+  it('flags rapid IP changes without a client geo hint', async () => {
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60_000);
     sessionRepo.find.mockResolvedValue([
       {
         sessionId: 's0',
         userAgent: 'Chrome',
-        // London
-        geoHint: '51.50,-0.12',
-        createdAt: oneHourAgo,
+        ipAddress: '198.51.100.10',
+        createdAt: fiveMinutesAgo,
         isActive: true,
       } as AuthSessionEntity,
     ]);
 
     const result = await riskService.scoreSession('u1', 's1', {
+      ipAddress: '203.0.113.20',
       userAgent: 'Chrome',
-      // New York — ~5,500 km away, 1 hour later → ~5500 km/h > 900 km/h threshold
-      geoHint: '40.71,-74.00',
       createdAt: new Date(),
     });
 
@@ -347,13 +344,13 @@ describe('SessionRiskService – device mismatch & geo-velocity (#639)', () => {
     expect(result.requiresStepUp).toBe(true);
   });
 
-  it('does NOT flag geo-velocity for plausible travel', async () => {
+  it('does not flag an IP change outside the rapid-change window', async () => {
     const tenHoursAgo = new Date(Date.now() - 10 * 3_600_000);
     sessionRepo.find.mockResolvedValue([
       {
         sessionId: 's0',
         userAgent: 'Chrome',
-        geoHint: '51.50,-0.12', // London
+        ipAddress: '198.51.100.10',
         createdAt: tenHoursAgo,
         isActive: true,
       } as AuthSessionEntity,
@@ -361,7 +358,7 @@ describe('SessionRiskService – device mismatch & geo-velocity (#639)', () => {
 
     const result = await riskService.scoreSession('u1', 's1', {
       userAgent: 'Chrome',
-      geoHint: '48.85,2.35', // Paris — ~340 km, 10 hours → ~34 km/h
+      ipAddress: '203.0.113.20',
       createdAt: new Date(),
     });
 
@@ -376,13 +373,13 @@ describe('SessionRiskService – device mismatch & geo-velocity (#639)', () => {
   });
 
   it('returns CRITICAL level when multiple signals fire', async () => {
-    const oneHourAgo = new Date(Date.now() - 3_600_000);
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60_000);
     sessionRepo.find.mockResolvedValue([
       {
         sessionId: 's0',
         userAgent: 'Mozilla/5.0 Chrome Desktop',
-        geoHint: '51.50,-0.12',
-        createdAt: oneHourAgo,
+        ipAddress: '198.51.100.10',
+        createdAt: fiveMinutesAgo,
         isActive: true,
       } as AuthSessionEntity,
     ]);
@@ -391,7 +388,7 @@ describe('SessionRiskService – device mismatch & geo-velocity (#639)', () => {
       'u1', 's1',
       {
         userAgent: 'Mozilla/5.0 Android Mobile',
-        geoHint: '40.71,-74.00',
+        ipAddress: '203.0.113.20',
         createdAt: new Date(),
       },
       3, // token abuse

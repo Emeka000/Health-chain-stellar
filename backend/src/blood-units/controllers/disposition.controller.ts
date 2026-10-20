@@ -69,7 +69,7 @@ class RecordDispositionDto {
 
 @ApiTags('Blood Units')
 @ApiBearerAuth()
-@Controller('api/v1/dispositions')
+@Controller('dispositions')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class DispositionController {
   constructor(private readonly dispositionService: DispositionService) {}

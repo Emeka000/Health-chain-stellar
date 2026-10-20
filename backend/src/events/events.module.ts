@@ -8,6 +8,10 @@ import { DeadLetterController } from './dead-letter.controller';
 import { EventSchemaRegistryService } from './event-schema-registry.service';
 import { CanonicalEventEmitterService } from './canonical-event-emitter.service';
 import { EventSystemInitializerService } from './event-system-initializer.service';
+import { OutboxController } from './outbox.controller';
+import { OutboxDeadLetterEntity } from './outbox-dead-letter.entity';
+import { OutboxEventEntity } from './outbox-event.entity';
+import { OutboxService } from './outbox.service';
 
 /**
  * Events Module
@@ -21,7 +25,11 @@ import { EventSystemInitializerService } from './event-system-initializer.servic
 @Global()
 @Module({
   imports: [
-    TypeOrmModule.forFeature([DeadLetterEventEntity]),
+    TypeOrmModule.forFeature([
+      DeadLetterEventEntity,
+      OutboxEventEntity,
+      OutboxDeadLetterEntity,
+    ]),
     EventEmitterModule.forRoot({
       wildcard: true,
       delimiter: '.',
@@ -29,17 +37,19 @@ import { EventSystemInitializerService } from './event-system-initializer.servic
       verboseMemoryLeak: true,
     }),
   ],
-  controllers: [DeadLetterController],
+  controllers: [DeadLetterController, OutboxController],
   providers: [
     DeadLetterService,
     EventSchemaRegistryService,
     CanonicalEventEmitterService,
     EventSystemInitializerService,
+    OutboxService,
   ],
   exports: [
     DeadLetterService,
     EventSchemaRegistryService,
     CanonicalEventEmitterService,
+    OutboxService,
   ],
 })
 export class EventsModule { }

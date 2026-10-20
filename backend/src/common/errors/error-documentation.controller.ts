@@ -11,7 +11,7 @@ import { ErrorDomain, ERROR_CODE_REGISTRY } from './error-taxonomy';
  */
 @ApiTags('Errors')
 @ApiBearerAuth()
-@Controller('api/v1/errors')
+@Controller('errors')
 export class ErrorDocumentationController {
     /**
      * Get all error codes

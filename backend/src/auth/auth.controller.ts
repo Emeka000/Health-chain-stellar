@@ -178,9 +178,8 @@ export class AuthController {
   })
   async login(@Body() loginDto: LoginDto, @Request() req: any) {
     const meta = {
-      ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? null,
+      ipAddress: req.ip ?? req.socket?.remoteAddress ?? null,
       userAgent: (req.headers['user-agent'] as string) ?? null,
-      geoHint: (req.headers['x-geo-hint'] as string) ?? null,
     };
     return this.authService.login(loginDto, meta);
   }
@@ -535,9 +534,8 @@ export class AuthController {
   })
   async exchangeMfaToken(@Body() dto: MfaExchangeDto, @Request() req: any) {
     const meta = {
-      ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? null,
+      ipAddress: req.ip ?? req.socket?.remoteAddress ?? null,
       userAgent: (req.headers['user-agent'] as string) ?? null,
-      geoHint: (req.headers['x-geo-hint'] as string) ?? null,
     };
     return this.authService.exchangeMfaToken(dto.mfaToken, meta);
   }

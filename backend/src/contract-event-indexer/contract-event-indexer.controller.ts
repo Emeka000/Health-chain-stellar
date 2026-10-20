@@ -24,7 +24,7 @@ import { PoisonEventStatus } from './entities/poison-event.entity';
 
 @ApiTags('Contract Events')
 @ApiBearerAuth()
-@Controller('api/v1/contract-events')
+@Controller('contract-events')
 export class ContractEventIndexerController {
   constructor(private readonly service: ContractEventIndexerService) {}
 

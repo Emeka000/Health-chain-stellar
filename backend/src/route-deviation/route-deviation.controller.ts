@@ -14,7 +14,7 @@ import { DeviationSeverity } from './entities/route-deviation-incident.entity';
 
 @ApiTags('Route Deviation')
 @ApiBearerAuth()
-@Controller('api/v1/route-deviation')
+@Controller('route-deviation')
 export class RouteDeviationController {
   constructor(private readonly service: RouteDeviationService) { }
 

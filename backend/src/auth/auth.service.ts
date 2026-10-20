@@ -178,7 +178,7 @@ export class AuthService {
 
     const { accessToken, refreshToken, refreshExpiresInSeconds } =
       this.issueTokens(payload);
-    await this.createSession(user, sessionId, refreshExpiresInSeconds);
+    await this.createSession(user, sessionId, refreshExpiresInSeconds, meta);
     await this.enforceConcurrentSessionLimit(user.id);
 
     // Score session risk and log if elevated
@@ -186,7 +186,6 @@ export class AuthService {
       .scoreSession(user.id, sessionId, {
         ipAddress: meta.ipAddress,
         userAgent: meta.userAgent,
-        geoHint: meta.geoHint,
         createdAt: new Date(),
       })
       .catch(() => null);
@@ -289,7 +288,6 @@ export class AuthService {
       .scoreSession(user.id, sessionId, {
         ipAddress: meta.ipAddress,
         userAgent: meta.userAgent,
-        geoHint: meta.geoHint,
         createdAt: new Date(),
       })
       .catch(() => null);
@@ -582,7 +580,6 @@ export class AuthService {
           .scoreSession(userId, session.sessionId ?? '', {
             ipAddress: session.ipAddress,
             userAgent: session.userAgent,
-            geoHint: session.geoHint,
           })
           .catch(() => null);
         return {
@@ -612,7 +609,6 @@ export class AuthService {
     const risk = await this.sessionRiskService.scoreSession(userId, sessionId, {
       ipAddress: session.ipAddress,
       userAgent: session.userAgent,
-      geoHint: session.geoHint,
     });
 
     const levelOrder = [
@@ -958,7 +954,6 @@ export class AuthService {
       expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
       ...(meta.ipAddress && { ipAddress: meta.ipAddress }),
       ...(meta.userAgent && { userAgent: meta.userAgent }),
-      ...(meta.geoHint && { geoHint: meta.geoHint }),
     };
 
     await this.circuitBreaker.execute(
@@ -987,7 +982,6 @@ export class AuthService {
         expiresAt: new Date(Date.now() + ttlSeconds * 1000),
         ipAddress: meta.ipAddress ?? undefined,
         userAgent: meta.userAgent ?? undefined,
-        geoHint: meta.geoHint ?? undefined,
       });
     } catch (error: unknown) {
       this.logger.warn(

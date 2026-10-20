@@ -23,38 +23,11 @@ export interface SessionRiskResult {
   requiresStepUp: boolean;
 }
 
-/** Haversine distance in km between two lat/lon pairs */
-function haversineKm(
-  lat1: number, lon1: number,
-  lat2: number, lon2: number,
-): number {
-  const R = 6371;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-/** Parse a rough lat/lon from a geo-hint string like "37.77,-122.41" */
-function parseGeoHint(hint: string | null): [number, number] | null {
-  if (!hint) return null;
-  const parts = hint.split(',');
-  if (parts.length < 2) return null;
-  const lat = parseFloat(parts[0]);
-  const lon = parseFloat(parts[1]);
-  return isNaN(lat) || isNaN(lon) ? null : [lat, lon];
-}
-
 @Injectable()
 export class SessionRiskService {
   private readonly logger = new Logger(SessionRiskService.name);
 
-  /** Max km/h considered physically possible between two sessions */
-  private readonly MAX_TRAVEL_SPEED_KMH = 900; // commercial flight
+  private readonly RAPID_IP_CHANGE_WINDOW_MS = 10 * 60 * 1000;
 
   constructor(
     @InjectRepository(AuthSessionEntity)
@@ -71,7 +44,6 @@ export class SessionRiskService {
     currentMeta: {
       ipAddress?: string | null;
       userAgent?: string | null;
-      geoHint?: string | null;
       createdAt?: Date;
     },
     refreshAbuseCount = 0,
@@ -114,36 +86,30 @@ export class SessionRiskService {
   }
 
   private detectGeoVelocity(
-    current: { geoHint?: string | null; createdAt?: Date },
+    current: { ipAddress?: string | null; createdAt?: Date },
     others: AuthSessionEntity[],
   ): boolean {
-    const currentCoords = parseGeoHint(current.geoHint ?? null);
-    if (!currentCoords) return false;
-
     const now = current.createdAt ?? new Date();
+    const currentIp = this.normalizeIpAddress(current.ipAddress);
 
     for (const session of others) {
-      const coords = parseGeoHint(session.geoHint);
-      if (!coords) continue;
+      const elapsedMs = Math.abs(now.getTime() - session.createdAt.getTime());
+      if (elapsedMs > this.RAPID_IP_CHANGE_WINDOW_MS) continue;
 
-      const distKm = haversineKm(
-        currentCoords[0], currentCoords[1],
-        coords[0], coords[1],
-      );
-      const elapsedHours =
-        Math.abs(now.getTime() - session.createdAt.getTime()) / 3_600_000;
-
-      if (elapsedHours < 0.01) continue; // same-second sessions, skip
-
-      const speedKmh = distKm / elapsedHours;
-      if (speedKmh > this.MAX_TRAVEL_SPEED_KMH) {
+      const previousIp = this.normalizeIpAddress(session.ipAddress);
+      if (!currentIp || !previousIp || currentIp !== previousIp) {
         this.logger.warn(
-          `Geo-velocity anomaly: ${distKm.toFixed(0)} km in ${elapsedHours.toFixed(2)} h (${speedKmh.toFixed(0)} km/h)`,
+          'Rapid or unavailable IP change between active sessions',
         );
         return true;
       }
     }
     return false;
+  }
+
+  private normalizeIpAddress(ipAddress?: string | null): string | null {
+    const normalized = ipAddress?.trim().replace(/^::ffff:/i, '').toLowerCase();
+    return normalized || null;
   }
 
   private detectDeviceMismatch(

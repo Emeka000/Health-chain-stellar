@@ -37,9 +37,9 @@ export class EnvironmentVariables {
   @IsString()
   API_PREFIX: string = 'api/v1';
 
-  @IsOptional()
   @IsString()
-  CORS_ORIGIN: string = '*';
+  @IsNotEmpty({ message: 'CORS_ORIGIN is required' })
+  CORS_ORIGIN: string;
 
   @IsOptional()
   @Transform(({ value }) => value === 'true' || value === true)

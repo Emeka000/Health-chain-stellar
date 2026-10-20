@@ -1,12 +1,15 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
+import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
+import { Permission } from '../auth/enums/permission.enum';
 import { DeadLetterStatus } from './outbox-dead-letter.entity';
 import { OutboxService } from './outbox.service';
 
 @ApiTags('Events')
 @ApiBearerAuth()
-@Controller('api/v1/outbox')
+@RequirePermissions(Permission.ADMIN_ACCESS)
+@Controller('outbox')
 export class OutboxController {
   constructor(private readonly outboxService: OutboxService) {}
 
