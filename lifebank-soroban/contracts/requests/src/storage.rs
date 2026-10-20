@@ -102,11 +102,28 @@ pub fn revoke_hospital(env: &Env, hospital: &Address) {
         .remove(&DataKey::AuthorizedHospital(hospital.clone()));
 }
 
+/// Extend a persistent authorization entry when it exists. Checks run on every
+/// request, so bumping here keeps active actors from archiving after ~60 days.
+/// Skips missing keys because `extend_ttl` traps on an absent entry.
+fn bump_authorization_ttl(env: &Env, key: &DataKey) {
+    if env.storage().persistent().has(key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+}
+
 pub fn is_hospital_authorized(env: &Env, hospital: &Address) -> bool {
-    env.storage()
+    let key = DataKey::AuthorizedHospital(hospital.clone());
+    let authorized = env
+        .storage()
         .persistent()
-        .get::<DataKey, bool>(&DataKey::AuthorizedHospital(hospital.clone()))
-        .unwrap_or(false)
+        .get::<DataKey, bool>(&key)
+        .unwrap_or(false);
+    if authorized {
+        bump_authorization_ttl(env, &key);
+    }
+    authorized
 }
 
 pub fn authorize_blood_bank(env: &Env, blood_bank: &Address) {
@@ -124,10 +141,16 @@ pub fn revoke_blood_bank(env: &Env, blood_bank: &Address) {
 }
 
 pub fn is_blood_bank_authorized(env: &Env, blood_bank: &Address) -> bool {
-    env.storage()
+    let key = DataKey::AuthorizedBloodBank(blood_bank.clone());
+    let authorized = env
+        .storage()
         .persistent()
-        .get::<DataKey, bool>(&DataKey::AuthorizedBloodBank(blood_bank.clone()))
-        .unwrap_or(false)
+        .get::<DataKey, bool>(&key)
+        .unwrap_or(false);
+    if authorized {
+        bump_authorization_ttl(env, &key);
+    }
+    authorized
 }
 
 pub fn authorize_rider(env: &Env, rider: &Address) {
@@ -145,10 +168,16 @@ pub fn revoke_rider(env: &Env, rider: &Address) {
 }
 
 pub fn is_rider_authorized(env: &Env, rider: &Address) -> bool {
-    env.storage()
+    let key = DataKey::AuthorizedRider(rider.clone());
+    let authorized = env
+        .storage()
         .persistent()
-        .get::<DataKey, bool>(&DataKey::AuthorizedRider(rider.clone()))
-        .unwrap_or(false)
+        .get::<DataKey, bool>(&key)
+        .unwrap_or(false);
+    if authorized {
+        bump_authorization_ttl(env, &key);
+    }
+    authorized
 }
 
 pub fn set_request_rider(env: &Env, request_id: u64, rider: &Address) {
