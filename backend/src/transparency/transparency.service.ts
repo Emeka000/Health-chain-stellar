@@ -8,6 +8,7 @@ import { OrderStatus } from '../orders/enums/order-status.enum';
 import { OrganizationEntity } from '../organizations/entities/organization.entity';
 import { OrganizationVerificationStatus } from '../organizations/enums/organization-verification-status.enum';
 
+import { TransparencyPublicationEntity } from './entities/transparency-publication.entity';
 import { ProvenanceBuilder, ProvenanceMetadata } from './provenance/provenance.builder';
 import { LOW_COUNT_THRESHOLD, RedactionEngine } from './redaction/redaction.engine';
 
@@ -64,6 +65,8 @@ export class TransparencyService {
     private readonly orgRepo: Repository<OrganizationEntity>,
     @InjectRepository(BloodUnitEntity)
     private readonly bloodUnitRepo: Repository<BloodUnitEntity>,
+    @InjectRepository(TransparencyPublicationEntity)
+    private readonly publicationRepo: Repository<TransparencyPublicationEntity>,
   ) { }
 
   // ── Public endpoint ───────────────────────────────────────────────────────
@@ -82,6 +85,29 @@ export class TransparencyService {
    * This is the canonical transparency endpoint.
    */
   async getPublicMetricsWithProvenance(): Promise<TransparencyPublication> {
+    const period = new Date().toISOString().slice(0, 10);
+    const existing = await this.publicationRepo.findOne({ where: { period } });
+    if (existing) return this.usePublication(existing.artifact);
+
+    const publication = await this.generatePublicMetricsWithProvenance();
+    try {
+      await this.publicationRepo.insert({ period, artifact: publication });
+      return this.usePublication(publication);
+    } catch (error) {
+      // Concurrent first requests may race on the period's unique key.
+      const winner = await this.publicationRepo.findOne({ where: { period } });
+      if (winner) return this.usePublication(winner.artifact);
+      throw error;
+    }
+  }
+
+  private usePublication(artifact: Record<string, unknown>): TransparencyPublication {
+    const publication = artifact as unknown as TransparencyPublication;
+    this.lastProvenance = publication.provenance;
+    return publication;
+  }
+
+  private async generatePublicMetricsWithProvenance(): Promise<TransparencyPublication> {
     const provenance = new ProvenanceBuilder({
       schemaVersion: '1.0.0',
       lowCountThreshold: LOW_COUNT_THRESHOLD,
@@ -167,9 +193,6 @@ export class TransparencyService {
 
     const data = redactedPayload as PublicMetrics;
     const provenanceMeta = provenance.build(data);
-
-    // Cache for privacy review
-    this.lastProvenance = provenanceMeta;
 
     // Pre-publication PHI leak check
     const leakCheck = RedactionEngine.assertNoPHILeakage(JSON.stringify(data));

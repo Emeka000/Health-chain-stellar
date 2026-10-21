@@ -34,7 +34,8 @@ describe('ActivityLoggingInterceptor', () => {
     const context = createHttpContext({
       method: 'POST',
       route: { path: '/login' },
-      headers: { 'user-agent': 'jest', 'x-forwarded-for': '10.0.0.1' },
+      headers: { 'user-agent': 'jest', 'x-forwarded-for': '203.0.113.99' },
+      ip: '10.0.0.1',
       user: { id: 'user-1' },
     });
 
@@ -61,7 +62,8 @@ describe('ActivityLoggingInterceptor', () => {
     const context = createHttpContext({
       method: 'POST',
       route: { path: '/login' },
-      headers: { 'user-agent': 'jest', 'x-forwarded-for': '10.0.0.1' },
+      headers: { 'user-agent': 'jest', 'x-forwarded-for': '203.0.113.99' },
+      ip: '10.0.0.1',
     });
 
     interceptor

@@ -26,6 +26,7 @@ import { Throttle } from '@nestjs/throttler';
 
 import { RateLimit } from '../common/decorators/rate-limit.decorator';
 import { IdempotencyInterceptor } from '../common/idempotency/idempotency.interceptor';
+import { getClientIp } from '../common/utils/client-ip.util';
 
 import { AuthService } from './auth.service';
 import { PasswordResetService } from './password-reset.service';
@@ -178,7 +179,7 @@ export class AuthController {
   })
   async login(@Body() loginDto: LoginDto, @Request() req: any) {
     const meta = {
-      ipAddress: req.ip ?? req.socket?.remoteAddress ?? null,
+      ipAddress: getClientIp(req),
       userAgent: (req.headers['user-agent'] as string) ?? null,
     };
     return this.authService.login(loginDto, meta);
@@ -534,7 +535,7 @@ export class AuthController {
   })
   async exchangeMfaToken(@Body() dto: MfaExchangeDto, @Request() req: any) {
     const meta = {
-      ipAddress: req.ip ?? req.socket?.remoteAddress ?? null,
+      ipAddress: getClientIp(req),
       userAgent: (req.headers['user-agent'] as string) ?? null,
     };
     return this.authService.exchangeMfaToken(dto.mfaToken, meta);

@@ -1,4 +1,5 @@
 import { ExecutionContext } from '@nestjs/common';
+import { getClientIp } from '../common/utils/client-ip.util';
 
 /**
  * Anonymous clients are tracked by IP; authenticated clients by user id
@@ -12,10 +13,6 @@ export function throttleGetTracker(
   if (user?.id) {
     return Promise.resolve(`user:${user.id}`);
   }
-  const ip =
-    req.ip ??
-    req.socket?.remoteAddress ??
-    (Array.isArray(req.ips) && req.ips.length > 0 ? req.ips[0] : undefined) ??
-    'unknown';
+  const ip = getClientIp(req) ?? 'unknown';
   return Promise.resolve(`ip:${ip}`);
 }

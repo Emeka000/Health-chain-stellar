@@ -15,7 +15,7 @@ the permission string.
 
 ### `admin`
 
-- `admin:health:read`
+- `admin:access` (`ADMIN_ACCESS`, including detailed health access)
 - `blood-unit:allocate` (`ALLOCATE_BLOOD_UNITS`)
 - `rider:assign` (`ASSIGN_RIDER`)
 - `incident-review:create` (`CREATE_INCIDENT_REVIEW`)

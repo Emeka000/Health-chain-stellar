@@ -7,7 +7,7 @@ This runbook covers production failure modes for the Health-Chain Stellar platfo
 ## 1. Backend Down
 
 ### Detection signals
-- `/health` endpoint returns non-2xx or times out.
+- `/health/ready` returns non-2xx or times out; `/health/live` indicates whether the process is responding.
 - Frontend shows "Failed to fetch" errors across all pages.
 - Uptime monitor / Grafana dashboard shows HTTP 5xx spike.
 
@@ -19,7 +19,7 @@ All API-dependent features unavailable: orders, dispatch, donor flows, admin con
 2. Read recent logs: `pm2 logs health-chain-api --lines 200` or `journalctl -u health-chain-api -n 200`.
 3. If OOM or crash loop: `pm2 restart health-chain-api`.
 4. If the latest deploy is suspect: roll back with `git checkout <previous-tag> && npm run build && pm2 restart`.
-5. Confirm recovery by hitting `GET /health` — expect `{ "status": "ok" }`.
+5. Confirm process liveness with `GET /health/live` and dependency readiness with `GET /health/ready` — both should return HTTP 200 after recovery.
 
 ---
 
@@ -137,7 +137,8 @@ A hospital's blood request is not fulfilled; a rider is not dispatched. This is 
 
 ## Reference Links
 
-- Health endpoint: `GET <API_BASE_URL>/health`
+- Liveness endpoint: `GET <API_BASE_URL>/health/live`
+- Readiness endpoint: `GET <API_BASE_URL>/health/ready`
 - Grafana dashboards: _add URL once provisioned_
 - Bull Board (queue UI): `<API_BASE_URL>/admin/queues`
 - Stellar network status: https://status.stellar.org

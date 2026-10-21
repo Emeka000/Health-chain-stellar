@@ -1,3 +1,5 @@
+import { UserRole } from '../auth/enums/user-role.enum';
+
 /**
  * Per-role throttle limits (requests per minute).
  *
@@ -24,14 +26,17 @@ export interface RoleThrottleLimit {
   label: string;
 }
 
-export const ROLE_THROTTLE_LIMITS: Record<string, RoleThrottleLimit> = {
-  ADMIN: { limit: Number.MAX_SAFE_INTEGER, label: 'Admin' },
-  BLOOD_BANK: { limit: 500, label: 'Blood Bank' },
-  HOSPITAL: { limit: 200, label: 'Hospital' },
-  DONOR: { limit: 60, label: 'Donor' },
-  PUBLIC: { limit: 30, label: 'Public' },
-  USSD: { limit: 10, label: 'USSD' },
-} as const;
+type ThrottleRole = UserRole | 'public' | 'ussd';
+
+export const ROLE_THROTTLE_LIMITS: Record<ThrottleRole, RoleThrottleLimit> = {
+  [UserRole.ADMIN]: { limit: Number.MAX_SAFE_INTEGER, label: 'Admin' },
+  [UserRole.VENDOR]: { limit: 500, label: 'Vendor / Blood Bank' },
+  [UserRole.HOSPITAL]: { limit: 200, label: 'Hospital' },
+  [UserRole.DONOR]: { limit: 60, label: 'Donor' },
+  [UserRole.RIDER]: { limit: 60, label: 'Rider' },
+  public: { limit: 30, label: 'Public' },
+  ussd: { limit: 10, label: 'USSD' },
+};
 
 /** Fallback for unauthenticated requests (no role on req.user). */
 export const DEFAULT_THROTTLE_LIMIT: RoleThrottleLimit = {
@@ -55,5 +60,39 @@ export const TENANT_THROTTLE_LIMITS: Record<string, TenantThrottleLimit> = {
 };
 
 /** Emergency workflows get higher priority and fairness weight */
-export const EMERGENCY_ROLES = ['ADMIN', 'HOSPITAL'] as const;
+export const EMERGENCY_ROLES: readonly UserRole[] = [
+  UserRole.ADMIN,
+  UserRole.HOSPITAL,
+];
 export const EMERGENCY_WEIGHT = 2; // 2x priority for emergency requests
+
+function normalizeThrottleRole(role?: string): ThrottleRole {
+  const normalizedRole = role?.trim().toLowerCase();
+  if (normalizedRole && normalizedRole in ROLE_THROTTLE_LIMITS) {
+    return normalizedRole as ThrottleRole;
+  }
+  return 'public';
+}
+
+export function getEmergencyThrottleWeight(
+  role?: string,
+  isEmergencyEndpoint = false,
+): number {
+  const normalizedRole = normalizeThrottleRole(role);
+  const isEmergencyRole = EMERGENCY_ROLES.includes(normalizedRole as UserRole);
+  return isEmergencyRole || isEmergencyEndpoint ? EMERGENCY_WEIGHT : 1;
+}
+
+export function getEffectiveRoleThrottleLimit(
+  role?: string,
+  isEmergencyEndpoint = false,
+): number {
+  const normalizedRole = normalizeThrottleRole(role);
+  const roleLimit = ROLE_THROTTLE_LIMITS[normalizedRole];
+  const weight = getEmergencyThrottleWeight(role, isEmergencyEndpoint);
+
+  return Math.min(
+    Number.MAX_SAFE_INTEGER,
+    Math.floor(roleLimit.limit * weight),
+  );
+}
