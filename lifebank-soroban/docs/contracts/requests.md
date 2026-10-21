@@ -182,6 +182,16 @@ Returns a paginated slice of requests for a hospital. `page` is zero-indexed. `p
 
 ---
 
+### get_request_rider
+
+```rust
+pub fn get_request_rider(env: Env, request_id: u64) -> Option<Address>
+```
+
+Returns the rider assigned to the request via `assign_rider`, or `None` if no rider has been assigned. Read-only accessor used by the identity contract to authorize delivery verification.
+
+---
+
 ### get_admin / get_inventory_contract / get_request_counter
 
 ```rust
