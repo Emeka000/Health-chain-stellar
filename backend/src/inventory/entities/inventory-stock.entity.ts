@@ -11,6 +11,12 @@ import {
 import { BloodComponent } from '../../blood-units/enums/blood-component.enum';
 import { BloodType } from '../../blood-units/enums/blood-type.enum';
 
+/**
+ * Default volume of a single blood unit (bag) in millilitres.
+ * Used to convert millilitre stock into whole unit counts for threshold checks.
+ */
+export const ML_PER_BLOOD_UNIT = 450;
+
 @Entity('inventory_stocks')
 @Index(
   'idx_inventory_stocks_bank_blood_type_component_unique',
@@ -22,7 +28,7 @@ import { BloodType } from '../../blood-units/enums/blood-type.enum';
 @Index('idx_inventory_stocks_bank', ['bloodBankId'])
 @Index('idx_inventory_stocks_blood_type', ['bloodType'])
 export class InventoryStockEntity {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryGeneratedColumn('.uuid')
   id: string;
 
   @Column({ name: 'blood_bank_id', type: 'varchar', length: 64 })
@@ -58,10 +64,10 @@ export class InventoryStockEntity {
   @VersionColumn()
   version: number;
 
-  @CreateDateColumn({ name: 'created_at' })
+  @CreateDateColumn()
   createdAt: Date;
 
-  @UpdateDateColumn({ name: 'updated_at' })
+  @UpdateDateColumn()
   updatedAt: Date;
 
   /**
@@ -73,6 +79,15 @@ export class InventoryStockEntity {
 
   set availableUnits(value: number) {
     this.availableUnitsMl = value;
+  }
+
+  /**
+   * Number of whole blood units (bags) currently available.
+   * Converts the millilitre stock into unit counts so threshold checks
+   * compare like with like.
+   */
+  getAvailableUnitCount(): number {
+    return Math.floor(this.availableUnitsMl / ML_PER_BLOOD_UNIT);
   }
 
   /**
