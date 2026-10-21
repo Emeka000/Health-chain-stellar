@@ -131,6 +131,7 @@ export class OutboxService {
    * Claim up to `limit` PENDING events by acquiring a lease.
    * Events with an active lease held by another worker are skipped.
    * Events whose nextAttemptAt is in the future are skipped (backoff).
+   * Uses a subquery with FOR UPDATE SKIP LOCKED for PostgreSQL compatibility.
    */
   async claimPendingEvents(
     workerId: string,
@@ -139,38 +140,63 @@ export class OutboxService {
     const now = new Date();
     const leaseExpiry = new Date(now.getTime() + LEASE_TTL_MS);
 
-    // Atomically claim events: status=PENDING, no active lease, backoff elapsed
-    const result = await this.outboxRepo
-      .createQueryBuilder()
-      .update(OutboxEventEntity)
-      .set({
-        status: OutboxEventStatus.PROCESSING,
-        leaseHolder: workerId,
-        leaseExpiresAt: leaseExpiry,
-      })
-      .where('status = :status', { status: OutboxEventStatus.PENDING })
-      .andWhere(
-        '(lease_expires_at IS NULL OR lease_expires_at < :now)',
-        { now },
-      )
-      .andWhere(
-        '(next_attempt_at IS NULL OR next_attempt_at <= :now)',
-        { now },
-      )
-      .andWhere('attempt_count < :max', { max: MAX_ATTEMPTS })
-      .limit(limit)
-      .execute();
+    // Use raw query for PostgreSQL compatibility: subquery with FOR UPDATE SKIP LOCKED
+    // This atomically selects and locks up to `limit` rows for update
+    const result = await this.outboxRepo.query(
+      `UPDATE outbox_events
+       SET status = $1, lease_holder = $2, lease_expires_at = $3
+       WHERE id IN (
+         SELECT id FROM outbox_events
+         WHERE status = $4
+           AND (lease_expires_at IS NULL OR lease_expires_at < $5)
+           AND (next_attempt_at IS NULL OR next_attempt_at <= $5)
+           AND attempt_count < $6
+         ORDER BY created_at ASC
+         LIMIT $7
+         FOR UPDATE SKIP LOCKED
+       )
+       RETURNING id, aggregate_id, aggregate_type, event_type, event_version,
+                 correlation_id, payload, status, dedup_key, lease_holder,
+                 lease_expires_at, attempt_count, next_attempt_at, last_error,
+                 published, retry_count, error, published_at, created_at, updated_at`,
+      [
+        OutboxEventStatus.PROCESSING,
+        workerId,
+        leaseExpiry,
+        OutboxEventStatus.PENDING,
+        now,
+        MAX_ATTEMPTS,
+        limit,
+      ],
+    );
 
-    if (!result.affected) return [];
+    if (!result || result.length === 0) return [];
 
-    return this.outboxRepo.find({
-      where: {
-        status: OutboxEventStatus.PROCESSING,
-        leaseHolder: workerId,
-      },
-      order: { createdAt: 'ASC' },
-      take: limit,
-    });
+    // Convert DB rows to entities
+    return result.map((row: any) =>
+      this.outboxRepo.create({
+        id: row.id,
+        aggregateId: row.aggregate_id,
+        aggregateType: row.aggregate_type,
+        eventType: row.event_type,
+        eventVersion: row.event_version,
+        correlationId: row.correlation_id,
+        payload: row.payload,
+        status: row.status,
+        dedupKey: row.dedup_key,
+        leaseHolder: row.lease_holder,
+        leaseExpiresAt: row.lease_expires_at,
+        attemptCount: row.attempt_count,
+        nextAttemptAt: row.next_attempt_at,
+        lastError: row.last_error,
+        published: row.published,
+        retryCount: row.retry_count,
+        error: row.error,
+        publishedAt: row.published_at,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }),
+    );
   }
 
   /**
