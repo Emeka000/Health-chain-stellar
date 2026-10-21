@@ -6,11 +6,13 @@
 //! from masking excursions or fabricating them across the fleet.
 //!
 //! They also cover the threshold-change lifecycle from issue #1649: pending
-//! proposals are TTL-extended so they survive the governance delay, and
-//! replacing/cancelling a proposal is observable through events.
+//! proposals are TTL-extended so they survive the governance delay, and a
+//! second proposal for the same unit is rejected while one is pending.
+//!
+//! Every test here is written to fail against the pre-fix contract.
 
 use super::*;
-use soroban_sdk::{testutils::{Address as _, Events as _, Ledger as _}, Address, Env, IntoVal, Symbol};
+use soroban_sdk::{testutils::{Address as _, Ledger as _}, Address, Env};
 
 fn setup() -> (Env, TemperatureContractClient<'static>, Address, Address) {
     let env = Env::default();
@@ -120,44 +122,74 @@ fn pending_threshold_change_survives_governance_delay() {
 }
 
 #[test]
-fn replacing_pending_threshold_change_emits_event() {
-    let (env, client, admin, _oracle) = setup();
+fn second_proposal_rejected_while_pending() {
+    let (_env, client, admin, _oracle) = setup();
     let unit_id = 12u64;
 
     client.propose_threshold_change(&admin, &unit_id, &500);
-    client.propose_threshold_change(&admin, &unit_id, &600);
 
-    let events = env.events().all();
-    let replaced = events.iter().any(|(_, topics, _)| {
-        topics
-            .get(0)
-            .map(|t| t == Symbol::new(&env, "ThresholdProposalReplaced").into_val(&env))
-            .unwrap_or(false)
-    });
-    assert!(replaced, "expected ThresholdProposalReplaced event");
+    // A second proposal must not silently replace the first and restart the
+    // governance clock.
+    let result = client.try_propose_threshold_change(&admin, &unit_id, &600);
+    assert!(
+        result.is_err(),
+        "second propose_threshold_change must be rejected while one is pending"
+    );
 }
 
 #[test]
-fn cancel_threshold_change_removes_pending_proposal() {
+fn pending_proposal_not_silently_replaced() {
     let (env, client, admin, _oracle) = setup();
-    let unit_id = 13u64;
+    let unit_id = 14u64;
 
     client.propose_threshold_change(&admin, &unit_id, &500);
-    client.cancel_threshold_change(&admin, &unit_id);
+    let _ = client.try_propose_threshold_change(&admin, &unit_id, &600);
 
-    let events = env.events().all();
-    let cancelled = events.iter().any(|(_, topics, _)| {
-        topics
-            .get(0)
-            .map(|t| t == Symbol::new(&env, "ThresholdProposalCancelled").into_val(&env))
-            .unwrap_or(false)
-    });
-    assert!(cancelled, "expected ThresholdProposalCancelled event");
-
-    // Applying after cancellation must fail since no proposal remains.
+    // After the delay the originally proposed value must apply, not the
+    // replacement.
     env.ledger().with_mut(|li| {
         li.timestamp += GOVERNANCE_DELAY_SECONDS + 1;
     });
-    let result = client.try_apply_threshold_change(&admin, &unit_id);
-    assert!(result.is_err());
+    client.apply_threshold_change(&admin, &unit_id);
+    assert_eq!(client.get_threshold(&unit_id), 500);
+}
+
+#[test]
+fn set_threshold_cannot_bypass_timelock() {
+    let (env, client, admin, _oracle) = setup();
+    let unit_id = 15u64;
+
+    // Establish a threshold through the timelocked path.
+    client.propose_threshold_change(&admin, &unit_id, &500);
+    env.ledger().with_mut(|li| {
+        li.timestamp += GOVERNANCE_DELAY_SECONDS + 1;
+    });
+    client.apply_threshold_change(&admin, &unit_id);
+    assert_eq!(client.get_threshold(&unit_id), 500);
+
+    // No single call may change an existing threshold without the timelock.
+    let result = client.try_set_threshold(&admin, &unit_id, &5000);
+    assert!(
+        result.is_err(),
+        "set_threshold must not change an existing threshold without the timelock"
+    );
+    assert_eq!(client.get_threshold(&unit_id), 500);
+}
+
+#[test]
+fn pending_threshold_change_survives_ttl_archive() {
+    let (env, client, admin, _oracle) = setup();
+    let unit_id = 16u64;
+
+    client.propose_threshold_change(&admin, &unit_id, &500);
+
+    // Advance the ledger past the governance delay and well beyond a default
+    // temporary-storage TTL so an unextended entry would be archived.
+    env.ledger().with_mut(|li| {
+        li.timestamp += GOVERNANCE_DELAY_SECONDS + 1;
+        li.sequence_number += 100_000;
+    });
+
+    client.apply_threshold_change(&admin, &unit_id);
+    assert_eq!(client.get_threshold(&unit_id), 500);
 }

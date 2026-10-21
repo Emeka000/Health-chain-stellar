@@ -171,6 +171,9 @@ pub enum Error {
     RequestsContractNotSet = 526,
     /// Batch exceeds `MAX_BATCH_SIZE` entries.
     BatchTooLarge = 527,
+    /// A disputed payment can only be closed by resolve_dispute or
+    /// process_expired_disputes; update_status must not skip the resolution.
+    DisputeResolutionRequired = 528,
 }
 
 // ── Storage keys ───────────────────────────────────────────────────────────────
@@ -986,7 +989,7 @@ impl PaymentContract {
         }
 
         let rc = require_requests_contract(&env)?;
-        validate_request_payable(&env, &rc, request_id)?;
+        validate_request_payable(&env, &rc, request_id, &payer)?;
 
         let id = get_counter(&env) + 1;
         set_counter(&env, id);
@@ -1074,7 +1077,7 @@ impl PaymentContract {
 
         // Validate request state; mandatory, same as create_payment.
         let rc = require_requests_contract(&env)?;
-        validate_request_payable(&env, &rc, request_id)?;
+        validate_request_payable(&env, &rc, request_id, &hospital)?;
 
         let id = get_counter(&env) + 1;
         set_counter(&env, id);

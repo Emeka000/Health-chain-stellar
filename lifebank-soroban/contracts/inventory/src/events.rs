@@ -15,6 +15,19 @@ pub struct ReservationReleased {
     pub reservation_id: u64,
 }
 
+#[contractevent(topics = ["role_granted"], data_format = "vec")]
+pub struct RoleGranted {
+    pub grantee: Address,
+    pub role: Role,
+    pub granted_by: Address,
+}
+
+#[contractevent(topics = ["role_revoked"], data_format = "vec")]
+pub struct RoleRevoked {
+    pub grantee: Address,
+    pub revoked_by: Address,
+}
+
 pub fn emit_blood_registered(
     env: &Env,
     blood_unit_id: u64,

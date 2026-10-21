@@ -9,6 +9,32 @@ use soroban_sdk::{
     vec, Address, BytesN, Env, String, Symbol, TryFromVal,
 };
 
+/// Registers a requests contract, initializes it, wires it into the identity
+/// contract and creates request `request_id` so `verify_delivery`'s cross-check
+/// against the requests contract succeeds.
+fn wire_requests_contract(
+    env: &Env,
+    client: &IdentityContractClient<'_>,
+    admin: &Address,
+    request_id: u64,
+) {
+    let requests_id = env.register(RequestContract, ());
+    let requests_client = RequestContractClient::new(env, &requests_id);
+    requests_client.initialize(admin, &requests_id);
+    client.set_requests_contract(admin, &requests_id);
+
+    let requester = Address::generate(env);
+    let created = requests_client.create_request(
+        &requester,
+        &BloodType::APositive,
+        &BloodComponent::WholeBlood,
+        &450u32,
+        &Urgency::Urgent,
+        &1_600u64,
+    );
+    assert_eq!(created, request_id);
+}
+
 // ---------------------------------------------------------------------------
 // IdentityContract tests
 // ---------------------------------------------------------------------------
@@ -1058,6 +1084,9 @@ fn test_verify_delivery() {
     let contract_id = env.register(IdentityContract, ());
     let client = IdentityContractClient::new(&env, &contract_id);
 
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
     let owner = Address::generate(&env);
     let loc = BytesN::from_array(&env, &[0u8; 32]);
     client.register_organization(
@@ -1068,6 +1097,8 @@ fn test_verify_delivery() {
         &loc,
         &vec![&env],
     );
+
+    wire_requests_contract(&env, &client, &admin, 1);
 
     // The recipient verifying their own delivery is an authorized path.
     let recipient = Address::generate(&env);
@@ -1102,6 +1133,8 @@ fn test_verify_delivery_authorized_rider() {
         &loc,
         &vec![&env],
     );
+
+    wire_requests_contract(&env, &client, &admin, 1);
 
     let rider = Address::generate(&env);
     client.grant_role(&admin, &rider, &Role::Rider);
@@ -1149,6 +1182,9 @@ fn test_verify_delivery_prevents_overwrite() {
     let contract_id = env.register(IdentityContract, ());
     let client = IdentityContractClient::new(&env, &contract_id);
 
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
     let owner = Address::generate(&env);
     let loc = BytesN::from_array(&env, &[0u8; 32]);
     client.register_organization(
@@ -1159,6 +1195,8 @@ fn test_verify_delivery_prevents_overwrite() {
         &loc,
         &vec![&env],
     );
+
+    wire_requests_contract(&env, &client, &admin, 1);
 
     let recipient = Address::generate(&env);
     client.verify_delivery(&recipient, &1_u64, &owner, &recipient, &500_u32, &true);
@@ -2022,4 +2060,124 @@ fn test_identity_non_admin_cannot_pause() {
     let (env, client, _admin) = setup_identity();
     let attacker = Address::generate(&env);
     client.pause(&attacker);
+}
+
+// ---------------------------------------------------------------------------
+// Upgrade tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_upgrade_by_admin_succeeds() {
+    let (env, client, admin) = setup_identity();
+    let new_wasm_hash = BytesN::from_array(&env, &[7u8; 32]);
+
+    client.upgrade(&admin, &new_wasm_hash);
+
+    assert_eq!(client.get_admin(), admin);
+}
+
+#[test]
+fn test_upgrade_by_non_admin_rejected() {
+    let (env, client, _admin) = setup_identity();
+    let attacker = Address::generate(&env);
+    let new_wasm_hash = BytesN::from_array(&env, &[7u8; 32]);
+
+    let result = client.try_upgrade(&attacker, &new_wasm_hash);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
+fn test_upgrade_before_initialize_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    let caller = Address::generate(&env);
+    let new_wasm_hash = BytesN::from_array(&env, &[7u8; 32]);
+
+    let result = client.try_upgrade(&caller, &new_wasm_hash);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+}
+
+// ---------------------------------------------------------------------------
+// Two-step admin transfer tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_propose_and_accept_admin_transfer() {
+    let (env, client, admin) = setup_identity();
+    let new_admin = Address::generate(&env);
+
+    client.propose_admin(&admin, &new_admin);
+    assert_eq!(client.get_pending_admin(), Some(new_admin.clone()));
+    // Admin is unchanged until the nominee accepts.
+    assert_eq!(client.get_admin(), admin);
+
+    client.accept_admin(&new_admin);
+    assert_eq!(client.get_admin(), new_admin);
+    assert_eq!(client.get_pending_admin(), None);
+}
+
+#[test]
+fn test_propose_admin_by_non_admin_rejected() {
+    let (env, client, _admin) = setup_identity();
+    let attacker = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+
+    let result = client.try_propose_admin(&attacker, &new_admin);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+    assert_eq!(client.get_pending_admin(), None);
+}
+
+#[test]
+fn test_accept_admin_by_wrong_address_rejected() {
+    let (env, client, admin) = setup_identity();
+    let new_admin = Address::generate(&env);
+    let impostor = Address::generate(&env);
+
+    client.propose_admin(&admin, &new_admin);
+
+    let result = client.try_accept_admin(&impostor);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+    assert_eq!(client.get_admin(), admin);
+}
+
+#[test]
+fn test_accept_admin_without_proposal_rejected() {
+    let (env, client, _admin) = setup_identity();
+    let nominee = Address::generate(&env);
+
+    let result = client.try_accept_admin(&nominee);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
+fn test_propose_admin_emits_event() {
+    let (env, client, admin) = setup_identity();
+    let new_admin = Address::generate(&env);
+
+    client.propose_admin(&admin, &new_admin);
+
+    let events = env.events().all();
+    assert!(!events.is_empty());
+    let (_, topics, _) = events.last().unwrap();
+    let event_topic: Symbol =
+        TryFromVal::try_from_val(&env, &topics.get(topics.len() - 1).unwrap()).unwrap();
+    assert_eq!(event_topic, Symbol::new(&env, "admin_proposed"));
+}
+
+#[test]
+fn test_accept_admin_emits_event() {
+    let (env, client, admin) = setup_identity();
+    let new_admin = Address::generate(&env);
+
+    client.propose_admin(&admin, &new_admin);
+    client.accept_admin(&new_admin);
+
+    let events = env.events().all();
+    assert!(!events.is_empty());
+    let (_, topics, _) = events.last().unwrap();
+    let event_topic: Symbol =
+        TryFromVal::try_from_val(&env, &topics.get(topics.len() - 1).unwrap()).unwrap();
+    assert_eq!(event_topic, Symbol::new(&env, "admin_transferred"));
 }

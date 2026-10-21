@@ -365,10 +365,11 @@ fn test_request_history_captures_transition_rationale() {
         &150u32,
         &String::from_str(&env, "Initial transport completed"),
     );
-    client.cancel_request(
-        &hospital,
+    client.partial_fulfill_request(
+        &admin,
         &request_id,
-        &String::from_str(&env, "Hospital no longer needs remaining units"),
+        &250u32,
+        &String::from_str(&env, "Final transport completed"),
     );
 
     let history = client.get_request_history(&request_id);
@@ -389,12 +390,111 @@ fn test_request_history_captures_transition_rationale() {
         String::from_str(&env, "Initial transport completed")
     );
 
-    let cancelled = history.get(3).unwrap();
-    assert_eq!(cancelled.new_status, RequestStatus::Cancelled);
+    let fulfilled = history.get(3).unwrap();
+    assert_eq!(fulfilled.new_status, RequestStatus::Fulfilled);
+    assert_eq!(fulfilled.fulfilled_delta_ml, 250);
     assert_eq!(
-        cancelled.reason,
-        String::from_str(&env, "Hospital no longer needs remaining units")
+        fulfilled.reason,
+        String::from_str(&env, "Final transport completed")
     );
+}
+
+#[test]
+fn test_authorize_hospital_emits_event() {
+    let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
+    let hospital = Address::generate(&env);
+
+    client.authorize_hospital(&hospital);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    assert_eq!(last.0, client.address);
+}
+
+#[test]
+fn test_revoke_hospital_emits_event() {
+    let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
+    let hospital = Address::generate(&env);
+    client.authorize_hospital(&hospital);
+
+    client.revoke_hospital(&hospital);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    assert_eq!(last.0, client.address);
+}
+
+#[test]
+fn test_authorize_blood_bank_emits_event() {
+    let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
+    let blood_bank = Address::generate(&env);
+
+    client.authorize_blood_bank(&blood_bank);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    assert_eq!(last.0, client.address);
+}
+
+#[test]
+fn test_revoke_blood_bank_emits_event() {
+    let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
+    let blood_bank = Address::generate(&env);
+    client.authorize_blood_bank(&blood_bank);
+
+    client.revoke_blood_bank(&blood_bank);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    assert_eq!(last.0, client.address);
+}
+
+#[test]
+fn test_authorize_rider_emits_event() {
+    let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
+    let rider = Address::generate(&env);
+
+    client.authorize_rider(&rider);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    assert_eq!(last.0, client.address);
+}
+
+#[test]
+fn test_revoke_rider_emits_event() {
+    let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
+    let rider = Address::generate(&env);
+    client.authorize_rider(&rider);
+
+    client.revoke_rider(&rider);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    assert_eq!(last.0, client.address);
+}
+
+#[test]
+fn test_assign_rider_emits_event() {
+    let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
+    let hospital = authorize_hospital(&env, &client);
+    let rider = Address::generate(&env);
+    client.authorize_rider(&rider);
+    env.ledger().set_timestamp(9_000);
+    let request_id = client.create_request(
+        &hospital,
+        &BloodType::APositive,
+        &BloodComponent::RedCells,
+        &300u32,
+        &Urgency::Urgent,
+        &9_500u64,
+    );
+
+    client.assign_rider(&rider, &request_id);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    assert_eq!(last.0, client.address);
 }
 
 #[test]

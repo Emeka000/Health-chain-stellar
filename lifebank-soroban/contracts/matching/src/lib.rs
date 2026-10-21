@@ -17,7 +17,7 @@ pub use types::{
     MatchResult, MatchedUnit, RequestHistoryEntry, RequestStatus, Urgency,
 };
 
-use soroban_sdk::{contract, contractclient, contractimpl, Address, Env, Vec};
+use soroban_sdk::{contract, contractclient, contractevent, contractimpl, Address, Env, Vec};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -32,6 +32,31 @@ const MAX_MATCH_CANDIDATES: usize = 500;
 /// Enforces an explicit, graceful error instead of letting the transaction hit
 /// the instruction limit with an opaque failure.
 const MAX_BATCH_SIZE: u32 = 50;
+
+/// Number of ledgers the instance storage TTL is extended by on every
+/// entrypoint. Instance entries (`Admin`, `InventoryContract`,
+/// `RequestsContract`, `Initialized`, `Paused`) would otherwise archive and
+/// every subsequent call would fail with `NotInitialized`.
+const INSTANCE_TTL_THRESHOLD: u32 = 100;
+const INSTANCE_TTL_EXTEND_TO: u32 = 518_400; // ~30 days at 5s ledgers
+
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Paused {
+    #[topic]
+    pub admin: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Unpaused {
+    #[topic]
+    pub admin: Address,
+}
 
 // ---------------------------------------------------------------------------
 // Cross-contract client interfaces
@@ -69,6 +94,7 @@ impl MatchingContract {
         inventory_contract: Address,
         requests_contract: Address,
     ) -> Result<(), MatchingError> {
+        Self::bump_instance_ttl(&env);
         admin.require_auth();
 
         if env.storage().instance().has(&DataKey::Initialized) {
@@ -87,12 +113,14 @@ impl MatchingContract {
         Ok(())
     }
 
-    pub fn version(_env: Env) -> u32 {
+    pub fn version(env: Env) -> u32 {
+        Self::bump_instance_ttl(&env);
         CONTRACT_VERSION
     }
 
     /// Pause all state-mutating functions. Admin only.
     pub fn pause(env: Env, admin: Address) -> Result<(), MatchingError> {
+        Self::bump_instance_ttl(&env);
         admin.require_auth();
         let stored: Address = env
             .storage()
@@ -103,11 +131,13 @@ impl MatchingContract {
             return Err(MatchingError::Unauthorized);
         }
         env.storage().instance().set(&DataKey::Paused, &true);
+        Paused { admin }.publish(&env);
         Ok(())
     }
 
     /// Unpause the contract. Admin only.
     pub fn unpause(env: Env, admin: Address) -> Result<(), MatchingError> {
+        Self::bump_instance_ttl(&env);
         admin.require_auth();
         let stored: Address = env
             .storage()
@@ -118,15 +148,25 @@ impl MatchingContract {
             return Err(MatchingError::Unauthorized);
         }
         env.storage().instance().set(&DataKey::Paused, &false);
+        Unpaused { admin }.publish(&env);
         Ok(())
     }
 
     /// Returns whether the contract is currently paused.
     pub fn is_paused(env: Env) -> bool {
+        Self::bump_instance_ttl(&env);
         env.storage()
             .instance()
             .get(&DataKey::Paused)
             .unwrap_or(false)
+    }
+
+    /// Extend the instance storage TTL so the contract's configuration
+    /// entries never archive while the contract is in use.
+    fn bump_instance_ttl(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
     }
 
     fn require_not_paused(env: &Env) -> Result<(), MatchingError> {
@@ -169,6 +209,7 @@ impl MatchingContract {
         request_id: u64,
         excluded: &Vec<u64>,
     ) -> Result<MatchResult, MatchingError> {
+        Self::bump_instance_ttl(env);
         Self::require_initialized(env)?;
         Self::require_not_paused(env)?;
 

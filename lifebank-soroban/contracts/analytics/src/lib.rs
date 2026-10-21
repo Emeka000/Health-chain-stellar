@@ -10,7 +10,7 @@ mod test;
 pub use error::AnalyticsError;
 pub use types::{AnalyticsConfig, DataKey, MetricsSnapshot, PeriodType, ReportingPeriod};
 
-use soroban_sdk::{contract, contractevent, contractimpl, Address, Env};
+use soroban_sdk::{contract, contractevent, contractimpl, Address, BytesN, Env};
 
 #[contractevent(topics = ["anlytcs", "init"], data_format = "single-value")]
 pub struct AnalyticsInitialized {
@@ -43,6 +43,21 @@ pub struct PaymentReleaseRecorded {
 pub struct ReportingPeriodUpdated {
     pub period_type: PeriodType,
     pub duration_secs: u64,
+}
+
+#[contractevent(topics = ["anlytcs", "upgraded"], data_format = "single-value")]
+pub struct ContractUpgraded {
+    pub new_wasm_hash: BytesN<32>,
+}
+
+#[contractevent(topics = ["anlytcs", "admprop"], data_format = "single-value")]
+pub struct AdminProposed {
+    pub new_admin: Address,
+}
+
+#[contractevent(topics = ["anlytcs", "admacc"], data_format = "single-value")]
+pub struct AdminChanged {
+    pub new_admin: Address,
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -406,5 +421,74 @@ impl AnalyticsContract {
     pub fn is_initialized(env: Env) -> bool {
         extend_instance_ttl(&env);
         env.storage().instance().has(&DataKey::Config)
+    }
+
+    // ── Admin transfer ────────────────────────────────────────────────────────
+
+    /// Propose a new admin. The current admin must authorize.
+    /// The proposal takes effect only when the nominee calls `accept_admin`.
+    pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), AnalyticsError> {
+        let cfg = require_admin(&env)?;
+
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
+        extend_instance_ttl(&env);
+
+        AdminProposed { new_admin }.publish(&env);
+
+        let _ = cfg;
+        Ok(())
+    }
+
+    /// Accept a pending admin transfer. Only the nominated address may call.
+    pub fn accept_admin(env: Env) -> Result<(), AnalyticsError> {
+        let cfg = require_initialized(&env)?;
+        let pending: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmin)
+            .ok_or(AnalyticsError::NoPendingAdmin)?;
+
+        pending.require_auth();
+
+        let mut new_cfg = cfg;
+        new_cfg.admin = pending.clone();
+        env.storage().instance().set(&DataKey::Config, &new_cfg);
+        env.storage().instance().remove(&DataKey::PendingAdmin);
+        extend_instance_ttl(&env);
+
+        AdminChanged { new_admin: pending }.publish(&env);
+
+        Ok(())
+    }
+
+    /// Get the pending admin, if a transfer is in progress.
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        extend_instance_ttl(&env);
+        env.storage().instance().get(&DataKey::PendingAdmin)
+    }
+
+    // ── Upgrade ───────────────────────────────────────────────────────────────
+
+    /// Upgrade the contract WASM. Admin only.
+    pub fn upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), AnalyticsError> {
+        let cfg = require_initialized(&env)?;
+        admin.require_auth();
+        if admin != cfg.admin {
+            return Err(AnalyticsError::Unauthorized);
+        }
+
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+        extend_instance_ttl(&env);
+
+        ContractUpgraded { new_wasm_hash }.publish(&env);
+
+        Ok(())
     }
 }
