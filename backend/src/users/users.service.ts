@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
 
+import { randomBytes } from 'crypto';
+
 import { Repository, DataSource } from 'typeorm';
 
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -202,6 +204,12 @@ export class UsersService {
       throw new BadRequestException('No file uploaded');
     }
 
+    // Uploads are handled in memory (memoryStorage); without a buffer there is
+    // nothing to validate and no temp file to clean up.
+    if (!file.buffer || file.buffer.length === 0) {
+      throw new BadRequestException('Uploaded file is empty or unreadable');
+    }
+
     // Validate image
     await this.imageValidationService.validateImage(
       file.buffer,
@@ -216,10 +224,14 @@ export class UsersService {
       200,
     );
 
+    // Never trust the client-supplied filename/extension: derive the stored
+    // name and extension from the validated MIME type instead.
+    const storedFilename = this.buildAvatarFilename(file.mimetype);
+
     // Upload to storage
     const uploadResult = await this.storageService.uploadFile(
       resizedBuffer,
-      file.originalname,
+      storedFilename,
       file.mimetype,
       'avatars',
     );
@@ -330,6 +342,27 @@ export class UsersService {
   /** Avatar keys are always issued by uploadFile(..., 'avatars'). */
   private isAvatarKey(key: string | null | undefined): key is string {
     return typeof key === 'string' && key.startsWith('avatars/');
+  }
+
+  /**
+   * Build a server-generated avatar filename whose extension is derived from
+   * the (already validated) MIME type, never from the client-supplied name.
+   */
+  private buildAvatarFilename(mimetype: string): string {
+    const extensionByMimeType: Record<string, string> = {
+      'image/png': '.png',
+      'image/jpeg': '.jpg',
+      'image/jpg': '.jpg',
+      'image/webp': '.webp',
+      'image/gif': '.gif',
+    };
+
+    const extension = extensionByMimeType[mimetype?.toLowerCase()];
+    if (!extension) {
+      throw new BadRequestException('Unsupported image type');
+    }
+
+    return `avatar-${randomBytes(16).toString('hex')}${extension}`;
   }
 
   private calculateProfileCompletion(user: UserEntity): number {
