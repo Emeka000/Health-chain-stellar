@@ -63,7 +63,6 @@ export class AuthController {
   ) {}
 
   @Public()
-  @UseInterceptors(IdempotencyInterceptor)
   @Post('register')
   @ApiOperation({
     summary: 'Register a new user',
@@ -120,7 +119,6 @@ export class AuthController {
 
   @Public()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  @UseInterceptors(IdempotencyInterceptor)
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -186,7 +184,6 @@ export class AuthController {
   }
 
   @Public()
-  @UseInterceptors(IdempotencyInterceptor)
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -234,7 +231,6 @@ export class AuthController {
     return this.authService.refreshToken(refreshTokenDto.refreshToken);
   }
 
-  @UseInterceptors(IdempotencyInterceptor)
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth()
@@ -345,7 +341,6 @@ export class AuthController {
     return this.authService.revokeIfRisky(req.user.id, sessionId, minLevel ?? RiskLevel.HIGH);
   }
 
-  @UseInterceptors(IdempotencyInterceptor)
   @Post('change-password')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth()
