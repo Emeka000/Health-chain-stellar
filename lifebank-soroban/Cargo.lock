@@ -900,6 +900,7 @@ version = "0.0.0"
 dependencies = [
  "coordinator-contract",
  "soroban-sdk",
+ "temperature-contract",
 ]
 
 [[package]]

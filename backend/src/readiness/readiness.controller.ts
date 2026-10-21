@@ -23,7 +23,7 @@ import { Permission } from '../auth/enums/permission.enum';
 
 @ApiTags('Readiness')
 @ApiBearerAuth()
-@Controller('api/v1/readiness')
+@Controller('readiness')
 export class ReadinessController {
   constructor(private readonly service: ReadinessService) {}
 

@@ -18,7 +18,7 @@ import { Repository } from 'typeorm';
 
 @ApiTags('Blood Requests')
 @ApiBearerAuth()
-@Controller('api/v1/orders/split')
+@Controller('orders/split')
 @UseGuards(JwtAuthGuard)
 export class OrderSplittingController {
   constructor(

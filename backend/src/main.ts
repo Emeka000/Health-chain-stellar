@@ -8,6 +8,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { AppErrorFilter } from './common/filters/irrecoverable-error.filter';
 import { ValidationExceptionFilter } from './common/filters/validation-exception.filter';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
+import { createCorsOptions } from './config/cors-options';
 import { DatabaseSyncGuard } from './config/database-sync.guard';
 import { validateEnv } from './config/validate-env';
 import { ThrottlerExceptionFilter } from './throttler/throttler-exception.filter';
@@ -59,13 +60,8 @@ async function bootstrap() {
   );
 
   // CORS configuration
-  const corsOrigin = configService.get<string>('CORS_ORIGIN', '*');
-  app.enableCors({
-    origin: corsOrigin.split(',').map((origin) => origin.trim()),
-    credentials: true,
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    allowedHeaders: 'Content-Type, Accept, Authorization',
-  });
+  const corsOrigin = configService.getOrThrow<string>('CORS_ORIGIN');
+  app.enableCors(createCorsOptions(corsOrigin));
 
   // API prefix
   const apiPrefix = configService.get<string>('API_PREFIX', 'api/v1');

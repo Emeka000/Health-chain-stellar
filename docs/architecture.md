@@ -190,7 +190,7 @@ graph LR
 
 ## Key Environment Variables
 
-| Variable | Purpose | Default |
+| Variable | Purpose | Default / requirement |
 |---|---|---|
 | `PORT` | NestJS listen port | `3001` |
 | `DATABASE_*` | PostgreSQL connection | `localhost:5432` |
@@ -198,6 +198,6 @@ graph LR
 | `SOROBAN_RPC_URL` | Stellar Soroban RPC | testnet URL |
 | `SOROBAN_NETWORK` | `testnet` or `mainnet` | `testnet` |
 | `JWT_SECRET` | Auth signing key | — |
-| `CORS_ORIGIN` | Allowed frontend origins | `http://localhost:3000` |
+| `CORS_ORIGIN` | Allowed frontend origins | Required: frontend origin(s) |
 
 See `backend/.env.example` for the full list.

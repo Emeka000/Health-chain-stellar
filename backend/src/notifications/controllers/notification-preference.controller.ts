@@ -29,7 +29,7 @@ class SetPreferenceDto {
 
 @ApiTags('Notifications')
 @ApiBearerAuth()
-@Controller('api/v1/notification-preferences')
+@Controller('notification-preferences')
 @UseGuards(JwtAuthGuard)
 export class NotificationPreferenceController {
   constructor(

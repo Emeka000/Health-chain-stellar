@@ -1,12 +1,17 @@
 import {
     Body,
+    BadRequestException,
     Controller,
+    DefaultValuePipe,
     Delete,
     Get,
     Param,
+    ParseIntPipe,
     Post,
     Query,
 } from '@nestjs/common';
+import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
+import { Permission } from '../auth/enums/permission.enum';
 import { DeadLetterService } from './dead-letter.service';
 import {
     DeadLetterReason,
@@ -17,7 +22,8 @@ import { CanonicalEventEmitterService } from './canonical-event-emitter.service'
 
 @ApiTags('Events')
 @ApiBearerAuth()
-@Controller('api/v1/dead-letter')
+@RequirePermissions(Permission.ADMIN_ACCESS)
+@Controller('dead-letter')
 export class DeadLetterController {
     constructor(
         private readonly deadLetterService: DeadLetterService,
@@ -109,8 +115,13 @@ export class DeadLetterController {
     @ApiOperation({ summary: 'Delete purge' })
     @ApiResponse({ status: 200, description: 'Resource deleted successfully' })
     @Delete('purge')
-    async purgeOldEvents(@Query('olderThanDays') olderThanDays: string) {
-        const days = parseInt(olderThanDays, 10) || 30;
+    async purgeOldEvents(
+        @Query('olderThanDays', new DefaultValuePipe(30), ParseIntPipe)
+        days: number,
+    ) {
+        if (days < 7) {
+            throw new BadRequestException('olderThanDays must be at least 7');
+        }
         return {
             deletedCount: await this.deadLetterService.purgeOldEvents(days),
         };
