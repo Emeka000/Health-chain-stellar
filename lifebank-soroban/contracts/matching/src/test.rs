@@ -647,6 +647,89 @@ mod circuit_breaker_tests {
         let attacker = Address::generate(&env);
         client.pause(&attacker);
     }
+
+    #[test]
+    fn test_pause_emits_event() {
+        use soroban_sdk::testutils::Events as _;
+        use soroban_sdk::{symbol_short, IntoVal};
+
+        let (env, client, admin) = setup();
+        client.pause(&admin);
+
+        let events = env.events().all();
+        let expected = (symbol_short!("paused"), admin.clone()).into_val(&env);
+        assert!(
+            events.iter().any(|(_, topics, _)| topics == expected),
+            "pause should emit a paused event"
+        );
+    }
+
+    #[test]
+    fn test_unpause_emits_event() {
+        use soroban_sdk::testutils::Events as _;
+        use soroban_sdk::{symbol_short, IntoVal};
+
+        let (env, client, admin) = setup();
+        client.pause(&admin);
+        client.unpause(&admin);
+
+        let events = env.events().all();
+        let expected = (symbol_short!("unpaused"), admin.clone()).into_val(&env);
+        assert!(
+            events.iter().any(|(_, topics, _)| topics == expected),
+            "unpause should emit an unpaused event"
+        );
+    }
+}
+
+/// #1654: the matching contract's instance entries (Admin, InventoryContract,
+/// RequestsContract, Initialized, Paused) must be bumped on every entrypoint so
+/// they never archive. This test advances the ledger past the instance TTL and
+/// then still calls `match_request` successfully.
+#[cfg(test)]
+mod instance_ttl_tests {
+    use soroban_sdk::testutils::{Address as _, Ledger as _};
+    use soroban_sdk::{Address, Env};
+
+    use crate::{MatchingContract, MatchingContractClient};
+
+    fn setup<'a>() -> (Env, MatchingContractClient<'a>, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(MatchingContract, ());
+        let client = MatchingContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let inventory = Address::generate(&env);
+        let requests = Address::generate(&env);
+        client.initialize(&admin, &inventory, &requests);
+        (env, client, admin)
+    }
+
+    #[test]
+    fn match_request_succeeds_after_ledger_advances_past_instance_ttl() {
+        let (env, client, _admin) = setup();
+
+        // Advance the ledger well past the default instance TTL. Without the
+        // bump_instance_ttl call the instance entries would be archived and
+        // match_request would fail with NotInitialized.
+        env.ledger().with_mut(|li| {
+            li.sequence_number += 10_000_000;
+        });
+
+        // The contract must still be initialized and reachable.
+        assert!(client.is_initialized());
+
+        // match_request will fail on the cross-contract call (no inventory /
+        // requests contracts registered), but it must get past the
+        // initialization and pause checks — i.e. not return NotInitialized.
+        let result = client.try_match_request(&1u64);
+        match result {
+            Err(Ok(crate::MatchingError::NotInitialized)) => {
+                panic!("instance entries archived: match_request returned NotInitialized")
+            }
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]

@@ -126,6 +126,8 @@ pub enum Error {
     OrganizationAlreadyRegistered = 215,
     /// The primary admin's `Admin` role cannot be revoked, so one admin always remains.
     CannotRevokeLastAdmin = 216,
+    /// No admin transfer has been proposed.
+    NoPendingAdmin = 217,
 }
 
 // ---------------------------------------------------------------------------
@@ -295,6 +297,23 @@ pub struct ScopeRevoked {
     pub scope: PermissionScope,
 }
 
+#[contractevent(topics = ["admin", "proposed"], data_format = "vec")]
+pub struct AdminTransferProposed {
+    pub current_admin: Address,
+    pub new_admin: Address,
+}
+
+#[contractevent(topics = ["admin", "transferred"], data_format = "vec")]
+pub struct AdminTransferred {
+    pub previous_admin: Address,
+    pub new_admin: Address,
+}
+
+#[contractevent(topics = ["upgraded"], data_format = "single-value")]
+pub struct ContractUpgraded {
+    pub new_wasm_hash: BytesN<32>,
+}
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct RoleGrant {
@@ -348,6 +367,7 @@ pub enum DataKey {
     Docs(Address),
     OrgCounter,
     Admin,
+    PendingAdmin,
     OrgTypeList(OrgType),
     OrgVerifier(Address),
     OrgUnverifyReason(Address),
@@ -499,6 +519,83 @@ impl IdentityContract {
     /// Get contract version
     pub fn version(_env: Env) -> u32 {
         CONTRACT_VERSION
+    }
+
+    /// Upgrade the contract to a new WASM hash. Admin only.
+    pub fn upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, Role::Admin)?;
+
+        env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
+
+        ContractUpgraded { new_wasm_hash }.publish(&env);
+
+        Ok(())
+    }
+
+    /// Propose a new admin. The current admin must authorize this call; the
+    /// proposed admin must then call `accept_admin` to complete the transfer.
+    pub fn propose_admin(env: Env, admin: Address, new_admin: Address) -> Result<(), Error> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, Role::Admin)?;
+
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
+
+        AdminTransferProposed {
+            current_admin: admin,
+            new_admin,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Accept a pending admin transfer. Only the proposed admin may call this.
+    pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        new_admin.require_auth();
+
+        let pending: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmin)
+            .ok_or(Error::NoPendingAdmin)?;
+
+        if pending != new_admin {
+            return Err(Error::Unauthorized);
+        }
+
+        let previous_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::Unauthorized)?;
+
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.storage().instance().remove(&DataKey::PendingAdmin);
+
+        // Grant the Admin role to the new admin and drop it from the previous
+        // admin so the role set stays consistent with the primary admin key.
+        Self::grant_role_internal(&env, new_admin.clone(), Role::Admin);
+        Self::revoke_admin_role_internal(&env, &previous_admin);
+
+        AdminTransferred {
+            previous_admin,
+            new_admin,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Return the pending admin, if any.
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::PendingAdmin)
     }
 
     /// Pause all state-mutating functions. Admin only.
@@ -821,6 +918,26 @@ impl IdentityContract {
         env.storage()
             .persistent()
             .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    /// Internal helper to drop the `Admin` role from an address (no auth check).
+    fn revoke_admin_role_internal(env: &Env, address: &Address) {
+        let key = DataKey::AddressRoles(address.clone());
+        if let Some(roles) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Vec<RoleGrant>>(&key)
+        {
+            let roles = Self::remove_role_from_vec(env, roles, &Role::Admin);
+            if roles.is_empty() {
+                env.storage().persistent().remove(&key);
+            } else {
+                env.storage().persistent().set(&key, &roles);
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+            }
+        }
     }
 
     /// Get the primary role of an address (first role in the sorted vec, if any).

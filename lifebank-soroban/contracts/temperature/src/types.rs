@@ -80,4 +80,14 @@ pub enum DataKey {
     /// without impacting instance storage size or contract invocation cost.
     /// Membership checks are O(1) regardless of whitelist size.
     OracleApproved(soroban_sdk::Address),
+    /// Oracle assigned to log readings for a specific blood unit.
+    ///
+    /// Key: `AssignedOracle(unit_id)` → `Address`
+    ///
+    /// Set when a unit is registered for monitoring. `log_reading` rejects
+    /// readings from any oracle other than the assigned one (the admin may
+    /// still log). This prevents a single compromised sensor key from
+    /// fabricating excursions or resetting violation streaks for units it
+    /// does not own.
+    AssignedOracle(u64),
 }

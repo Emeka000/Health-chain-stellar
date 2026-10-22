@@ -227,6 +227,7 @@ mod inventory_client {
             authorized_by: Address,
             delivery_location: String,
         ) -> BloodUnit;
+        fn get_admin(env: Env) -> Address;
     }
 }
 
@@ -900,20 +901,6 @@ impl CoordinatorContract {
         if payment.status == PaymentStatus::Locked {
             refund_payment(&env, &pay_client, &payment)?;
         }
-        if payment.status == PaymentStatus::Locked {
-            pay_client
-                .try_update_status(
-                    &wf.payment_id,
-                    &PaymentStatus::Refunded,
-                    &env.current_contract_address(),
-                )
-                .map_err(|_| CoordinatorError::PaymentUpdateFailed)?
-                .map_err(|_| CoordinatorError::PaymentUpdateFailed)?;
-        }
-
-        // Return the escrowed payment to the payer before marking the workflow
-        // terminal, so no locked funds are orphaned.
-        refund_locked_payment(&env, &workflow, &admin)?;
 
         wf.status = WorkflowStatus::RolledBack;
         save_workflow(&env, &wf);
@@ -1008,6 +995,9 @@ impl CoordinatorContract {
         let caller = env.current_contract_address();
         caller.require_auth();
 
+        let pay_addr: Address = get_contract_address(&env, &DataKey::PaymentContract)?;
+        let pay_client = PaymentContractClient::new(&env, &pay_addr);
+
         let payment = pay_client
             .try_get_payment(&payment_id)
             .map_err(|_| CoordinatorError::PaymentNotFound)?
@@ -1019,12 +1009,15 @@ impl CoordinatorContract {
 
         let case_id = String::from_str(&env, "TEMP-EXCURSION");
 
-        payment_client.record_dispute(
-            &payment_id,
-            &payment_client::DisputeReason::TemperatureExcursion,
-            &String::from_str(&env, "temperature-breach"),
-            &caller,
-        );
+        pay_client
+            .try_record_dispute(
+                &payment_id,
+                &payment_client::DisputeReason::TemperatureExcursion,
+                &case_id,
+                &caller,
+            )
+            .map_err(|_| CoordinatorError::PaymentUpdateFailed)?
+            .map_err(|_| CoordinatorError::PaymentUpdateFailed)?;
 
         let now = env.ledger().timestamp();
         CoordTemperatureBreach {

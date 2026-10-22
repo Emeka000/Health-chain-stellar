@@ -23,6 +23,28 @@ pub struct DeliveryInitialized {
     pub request_contract: Address,
 }
 
+/// Emitted when the current admin proposes a new admin. The transfer only
+/// completes once the proposed address calls `accept_admin`.
+#[contractevent(topics = ["delivery", "admin_proposed"], data_format = "vec")]
+pub struct AdminProposed {
+    pub current_admin: Address,
+    pub proposed_admin: Address,
+}
+
+/// Emitted when the proposed admin accepts and takes over the admin role.
+#[contractevent(topics = ["delivery", "admin_transferred"], data_format = "vec")]
+pub struct AdminTransferred {
+    pub previous_admin: Address,
+    pub new_admin: Address,
+}
+
+/// Emitted when the admin upgrades the contract's wasm code.
+#[contractevent(topics = ["delivery", "upgraded"], data_format = "vec")]
+pub struct ContractUpgraded {
+    pub admin: Address,
+    pub new_wasm_hash: Bytes,
+}
+
 #[contractevent(topics = ["comply"], data_format = "vec")]
 pub struct ComplianceAttested {
     pub delivery_id: u64,
@@ -93,6 +115,7 @@ pub struct ProofRequirements {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
     Admin,
+    PendingAdmin,
     RequestContract,
     DeliveryCounter,
     TemperatureThresholds,
@@ -161,6 +184,102 @@ impl DeliveryContract {
             .instance()
             .get(&DataKey::Admin)
             .ok_or(Error::NotInitialized)
+    }
+
+    /// Returns the address that has been proposed as the next admin, if any.
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::PendingAdmin)
+    }
+
+    /// Begin a two-step admin transfer. The current admin nominates
+    /// `new_admin`, who must then call `accept_admin` to complete the transfer.
+    pub fn propose_admin(env: Env, admin: Address, new_admin: Address) -> Result<(), Error> {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if admin != stored {
+            return Err(Error::Unauthorized);
+        }
+        if new_admin == stored {
+            return Err(Error::InvalidInput);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        AdminProposed {
+            current_admin: admin,
+            proposed_admin: new_admin,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Complete a pending admin transfer. Must be called by the proposed admin.
+    pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        new_admin.require_auth();
+        let pending: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmin)
+            .ok_or(Error::Unauthorized)?;
+        if new_admin != pending {
+            return Err(Error::Unauthorized);
+        }
+        let previous: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.storage().instance().remove(&DataKey::PendingAdmin);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        AdminTransferred {
+            previous_admin: previous,
+            new_admin,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Replace the contract's wasm code. Admin only.
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: Bytes) -> Result<(), Error> {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if admin != stored {
+            return Err(Error::Unauthorized);
+        }
+
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        ContractUpgraded {
+            admin,
+            new_wasm_hash,
+        }
+        .publish(&env);
+
+        Ok(())
     }
 
     pub fn get_request_contract(env: Env) -> Result<Address, Error> {

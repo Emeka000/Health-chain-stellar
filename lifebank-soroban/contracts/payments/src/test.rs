@@ -85,7 +85,7 @@ fn test_create_payment_increments_counter() {
 fn test_create_payment_rejects_zero_amount() {
     let (env, cid, requests_client, hospital) = setup();
     let client = PaymentContractClient::new(&env, &cid);
-    let payer = Address::generate(&env);
+    let payer = hospital.clone();
     let payee = Address::generate(&env);
     let request_id = requests_client.create_request(
         &hospital,
@@ -103,7 +103,7 @@ fn test_create_payment_rejects_zero_amount() {
 fn test_create_payment_rejects_negative_amount() {
     let (env, cid, requests_client, hospital) = setup();
     let client = PaymentContractClient::new(&env, &cid);
-    let payer = Address::generate(&env);
+    let payer = hospital.clone();
     let payee = Address::generate(&env);
     let request_id = requests_client.create_request(
         &hospital,
@@ -121,7 +121,7 @@ fn test_create_payment_rejects_negative_amount() {
 fn test_create_payment_rejects_same_payer_payee() {
     let (env, cid, requests_client, hospital) = setup();
     let client = PaymentContractClient::new(&env, &cid);
-    let addr = Address::generate(&env);
+    let addr = hospital.clone();
     let request_id = requests_client.create_request(
         &hospital,
         &BloodType::OPositive,
@@ -216,7 +216,7 @@ fn test_create_payment_rejects_duplicate_request_id() {
     // First payment for request 42 succeeds.
     let (_id1, request_id, _, _) = make_payment(&env, &client, &requests_client, &hospital, 500);
     // Second payment for the same request must be rejected.
-    let payer = Address::generate(&env);
+    let payer = hospital.clone();
     let payee = Address::generate(&env);
     let result = client.try_create_payment(&request_id, &payer, &payee, &500i128);
     assert_eq!(result, Err(Ok(Error::DuplicatePayment)));
@@ -276,6 +276,22 @@ fn test_create_payment_rejects_non_hospital_payer() {
 }
 
 #[test]
+fn test_create_payment_rejects_payer_who_is_not_the_request_hospital() {
+    let (env, cid, requests_client, hospital) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let other_hospital = Address::generate(&env);
+    requests_client.authorize_hospital(&other_hospital);
+    let payee = Address::generate(&env);
+
+    let request_id = new_request(&env, &requests_client, &hospital);
+
+    // A different (authorized) hospital must not be able to fund this request.
+    let result = client.try_create_payment(&request_id, &other_hospital, &payee, &500i128);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+    assert!(client.try_get_payment_by_request(&request_id).is_err());
+}
+
+#[test]
 fn test_create_escrow_rejects_non_hospital_payer() {
     let (env, cid, requests_client, hospital) = setup();
     let client = PaymentContractClient::new(&env, &cid);
@@ -305,6 +321,34 @@ fn test_create_escrow_rejects_non_hospital_payer() {
     client.add_allowed_token(&admin, &hospital_token);
     let id =
         client.create_escrow(&request_id, &hospital, &payee, &1_000i128, &hospital_token);
+    assert_eq!(client.get_payment(&id).status, PaymentStatus::Locked);
+}
+
+#[test]
+fn test_create_escrow_rejects_payer_who_is_not_the_request_hospital() {
+    let (env, cid, requests_client, hospital) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
+
+    let other_hospital = Address::generate(&env);
+    requests_client.authorize_hospital(&other_hospital);
+    let payee = Address::generate(&env);
+    let token_id = deploy_token_with_balance(&env, &admin, &other_hospital, 5_000);
+    client.add_allowed_token(&admin, &token_id);
+
+    let request_id = new_request(&env, &requests_client, &hospital);
+
+    // A different (authorized) hospital must not be able to escrow for this request.
+    let result =
+        client.try_create_escrow(&request_id, &other_hospital, &payee, &1_000i128, &token_id);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+    assert!(client.try_get_payment_by_request(&request_id).is_err());
+
+    // The real hospital can still escrow against the request.
+    let hospital_token = deploy_token_with_balance(&env, &admin, &hospital, 5_000);
+    client.add_allowed_token(&admin, &hospital_token);
+    let id = client.create_escrow(&request_id, &hospital, &payee, &1_000i128, &hospital_token);
     assert_eq!(client.get_payment(&id).status, PaymentStatus::Locked);
 }
 
@@ -833,7 +877,7 @@ fn test_pause_blocks_create_payment() {
     client.pause(&admin);
     assert!(client.is_paused());
 
-    let payer = Address::generate(&env);
+    let payer = hospital.clone();
     let payee = Address::generate(&env);
     let request_id = requests_client.create_request(
         &hospital,
@@ -1422,6 +1466,8 @@ fn test_create_escrow_rejects_negative_amount() {
 fn test_update_status_blocks_escrow_bypass() {
     let (env, cid, requests_client, hospital) = setup();
     let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
 
     let payee = Address::generate(&env);
     let token_id = deploy_token_with_balance(&env, &admin, &hospital, 5_000);
@@ -1476,6 +1522,8 @@ fn test_update_status_blocks_escrow_bypass() {
 fn test_update_status_allows_non_terminal_transitions() {
     let (env, cid, requests_client, hospital) = setup();
     let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
 
     let payee = Address::generate(&env);
     let token_id = deploy_token_with_balance(&env, &admin, &hospital, 5_000);
