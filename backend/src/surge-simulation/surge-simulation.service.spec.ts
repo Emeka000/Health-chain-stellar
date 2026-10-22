@@ -134,6 +134,28 @@ describe('SurgeSimulationService', () => {
       expect(typeof r1.estimatedFulfillmentLatencyMinutes).toBe('number');
       expect(typeof r2.estimatedFulfillmentLatencyMinutes).toBe('number');
     });
+
+    it('computes stockGapUnits in units when baseline stock is derived from millilitres', async () => {
+      // 50 units in stock (e.g. 50 bags of 450 mL = 22,500 mL) vs demand of 200 units.
+      inventoryRepo.createQueryBuilder.mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        addSelect: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getCount: jest.fn().mockResolvedValue(5),
+        getMany: jest.fn().mockResolvedValue([]),
+        getRawMany: jest.fn().mockResolvedValue([]),
+        getRawOne: jest.fn().mockResolvedValue({ total: '22500' }),
+      });
+
+      const result = await service.simulate({ surgeDemandUnits: 200 });
+
+      expect(result.baselineStockUnits).toBe(50);
+      expect(result.stockGapUnits).toBe(150);
+      expect(result.canAbsorbWithStock).toBe(false);
+    });
   });
 
   describe('scenario management', () => {
