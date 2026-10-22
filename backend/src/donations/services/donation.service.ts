@@ -96,9 +96,15 @@ export class DonationService {
     return saved;
   }
 
-  async getDonationById(id: string): Promise<DonationEntity> {
+  async getDonationById(id: string, callerUserId?: string): Promise<DonationEntity> {
     const d = await this.donationRepository.findOne({ where: { id } });
     if (!d) throw new NotFoundException('Donation not found');
+
+    // Enforce ownership: only the donor or admin can view
+    if (callerUserId && d.donorUserId && d.donorUserId !== callerUserId) {
+      throw new NotFoundException('Donation not found');
+    }
+
     return d;
   }
 
