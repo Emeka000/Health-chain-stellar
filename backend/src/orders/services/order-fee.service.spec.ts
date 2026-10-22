@@ -47,11 +47,76 @@ describe('OrderFeeService', () => {
   });
 
   describe('computeAndPersist', () => {
-    it('calls previewFees with default LAG geography and STANDARD urgency', async () => {
-      const order = makeOrder();
+    it("builds the fee DTO from the order's own fields", async () => {
+      const order = makeOrder({
+        geographyCode: 'ABJ',
+        urgencyTier: 'CRITICAL',
+        estimatedDistanceKm: 42,
+        serviceLevel: 'PREMIUM',
+        partnerId: 'partner-9',
+      } as Partial<OrderEntity>);
       await service.computeAndPersist(order);
       expect(mockFeePolicy.previewFees).toHaveBeenCalledWith(
-        expect.objectContaining({ geographyCode: 'LAG', urgencyTier: 'STANDARD' }),
+        expect.objectContaining({
+          geographyCode: 'ABJ',
+          urgencyTier: 'CRITICAL',
+          distanceKm: 42,
+          serviceLevel: 'PREMIUM',
+          partnerId: 'partner-9',
+          quantity: 3,
+        }),
+      );
+    });
+
+    it('prices orders with different geography, urgency and distance differently', async () => {
+      const lagosOrder = makeOrder({
+        id: 'order-lag',
+        geographyCode: 'LAG',
+        urgencyTier: 'STANDARD',
+        estimatedDistanceKm: 10,
+        serviceLevel: 'BASIC',
+      } as Partial<OrderEntity>);
+      const abujaOrder = makeOrder({
+        id: 'order-abj',
+        geographyCode: 'ABJ',
+        urgencyTier: 'CRITICAL',
+        estimatedDistanceKm: 75,
+        serviceLevel: 'PREMIUM',
+      } as Partial<OrderEntity>);
+
+      mockFeePolicy.previewFees
+        .mockImplementationOnce(async (dto: any) => ({
+          appliedPolicyId: `policy-${dto.geographyCode}-${dto.urgencyTier}`,
+          baseFee: 100,
+          totalFee: 100 + dto.distanceKm,
+          inputs: dto,
+        }))
+        .mockImplementationOnce(async (dto: any) => ({
+          appliedPolicyId: `policy-${dto.geographyCode}-${dto.urgencyTier}`,
+          baseFee: 200,
+          totalFee: 200 + dto.distanceKm,
+          inputs: dto,
+        }));
+
+      await service.computeAndPersist(lagosOrder);
+      await service.computeAndPersist(abujaOrder);
+
+      expect(lagosOrder.appliedPolicyId).toBe('policy-LAG-STANDARD');
+      expect(abujaOrder.appliedPolicyId).toBe('policy-ABJ-CRITICAL');
+      expect(lagosOrder.appliedPolicyId).not.toBe(abujaOrder.appliedPolicyId);
+      expect((lagosOrder.feeBreakdown as any).totalFee).not.toBe(
+        (abujaOrder.feeBreakdown as any).totalFee,
+      );
+
+      const abujaTrace = (abujaOrder as any).feeCalculationTrace;
+      expect(abujaTrace).toBeDefined();
+      expect(abujaTrace).toEqual(
+        expect.objectContaining({
+          geographyCode: 'ABJ',
+          urgencyTier: 'CRITICAL',
+          distanceKm: 75,
+          serviceLevel: 'PREMIUM',
+        }),
       );
     });
 
@@ -85,11 +150,37 @@ describe('OrderFeeService', () => {
       expect(mockOrderRepo.save).not.toHaveBeenCalled();
     });
 
-    it('merges overrides into the default DTO', async () => {
-      const order = makeOrder();
+    it("uses the order's own fields as the base DTO", async () => {
+      const order = makeOrder({
+        geographyCode: 'KAN',
+        urgencyTier: 'URGENT',
+        estimatedDistanceKm: 25,
+        serviceLevel: 'STANDARD',
+      } as Partial<OrderEntity>);
+      await service.preview(order);
+      expect(mockFeePolicy.previewFees).toHaveBeenCalledWith(
+        expect.objectContaining({
+          geographyCode: 'KAN',
+          urgencyTier: 'URGENT',
+          distanceKm: 25,
+          serviceLevel: 'STANDARD',
+        }),
+      );
+    });
+
+    it('merges overrides into the order-derived DTO', async () => {
+      const order = makeOrder({
+        geographyCode: 'KAN',
+        urgencyTier: 'URGENT',
+        estimatedDistanceKm: 25,
+      } as Partial<OrderEntity>);
       await service.preview(order, { distanceKm: 50, geographyCode: 'ABJ' });
       expect(mockFeePolicy.previewFees).toHaveBeenCalledWith(
-        expect.objectContaining({ distanceKm: 50, geographyCode: 'ABJ' }),
+        expect.objectContaining({
+          distanceKm: 50,
+          geographyCode: 'ABJ',
+          urgencyTier: 'URGENT',
+        }),
       );
     });
 

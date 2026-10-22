@@ -42,10 +42,11 @@ export class OrderFeeService {
 
   private buildDto(order: OrderEntity): FeePreviewDto {
     return {
-      geographyCode: 'LAG',
-      urgencyTier: 'STANDARD' as any,
-      distanceKm: 10,
-      serviceLevel: 'BASIC' as any,
+      geographyCode: order.geographyCode,
+      urgencyTier: order.urgencyTier,
+      distanceKm: order.estimatedDistanceKm,
+      serviceLevel: order.serviceLevel,
+      partnerId: order.partnerId,
       quantity: order.quantity,
       partnerId: (order as any).partnerId,
     };

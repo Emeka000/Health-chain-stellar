@@ -737,6 +737,12 @@ impl RequestContract {
         storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)
     }
 
+    /// Returns the rider assigned to `request_id` via `assign_rider`, if any.
+    /// Used by the identity contract to authorize delivery proofs.
+    pub fn get_request_rider(env: Env, request_id: u64) -> Option<Address> {
+        storage::get_request_rider(&env, request_id)
+    }
+
     pub fn get_admin(env: Env) -> Result<Address, ContractError> {
         storage::require_initialized(&env)?;
         Ok(storage::get_admin(&env))
