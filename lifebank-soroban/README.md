@@ -51,7 +51,7 @@ WASM artifacts land in `target/wasm32-unknown-unknown/release/`.
 cargo test
 
 # Run only the cross-contract integration tests
-cargo test --package tests
+cargo test -p integration-tests
 
 # Run tests for a single contract
 cargo test --package inventory-contract
@@ -74,10 +74,18 @@ Contract addresses are written to `.contract-ids.json` after deployment.
 ## Documentation
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — contract dependency graph and data flow
-- [docs/contracts/coordinator.md](docs/contracts/coordinator.md) — coordinator function reference
-- [docs/contracts/inventory.md](docs/contracts/inventory.md) — inventory function reference
-- [docs/contracts/payments.md](docs/contracts/payments.md) — payments function reference
-- [docs/contracts/temperature.md](docs/contracts/temperature.md) — temperature monitoring reference
-- [docs/contracts/requests.md](docs/contracts/requests.md) — requests function reference
-- [docs/deployment.md](docs/deployment.md) — deployment guide
+- [docs/deployment.md](docs/deployment.md) — deployment guide (build, deploy, initialize, upgrade)
 - [docs/indexing.md](docs/indexing.md) — event schema for off-chain indexers
+
+### Contract References
+
+- [docs/contracts/coordinator.md](docs/contracts/coordinator.md) — workflow orchestration
+- [docs/contracts/identity.md](docs/contracts/identity.md) — organization registry and delivery verification
+- [docs/contracts/inventory.md](docs/contracts/inventory.md) — blood unit registration and tracking
+- [docs/contracts/matching.md](docs/contracts/matching.md) — blood compatibility matching
+- [docs/contracts/payments.md](docs/contracts/payments.md) — escrow and dispute handling
+- [docs/contracts/reputation.md](docs/contracts/reputation.md) — reputation scoring and decay
+- [docs/contracts/requests.md](docs/contracts/requests.md) — hospital blood requests
+- [docs/contracts/delivery.md](docs/contracts/delivery.md) — delivery compliance attestation
+- [docs/contracts/temperature.md](docs/contracts/temperature.md) — cold-chain monitoring
+- [docs/contracts/analytics.md](docs/contracts/analytics.md) — periodic metrics and counters
