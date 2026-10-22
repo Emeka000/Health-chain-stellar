@@ -4,15 +4,15 @@ set -e
 
 # Configuration
 NETWORK="testnet"
-IDENTITY="default"  # Your Stellar CLI identity
+IDENTITY="${1:-default}"  # Stellar CLI identity; default to 'default'
 
 echo "🚀 Deploying Lifebank contracts to ${NETWORK}..."
 echo ""
 
-# Check if soroban CLI is installed
-if ! command -v soroban &> /dev/null; then
-    echo "❌ Error: soroban CLI not found. Please install it first."
-    echo "   cargo install --locked soroban-cli"
+# Check if stellar CLI is installed
+if ! command -v stellar &> /dev/null; then
+    echo "❌ Error: stellar CLI not found. Please install it first."
+    echo "   https://github.com/stellar/stellar-cli"
     exit 1
 fi
 
@@ -27,12 +27,14 @@ echo ""
 # Deploy each contract
 declare -A CONTRACT_IDS
 
-for contract in inventory requests payments identity; do
+CONTRACTS=("analytics" "coordinator" "delivery" "identity" "inventory" "matching" "payments" "reputation" "requests" "temperature")
+
+for contract in "${CONTRACTS[@]}"; do
     echo "Deploying ${contract} contract..."
     
-    CONTRACT_ID=$(soroban contract deploy \
-        --wasm target/wasm32-unknown-unknown/release/${contract}_contract.wasm \
-        --source ${IDENTITY} \
+    CONTRACT_ID=$(stellar contract deploy \
+        --wasm "target/wasm32-unknown-unknown/release/${contract}_contract.wasm" \
+        --source-account ${IDENTITY} \
         --network ${NETWORK})
     
     CONTRACT_IDS[$contract]=$CONTRACT_ID
@@ -42,17 +44,23 @@ for contract in inventory requests payments identity; do
 done
 
 # Save contract IDs to a file
-echo "💾 Saving contract IDs to .contract-ids.json..."
+echo "💾 Saving contract IDs to .contract-ids.${NETWORK}.json..."
 
-cat > .contract-ids.json << EOF
+cat > ".contract-ids.${NETWORK}.json" << EOF
 {
   "network": "${NETWORK}",
   "deployed_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
   "contracts": {
+    "analytics": "${CONTRACT_IDS[analytics]}",
+    "coordinator": "${CONTRACT_IDS[coordinator]}",
+    "delivery": "${CONTRACT_IDS[delivery]}",
+    "identity": "${CONTRACT_IDS[identity]}",
     "inventory": "${CONTRACT_IDS[inventory]}",
-    "requests": "${CONTRACT_IDS[requests]}",
+    "matching": "${CONTRACT_IDS[matching]}",
     "payments": "${CONTRACT_IDS[payments]}",
-    "identity": "${CONTRACT_IDS[identity]}"
+    "reputation": "${CONTRACT_IDS[reputation]}",
+    "requests": "${CONTRACT_IDS[requests]}",
+    "temperature": "${CONTRACT_IDS[temperature]}"
   }
 }
 EOF
@@ -60,4 +68,9 @@ EOF
 echo ""
 echo "✅ Deployment complete!"
 echo ""
-echo "📝 Contract IDs saved to .contract-ids.json"
+echo "📝 Contract IDs saved to .contract-ids.${NETWORK}.json"
+echo ""
+echo "Next steps:"
+echo "  1. Initialize contracts: ./scripts/initialize-contracts.sh ${NETWORK}"
+echo "  2. Wire contracts: ./scripts/wire-contracts.sh ${NETWORK}"
+echo "  3. Verify deployment: ./scripts/verify-deployment.sh ${NETWORK}"
