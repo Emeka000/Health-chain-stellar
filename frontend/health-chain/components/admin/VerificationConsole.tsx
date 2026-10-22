@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { AlertCircle, CheckCircle, Clock, XCircle, RefreshCw } from "lucide-react";
+import { api } from "@/lib/api/http-client";
 
 interface VerificationStatus {
   id: string;
@@ -31,13 +32,8 @@ export function VerificationConsole() {
 
   const fetchPendingSyncs = async () => {
     try {
-      const response = await fetch("/api/organizations/verification/pending-syncs", {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setOrganizations(data);
-      }
+      const data = await api.get<VerificationStatus[]>("/organizations/verification/pending-syncs");
+      setOrganizations(data);
     } catch (error) {
       console.error("Failed to fetch pending syncs:", error);
     } finally {
@@ -48,13 +44,8 @@ export function VerificationConsole() {
   const handleRetry = async (orgId: string) => {
     setRetrying(orgId);
     try {
-      const response = await fetch(`/api/organizations/${orgId}/retry-sync`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-      if (response.ok) {
-        fetchPendingSyncs();
-      }
+      await api.post(`/organizations/${orgId}/retry-sync`);
+      fetchPendingSyncs();
     } catch (error) {
       console.error("Retry failed:", error);
     } finally {

@@ -151,10 +151,20 @@ describe('USSD Integration Tests', () => {
       expect(res.type).toBe('END');
       expect(res.message).toContain('cancelled');
 
-      // Verify session is gone from Redis
+      // Verify terminal state is retained until TTL expiry
       const sessionKey = 'ussd:session:' + SESSION_ID;
       const rawSession = await redis.get(sessionKey);
-      expect(rawSession).toBeNull();
+      expect(rawSession).not.toBeNull();
+    });
+  });
+
+  describe('Duplicate callbacks', () => {
+    it('returns the same response when a callback is replayed', async () => {
+      await step('');
+      const first = await step('+2348012345678');
+      const duplicate = await step('+2348012345678');
+
+      expect(duplicate).toEqual(first);
     });
   });
 

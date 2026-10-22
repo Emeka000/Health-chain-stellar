@@ -6,20 +6,21 @@
 //! The public contract entry-points in `lib.rs` delegate to these free functions.
 //!
 //! ## Storage Write Audit (PR checklist)
-//! - [x] `register_unit`  — writes BLOOD_UNITS, NEXT_ID
-//! - [x] `update_status`  — writes BLOOD_UNITS
-//! - [x] `expire_unit`    — writes BLOOD_UNITS
-//! - [x] `check_and_expire_batch` — delegates to `expire_unit`
+//! - [x] `register_unit`          — writes DataKey::Unit(id), NEXT_ID, BankUnits index, DonorUnits index, StatusUnits index
+//! - [x] `update_status`          — writes DataKey::Unit(id), StatusUnits index
+//! - [x] `expire_unit`            — 1 read + 1 write of DataKey::Unit(id), StatusUnits index, HospitalUnits index (undelivered allocations)
+//! - [x] `check_and_expire_batch` — N individual reads + writes of DataKey::Unit(id), HospitalUnits index (undelivered allocations)
 
-use soroban_sdk::{symbol_short, Address, Env, Map, Symbol, Vec};
+use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
 use crate::{
     constants::{
         MAX_BATCH_EXPIRY_SIZE, MAX_QUANTITY_ML, MAX_SHELF_LIFE_DAYS, MIN_QUANTITY_ML,
         MIN_SHELF_LIFE_DAYS, SECONDS_PER_DAY,
     },
-    get_next_id, record_status_change, BloodComponent, BloodRegisteredEvent, BloodStatus,
-    BloodType, BloodUnit, Error, BLOOD_UNITS,
+    get_next_id, index_bank_unit, index_blood_type_unit, index_donor_unit, record_status_change,
+    reindex_status, release_undelivered_allocation, BloodComponent, BloodRegisteredEvent,
+    BloodStatus, BloodType, BloodUnit, DataKey, Error,
 };
 
 // ── WRITE ─────────────────────────────────────────────────────────────────────
@@ -74,14 +75,26 @@ pub fn register_unit(
         delivery_timestamp: None,
     };
 
-    let mut units: Map<u64, BloodUnit> = env
+    // Per-record storage: write individual unit
+    env.storage()
+        .persistent()
+        .set(&DataKey::Unit(unit_id), &blood_unit);
+
+    // Maintain bank and donor indexes
+    index_bank_unit(env, &bank_id, unit_id);
+    let resolved_donor = donor_id.clone().unwrap_or(symbol_short!("ANON"));
+    index_donor_unit(env, &bank_id, &resolved_donor, unit_id);
+    // Maintain blood-type index for O(1) intersection in query_by_blood_type / check_availability.
+    index_blood_type_unit(env, blood_type, unit_id);
+    // New unit starts as Available — seed the status index directly
+    let status_key = crate::DataKey::StatusUnits(BloodStatus::Available);
+    let mut status_ids: soroban_sdk::Vec<u64> = env
         .storage()
         .persistent()
-        .get(&BLOOD_UNITS)
-        .unwrap_or(Map::new(env));
-
-    units.set(unit_id, blood_unit);
-    env.storage().persistent().set(&BLOOD_UNITS, &units);
+        .get(&status_key)
+        .unwrap_or(soroban_sdk::Vec::new(env));
+    status_ids.push_back(unit_id);
+    env.storage().persistent().set(&status_key, &status_ids);
 
     // Record initial status
     record_status_change(
@@ -127,18 +140,22 @@ pub fn update_status(
     new_status: BloodStatus,
     actor: Address,
 ) -> Result<(), Error> {
-    let mut units: Map<u64, BloodUnit> = env
+    // Per-record storage: read individual unit
+    let mut unit: BloodUnit = env
         .storage()
         .persistent()
-        .get(&BLOOD_UNITS)
-        .unwrap_or(Map::new(env));
+        .get(&DataKey::Unit(unit_id))
+        .ok_or(Error::UnitNotFound)?;
 
-    let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
     let old_status = unit.status;
 
     unit.status = new_status;
-    units.set(unit_id, unit);
-    env.storage().persistent().set(&BLOOD_UNITS, &units);
+    env.storage()
+        .persistent()
+        .set(&DataKey::Unit(unit_id), &unit);
+
+    // Maintain status index
+    reindex_status(env, unit_id, old_status, new_status);
 
     record_status_change(env, unit_id, old_status, new_status, actor);
 
@@ -146,14 +163,15 @@ pub fn update_status(
 }
 
 /// Force mark a blood unit as expired.
+///
+/// Reads the individual unit record, checks expiry, and persists the change.
+/// For bulk expiry prefer [`check_and_expire_batch`].
 pub fn expire_unit(env: &Env, unit_id: u64) -> Result<(), Error> {
-    let mut units: Map<u64, BloodUnit> = env
+    let mut unit: BloodUnit = env
         .storage()
         .persistent()
-        .get(&BLOOD_UNITS)
-        .unwrap_or(Map::new(env));
-
-    let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
+        .get(&DataKey::Unit(unit_id))
+        .ok_or(Error::UnitNotFound)?;
 
     let current_time = env.ledger().timestamp();
     if current_time < unit.expiration_date {
@@ -161,16 +179,21 @@ pub fn expire_unit(env: &Env, unit_id: u64) -> Result<(), Error> {
     }
 
     if unit.status == BloodStatus::Expired {
+        // Already expired — nothing to do, not an error.
         return Ok(());
     }
 
     let old_status = unit.status;
     unit.status = BloodStatus::Expired;
+    // Fix #1436: a force-expired Reserved/InTransit unit will never reach its
+    // allocated hospital, so remove the stale allocation and index entry.
+    release_undelivered_allocation(env, unit_id, &mut unit);
+    env.storage()
+        .persistent()
+        .set(&DataKey::Unit(unit_id), &unit);
 
-    units.set(unit_id, unit);
-    env.storage().persistent().set(&BLOOD_UNITS, &units);
-
-    // Record in history
+    // Keep the status index and history in sync.
+    reindex_status(env, unit_id, old_status, BloodStatus::Expired);
     record_status_change(
         env,
         unit_id,
@@ -183,17 +206,50 @@ pub fn expire_unit(env: &Env, unit_id: u64) -> Result<(), Error> {
 }
 
 /// Batch check and expire units.
+///
+/// Processes each unit individually via per-record storage (#1394).
+/// Each unit is read and written independently — no monolithic map.
 pub fn check_and_expire_batch(env: &Env, unit_ids: Vec<u64>) -> Result<Vec<u64>, Error> {
     if unit_ids.len() > MAX_BATCH_EXPIRY_SIZE {
         return Err(Error::BatchSizeExceeded);
     }
 
     let mut expired_ids = Vec::new(env);
+
     for i in 0..unit_ids.len() {
         let unit_id = unit_ids.get(i).unwrap();
-        if expire_unit(env, unit_id).is_ok() {
-            expired_ids.push_back(unit_id);
+        // Read individual unit
+        let mut unit: BloodUnit = match env.storage().persistent().get(&DataKey::Unit(unit_id)) {
+            Some(u) => u,
+            None => continue,
+        };
+
+        let current_time = env.ledger().timestamp();
+        if current_time < unit.expiration_date {
+            continue;
         }
+
+        if unit.status == BloodStatus::Expired {
+            continue;
+        }
+
+        let old_status = unit.status;
+        unit.status = BloodStatus::Expired;
+        release_undelivered_allocation(env, unit_id, &mut unit);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Unit(unit_id), &unit);
+
+        reindex_status(env, unit_id, old_status, BloodStatus::Expired);
+        record_status_change(
+            env,
+            unit_id,
+            old_status,
+            BloodStatus::Expired,
+            env.current_contract_address(),
+        );
+
+        expired_ids.push_back(unit_id);
     }
 
     Ok(expired_ids)

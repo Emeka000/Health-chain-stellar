@@ -29,4 +29,19 @@ export class BloodRequestEmailService {
       html,
     );
   }
+
+  async sendCreationConfirmationFailure(
+    to: string,
+    requestNumber: string,
+  ): Promise<void> {
+    const html = `
+      <p>Your blood request <strong>${requestNumber}</strong> could not be registered on-chain and has been cancelled.</p>
+      <p>Inventory reservations have been released. Please try again or contact support.</p>
+    `;
+    await this.emailProvider.send(
+      to,
+      `Blood request ${requestNumber} failed`,
+      html,
+    );
+  }
 }

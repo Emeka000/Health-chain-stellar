@@ -9,8 +9,10 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  Req,
   ValidationPipe,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
@@ -22,6 +24,8 @@ import { InventoryStockEntity } from './entities/inventory-stock.entity';
 import { InventoryForecastingService } from './inventory-forecasting.service';
 import { InventoryService } from './inventory.service';
 
+@ApiTags('Inventory')
+@ApiBearerAuth()
 @Controller('inventory')
 export class InventoryController {
   constructor(
@@ -30,6 +34,8 @@ export class InventoryController {
   ) {}
 
   @RequirePermissions(Permission.VIEW_INVENTORY)
+  @ApiOperation({ summary: 'Get' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get()
   findAll(
     @Query(
@@ -46,12 +52,16 @@ export class InventoryController {
   }
 
   @RequirePermissions(Permission.VIEW_INVENTORY)
+  @ApiOperation({ summary: 'Get low stock' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('low-stock')
   getLowStock(@Query('threshold') threshold: string = '10') {
     return this.inventoryService.getLowStockItems(parseInt(threshold, 10));
   }
 
   @RequirePermissions(Permission.VIEW_INVENTORY)
+  @ApiOperation({ summary: 'Get critical stock' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('critical-stock')
   getCriticalStock() {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
@@ -59,6 +69,8 @@ export class InventoryController {
   }
 
   @RequirePermissions(Permission.VIEW_INVENTORY)
+  @ApiOperation({ summary: 'Get aggregation' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('aggregation')
   getStockAggregation() {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
@@ -66,6 +78,8 @@ export class InventoryController {
   }
 
   @RequirePermissions(Permission.VIEW_INVENTORY)
+  @ApiOperation({ summary: 'Get stats' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('stats')
   getInventoryStats(@Query('hospitalId') hospitalId?: string) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
@@ -73,6 +87,8 @@ export class InventoryController {
   }
 
   @RequirePermissions(Permission.VIEW_INVENTORY)
+  @ApiOperation({ summary: 'Get reorder summary' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('reorder-summary')
   getReorderSummary() {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
@@ -80,45 +96,81 @@ export class InventoryController {
   }
 
   @RequirePermissions(Permission.VIEW_INVENTORY)
+  @ApiOperation({ summary: 'Get forecast' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('forecast')
   getForecast() {
     return this.inventoryForecastingService.calculateDemandForecasts();
   }
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
+  @ApiOperation({ summary: 'Post forecast recalibrate' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('forecast/recalibrate')
   recalibrateForecast() {
     return this.inventoryForecastingService.recalibrate();
   }
 
   @RequirePermissions(Permission.VIEW_INVENTORY)
+  @ApiOperation({ summary: 'Get :id' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.inventoryService.findOne(id);
+  findOne(
+    @Param('id') id: string,
+    @Req() req: { user?: { organizationId?: string | null } },
+  ) {
+    return this.inventoryService.findOne(id, req.user?.organizationId ?? '');
   }
 
   @RequirePermissions(Permission.INVENTORY_WRITE)
+  @ApiOperation({ summary: 'Post' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post()
-  create(@Body() createInventoryDto: CreateInventoryDto) {
-    return this.inventoryService.create(createInventoryDto);
+  create(
+    @Body() createInventoryDto: CreateInventoryDto,
+    @Req() req: { user?: { organizationId?: string | null } },
+  ) {
+    return this.inventoryService.create(
+      createInventoryDto,
+      req.user?.organizationId ?? '',
+    );
   }
 
   @RequirePermissions(Permission.INVENTORY_WRITE)
+  @ApiOperation({ summary: 'Patch :id' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id')
   update(
     @Param('id') id: string,
     @Body() updateInventoryDto: UpdateInventoryDto,
+    @Req() req: { user?: { organizationId?: string | null } },
   ) {
-    return this.inventoryService.update(id, updateInventoryDto);
+    return this.inventoryService.update(
+      id,
+      updateInventoryDto,
+      req.user?.organizationId ?? '',
+    );
   }
 
   @RequirePermissions(Permission.INVENTORY_WRITE)
+  @ApiOperation({ summary: 'Patch :id stock' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id/stock')
-  updateStock(@Param('id') id: string, @Body('quantity') quantity: number) {
-    return this.inventoryService.updateStock(id, quantity);
+  updateStock(
+    @Param('id') id: string,
+    @Body('quantity') quantity: number,
+    @Req() req: { user?: { organizationId?: string | null } },
+  ) {
+    return this.inventoryService.updateStock(
+      id,
+      quantity,
+      req.user?.organizationId ?? '',
+    );
   }
 
   @RequirePermissions(Permission.INVENTORY_WRITE)
+  @ApiOperation({ summary: 'Patch :id reserve' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id/reserve')
   reserveStock(@Param('id') id: string, @Body('quantity') quantity: number) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
@@ -126,6 +178,8 @@ export class InventoryController {
   }
 
   @RequirePermissions(Permission.INVENTORY_WRITE)
+  @ApiOperation({ summary: 'Patch :id release' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id/release')
   releaseStock(@Param('id') id: string, @Body('quantity') quantity: number) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
@@ -133,9 +187,14 @@ export class InventoryController {
   }
 
   @RequirePermissions(Permission.INVENTORY_WRITE)
+  @ApiOperation({ summary: 'Delete :id' })
+  @ApiResponse({ status: 200, description: 'Resource deleted successfully' })
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@Param('id') id: string) {
-    return this.inventoryService.remove(id);
+  remove(
+    @Param('id') id: string,
+    @Req() req: { user?: { organizationId?: string | null } },
+  ) {
+    return this.inventoryService.remove(id, req.user?.organizationId ?? '');
   }
 }

@@ -13,11 +13,28 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { IsNotEmpty, IsString, Matches } from 'class-validator';
 
+import { Public } from '../decorators/public.decorator';
 import { MfaService } from './mfa.service';
 
 export class MfaVerifyDto {
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^\d{6}$/, { message: 'token must be a 6-digit number' })
+  token: string;
+}
+
+export class MfaLoginChallengeDto {
+  @IsString()
+  @IsNotEmpty()
+  user_id: string;
+
+  @IsString()
+  @IsNotEmpty()
+  mfa_challenge: string;
+
   @IsString()
   @IsNotEmpty()
   @Matches(/^\d{6}$/, { message: 'token must be a 6-digit number' })
@@ -69,6 +86,29 @@ export class MfaController {
     }
     // Subsequent logins: validate code and return mfaToken
     return this.mfaService.validateMfaCode(userId, dto.token);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('login-challenge')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Complete step-up MFA login',
+    description:
+      'Unauthenticated endpoint used after login() returns { mfa_required: true, user_id, mfa_challenge }. ' +
+      'Accepts the user_id, the single-use mfa_challenge and a valid TOTP code, and returns a ' +
+      'short-lived, single-use mfaToken that must be exchanged via POST /auth/mfa/exchange.',
+  })
+  @ApiResponse({
+    status: 200,
+    schema: { example: { mfaToken: 'eyJ...' } },
+  })
+  async loginChallenge(@Body() dto: MfaLoginChallengeDto) {
+    return this.mfaService.validateLoginChallenge(
+      dto.user_id,
+      dto.mfa_challenge,
+      dto.token,
+    );
   }
 
   @Delete('disable')

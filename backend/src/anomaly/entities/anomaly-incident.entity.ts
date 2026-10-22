@@ -33,7 +33,7 @@ export class AnomalyIncidentEntity {
   @Column({ type: 'text' })
   description: string;
 
-  /** Related entity IDs for cross-linking */
+ 
   @Column({ name: 'order_id', type: 'varchar', nullable: true })
   orderId: string | null;
 
@@ -48,6 +48,10 @@ export class AnomalyIncidentEntity {
 
   @Column({ name: 'policy_version_ref', type: 'varchar', nullable: true })
   policyVersionRef: string | null;
+
+  /** Model/version metadata for provenance tracking */
+  @Column({ name: 'model_version', type: 'varchar', nullable: true })
+  modelVersion: string | null;
 
   /** Raw evidence snapshot */
   @Column({ type: 'jsonb', nullable: true })

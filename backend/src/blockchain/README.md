@@ -21,6 +21,7 @@ Submit TX → Idempotency Check → Main Queue → Worker → Soroban Network
 ```
 
 **Features:**
+
 - Async processing with BullMQ
 - Exponential backoff with jitter (1s → 60s max)
 - 5 retry attempts by default
@@ -33,9 +34,11 @@ Submit TX → Idempotency Check → Main Queue → Worker → Soroban Network
 ### Endpoints
 
 #### POST /blockchain/submit-transaction
+
 Submit a Soroban contract transaction to the queue.
 
 **Request:**
+
 ```json
 {
   "contractMethod": "record_donation",
@@ -50,6 +53,7 @@ Submit a Soroban contract transaction to the queue.
 ```
 
 **Response:** `202 Accepted`
+
 ```json
 {
   "jobId": "donation-uuid-123"
@@ -57,12 +61,15 @@ Submit a Soroban contract transaction to the queue.
 ```
 
 **Errors:**
+
 - `400 Bad Request`: Duplicate idempotency key
 
 #### GET /blockchain/job/:jobId
+
 Get status of a queued transaction.
 
 **Response:** `200 OK`
+
 ```json
 {
   "jobId": "donation-uuid-123",
@@ -76,18 +83,22 @@ Get status of a queued transaction.
 ```
 
 **Status Values:**
+
 - `pending`: Queued, not yet processed
 - `completed`: Successfully submitted to Soroban
 - `failed`: Retrying or moved to DLQ
 - `dlq`: Permanently failed, manual intervention needed
 
 #### POST /blockchain/webhook/callback
+
 Process incoming blockchain webhook events from trusted providers.
 
 Headers:
+
 - `X-Webhook-Signature`: HMAC SHA256 (hex) of canonical JSON payload using `BLOCKCHAIN_CALLBACK_SECRET`
 
 Request body:
+
 ```json
 {
   "eventId": "string",
@@ -100,6 +111,7 @@ Request body:
 ```
 
 Response: `200 OK`
+
 ```json
 {
   "success": true
@@ -107,16 +119,19 @@ Response: `200 OK`
 ```
 
 Failures:
+
 - `401 Unauthorized`: invalid or missing signature
 - `400 Bad Request`: stale timestamp or invalid payload schema
 - `409 Conflict`: replayed event
 
 #### GET /blockchain/queue/status
+
 Get queue metrics (admin only).
 
 **Headers:** `Authorization: Bearer <admin_token>`
 
 **Response:** `200 OK`
+
 ```json
 {
   "queueDepth": 42,
@@ -191,7 +206,7 @@ async recordCriticalDonation(donation: Donation) {
 ```typescript
 async checkDonationStatus(donationId: string) {
   const donation = await this.donationRepository.findOne(donationId);
-  
+
   const status = await this.sorobanService.getJobStatus(
     donation.blockchainJobId,
   );
@@ -219,6 +234,7 @@ REDIS_PORT=6379
 ## Data Models
 
 ### SorobanTxJob
+
 ```typescript
 {
   contractMethod: string;        // Smart contract method name
@@ -229,6 +245,7 @@ REDIS_PORT=6379
 ```
 
 ### SorobanTxResult
+
 ```typescript
 {
   jobId: string;
@@ -244,6 +261,7 @@ REDIS_PORT=6379
 ## Queue Configuration
 
 ### Main Queue (soroban-tx-queue)
+
 - **Attempts**: 5 retries
 - **Backoff**: Exponential (1s → 2s → 4s → 8s → 16s)
 - **Jitter**: 0-10% random delay added
@@ -251,6 +269,7 @@ REDIS_PORT=6379
 - **Cleanup**: Completed jobs removed, failed jobs retained
 
 ### Dead Letter Queue (soroban-dlq)
+
 - Receives jobs after 5 failed attempts
 - Requires manual review and resubmission
 - Persisted indefinitely for audit trail
@@ -264,6 +283,7 @@ All transactions require an `idempotencyKey`:
 - **Behavior**: Second submission with same key returns `400 Bad Request`
 
 **Best Practices:**
+
 - Use deterministic keys: `{entity}-{id}` (e.g., `donation-uuid-123`)
 - Include operation type if multiple operations per entity
 - Don't reuse keys across different operations
@@ -321,6 +341,136 @@ npm run test:contracts
 - **Latency**: 2-5 seconds per transaction (network dependent)
 - **Queue Capacity**: Limited by Redis memory
 - **Backpressure**: Implement client-side rate limiting if queue depth > 1000
+
+## Organization Verification Status
+
+`SorobanService.getOrganizationVerificationStatus(organizationId)` queries the on-chain verification state of an organization. It delegates to `soroban/soroban.service.ts`, which owns the Soroban RPC connection and a Redis cache (5-minute TTL).
+
+**Return shape:**
+
+```typescript
+{
+  verified: boolean;
+  verifiedAt?: number;       // Unix timestamp
+  verifiedBy?: string;       // Address that performed verification
+  revokedAt?: number;        // Set if verification was revoked
+  revocationReason?: string;
+  orgId: string;
+} | null
+```
+
+Returns `null` when:
+
+- No Soroban contract is configured (`SOROBAN_CONTRACT_ID` unset)
+- The organization has no on-chain record
+- The contract simulation fails (e.g. contract not deployed)
+
+Throws when:
+
+- The Soroban RPC is unreachable (`RPC unavailable` message)
+- The RPC call times out (`timeout or network error` message)
+- The returned `ScVal` cannot be decoded
+
+**Module wiring:** `BlockchainModule` imports `SorobanModule` via `forwardRef()` to avoid a circular dependency. The `SorobanRpcService` is injected into `SorobanService` (blockchain) with `@Inject(forwardRef(() => SorobanRpcService))`.
+
+---
+
+## Webhook Callback Processing
+
+`processWebhookCallback(callback)` handles inbound blockchain events from a trusted webhook provider. It persists durable state to the `on_chain_tx_states` table and emits domain events **exactly once per milestone** using a bitmask on `emittedEvents`.
+
+### State machine
+
+```
+PENDING → CONFIRMED (accumulating) → FINAL
+        ↘ FAILED
+```
+
+### Event bitmask
+
+Each milestone is guarded by a bit in `TX_EVENT_BIT` so retried webhook deliveries cannot produce duplicate domain events:
+
+| Bit | Constant                 | Domain event emitted      |
+| --- | ------------------------ | ------------------------- |
+| 1   | `TX_EVENT_BIT.PENDING`   | `blockchain.tx.pending`   |
+| 2   | `TX_EVENT_BIT.CONFIRMED` | `blockchain.tx.confirmed` |
+| 4   | `TX_EVENT_BIT.FAILED`    | `blockchain.tx.failed`    |
+| 8   | `TX_EVENT_BIT.FINAL`     | `blockchain.tx.final`     |
+
+`blockchain.tx.final` is only emitted once the confirmation count reaches the finality threshold defined in `ConfirmationService`.
+
+### Listening to domain events
+
+```typescript
+import { OnEvent } from '@nestjs/event-emitter';
+import { TxFinalEvent } from '../events/blockchain-tx.events';
+
+@Injectable()
+export class OrderService {
+  @OnEvent('blockchain.tx.final')
+  async handleTxFinal(event: TxFinalEvent) {
+    // Safe to mark order as settled — fires exactly once
+    await this.orderRepo.markSettled(event.transactionHash);
+  }
+}
+```
+
+---
+
+## DLQ Replay
+
+`replayDlqJobs(options)` resubmits permanently failed jobs from the dead-letter queue back to the main queue. It is an admin-only operation exposed via `BlockchainController`.
+
+**Options:**
+
+| Field       | Type    | Default | Description                    |
+| ----------- | ------- | ------- | ------------------------------ |
+| `dryRun`    | boolean | `false` | Inspect without resubmitting   |
+| `batchSize` | number  | `10`    | Max jobs to process per call   |
+| `offset`    | number  | `0`     | Pagination offset into the DLQ |
+
+**Response:**
+
+```typescript
+{
+  dryRun: boolean;
+  totalInspected: number;
+  replayable: number; // Jobs with valid data
+  replayed: number; // Successfully resubmitted (live run only)
+  skipped: number; // Jobs with missing required fields
+  errors: Array<{ jobId: string; reason: string }>;
+}
+```
+
+**What happens during a live replay:**
+
+1. The old idempotency key is cleared so the job can be resubmitted.
+2. The job is re-enqueued on `soroban-tx-queue` with `replayedFrom` and `replayedAt` added to its metadata.
+3. The original DLQ entry is removed on success.
+
+Always run with `dryRun: true` first to inspect what would be replayed before committing.
+
+---
+
+## Backoff Calculation
+
+`calculateBackoffDelay(attemptNumber)` returns the delay in milliseconds for a given retry attempt. It is used internally by the queue worker but is public for testing and observability.
+
+**Formula:** `min(baseDelay × 2^(attempt−1) + jitter, maxDelay)`
+
+- Base delay: 1 000 ms
+- Max delay: 60 000 ms
+- Jitter: 0–10 % of the exponential component (prevents thundering herd)
+
+| Attempt | Approx. delay |
+| ------- | ------------- |
+| 1       | ~1 s          |
+| 2       | ~2 s          |
+| 3       | ~4 s          |
+| 4       | ~8 s          |
+| 5       | ~16 s         |
+
+---
 
 ## Troubleshooting
 

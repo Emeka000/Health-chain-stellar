@@ -10,8 +10,8 @@
 //! | `NEXT_DISPUTE_ID`            | Instance   | Low-frequency, small; kept in instance                 |
 //! | `DISPUTE_TIMEOUT`            | Instance   | Config value; lives with contract                      |
 //! | `MULTISIG_CONFIG`            | Persistent | May be updated; needs long-lived storage               |
-//! | `BLOOD_BANKS`, `HOSPITALS`   | Persistent | Registry maps; grow with onboarding, rent-sensitive    |
-//! | `BLOOD_UNITS`                | Persistent | Core inventory map; **highest rent risk**              |
+//! | `DataKey::BloodBankState(a)` | Persistent | Per-bank lifecycle state; grows with onboarding       |
+//! | `DataKey::Unit(id)`           | Persistent | Per-unit records; highest rent risk                   |
 //! | `REQUESTS`                   | Persistent | Request map; grows with usage, rent-sensitive          |
 //! | `REQUEST_KEYS`               | Persistent | Dedup index; grows with requests                       |
 //! | `PAYMENTS`                   | Persistent | Payment map; grows with usage                          |
@@ -25,6 +25,8 @@
 //! | `PENDING_APPROVALS`          | Persistent | Active multisig votes; cleaned up on execution         |
 //! | `OrgKey::Org(addr)`          | Persistent | Organization records; permanent registry               |
 //! | `DataKey::DonorUnits`        | Persistent | Donor index; grows with donations                      |
+//! | `DataKey::HospitalUnits`     | Persistent | Hospital index; units allocated/in-transit/delivered   |
+//! | `DataKey::UnitCustodyIndex`  | Persistent | Per-unit pending custody event lookup (O(1) confirm)   |
 //!
 //! ## Retention / Archival Strategy
 //!
@@ -56,7 +58,7 @@
 //! Persistent entries must have their TTL extended before they expire.
 //! Call `bump_rent_for_unit` after any write to a blood unit and its history.
 //! The `bump_all_registries` admin function extends the TTL of the shared
-//! registry maps (`BLOOD_BANKS`, `HOSPITALS`, `BLOOD_UNITS`, `REQUESTS`, etc.)
+//! shared registry keys (`NEXT_ID`, `PAYMENT_STATS`, `MULTISIG_CONFIG`).
 //! which are the highest-risk keys for rent expiry.
 //!
 //! ## Off-chain Consistency After Archival
@@ -70,14 +72,11 @@
 //! 4. Use `get_archived_history_summary` to obtain the first/last timestamps
 //!    and total count for display without loading the full history.
 
-#![allow(dead_code)]
-
-use soroban_sdk::{contracttype, symbol_short, Env, Vec};
+use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol, Vec};
 
 use crate::{
     BloodStatus, BloodUnit, CustodyEvent, CustodyStatus, DataKey, Error, StatusChangeEvent,
-    BLOOD_BANKS, BLOOD_UNITS, CUSTODY_EVENTS, DISPUTES, DISPUTE_METADATA, HISTORY, HOSPITALS,
-    PAYMENTS, PAYMENT_STATS, PENDING_APPROVALS, REQUESTS, REQUEST_KEYS,
+    HISTORY, MULTISIG_CONFIG, NEXT_ID, NEXT_REQUEST_ID, PAYMENT_STATS,
 };
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -101,7 +100,7 @@ pub const SECONDS_PER_DAY: u64 = 86_400;
 /// Compact summary stored in place of a full `Vec<StatusChangeEvent>` after
 /// the unit's history has been archived off-chain.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArchivedHistorySummary {
     /// Total number of status-change events that existed before archival.
     pub total_events: u32,
@@ -128,7 +127,7 @@ pub enum ArchiveKey {
 /// Compact summary stored after custody events for a terminal unit have been
 /// pruned from the `CUSTODY_EVENTS` map.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArchivedCustodySummary {
     /// Total confirmed custody transfers.
     pub total_confirmed: u32,
@@ -144,58 +143,113 @@ pub struct ArchivedCustodySummary {
 
 /// Extend the TTL of a single persistent key to at least `MIN_TTL_LEDGERS`.
 ///
-/// Call this after every write to a persistent key to prevent rent expiry.
-/// No-op if the key does not exist.
+/// Guards with `has()` first so it is safe to call even when the key may not
+/// exist yet (e.g. during a first-write path in tests).
 pub fn bump_persistent<K>(env: &Env, key: &K)
 where
     K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
 {
-    env.storage()
-        .persistent()
-        .extend_ttl(key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+    if env.storage().persistent().has(key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+    }
+}
+
+/// Bump TTL for a single `DataKey`-keyed per-record entry.
+///
+/// Call this immediately after every `env.storage().persistent().set(&DataKey::*, …)`
+/// in production write paths so the record survives past the default ledger TTL.
+pub fn bump_record(env: &Env, key: &DataKey) {
+    bump_persistent(env, key);
 }
 
 /// Bump TTL for all per-unit storage keys associated with `unit_id`.
 ///
+/// `unit` should be the current `BloodUnit` record so that the secondary
+/// index keys (BankUnits, DonorUnits, HospitalUnits, StatusUnits) can also
+/// be extended.  Pass `None` when the unit record is not yet available (e.g.
+/// mid-write), in which case only the core keys are bumped.
+///
 /// Should be called after any write that touches a blood unit or its history.
-pub fn bump_rent_for_unit(env: &Env, unit_id: u64) {
-    // Blood unit record
-    bump_persistent(env, &BLOOD_UNITS);
+pub fn bump_rent_for_unit(env: &Env, unit_id: u64, unit: Option<&BloodUnit>) {
+    // Core per-unit records: unit, status history, trail metadata.
+    bump_persistent(env, &DataKey::Unit(unit_id));
+    bump_persistent(env, &(HISTORY, unit_id));
+    bump_persistent(env, &DataKey::UnitTrailMeta(unit_id));
 
-    // Status history
-    let history_key = (HISTORY, unit_id);
-    env.storage()
-        .persistent()
-        .extend_ttl(&history_key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+    // Secondary index keys — only bumpable when we have the unit record.
+    // `bump_persistent` skips keys that do not exist yet (e.g. HospitalUnits
+    // before allocation), since `extend_ttl` on a missing key traps.
+    if let Some(u) = unit {
+        bump_persistent(env, &DataKey::BankUnits(u.bank_id.clone()));
+        bump_persistent(
+            env,
+            &DataKey::DonorUnits(u.bank_id.clone(), u.donor_id.clone()),
+        );
+        // Global cross-bank donor index (sentinel = current contract address).
+        bump_persistent(
+            env,
+            &DataKey::DonorUnits(env.current_contract_address(), u.donor_id.clone()),
+        );
+        bump_persistent(env, &DataKey::BloodTypeUnits(u.blood_type));
+        if let Some(ref hospital) = u.recipient_hospital {
+            bump_persistent(env, &DataKey::HospitalUnits(hospital.clone()));
+        }
+        bump_persistent(env, &DataKey::StatusUnits(u.status));
+    }
+}
 
-    // Trail metadata
-    let meta_key = DataKey::UnitTrailMeta(unit_id);
-    env.storage()
-        .persistent()
-        .extend_ttl(&meta_key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+/// Bump TTL for every per-record key tied to `payment_id`: the payment, its
+/// escrow account and any in-flight multisig approval record.
+pub fn bump_rent_for_payment(env: &Env, payment_id: u64) {
+    bump_persistent(env, &DataKey::Payment(payment_id));
+    bump_persistent(env, &DataKey::EscrowAccount(payment_id));
+    bump_persistent(env, &DataKey::PendingApprovalRecord(payment_id));
 }
 
 /// Bump TTL for all shared registry maps.
 ///
 /// These are the highest-risk keys because they are large and shared across
 /// all operations. Call this periodically (e.g., from an admin cron job).
+///
+/// Also extends TTL for the fixed, enumerable StatusUnits and BloodTypeUnits
+/// buckets. Per-record keys (units, payments, disputes and their indexes) are
+/// bumped on every write path; `bump_record_ttl` in `lib.rs` rescues records
+/// that have not been written recently.
 pub fn bump_all_registries(env: &Env) {
-    for key in &[
-        BLOOD_BANKS,
-        HOSPITALS,
-        BLOOD_UNITS,
-        REQUESTS,
-        REQUEST_KEYS,
-        PAYMENTS,
-        DISPUTES,
-        DISPUTE_METADATA,
-        CUSTODY_EVENTS,
-        PAYMENT_STATS,
-        PENDING_APPROVALS,
+    // Bump shared singleton/config keys (counters, stats, multisig config).
+    for key in &[NEXT_ID, NEXT_REQUEST_ID, PAYMENT_STATS, MULTISIG_CONFIG] {
+        bump_persistent(env, key);
+    }
+
+    // Bump all StatusUnits variants — these are fixed and enumerable.
+    for status in &[
+        BloodStatus::Available,
+        BloodStatus::Reserved,
+        BloodStatus::InTransit,
+        BloodStatus::Delivered,
+        BloodStatus::Quarantined,
+        BloodStatus::Expired,
+        BloodStatus::Discarded,
     ] {
-        env.storage()
-            .persistent()
-            .extend_ttl(key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+        let key = DataKey::StatusUnits(*status);
+        bump_persistent(env, &key);
+    }
+
+    // Bump all BloodTypeUnits variants — fixed and enumerable.
+    for bt in &[
+        crate::BloodType::APositive,
+        crate::BloodType::ANegative,
+        crate::BloodType::BPositive,
+        crate::BloodType::BNegative,
+        crate::BloodType::ABPositive,
+        crate::BloodType::ABNegative,
+        crate::BloodType::OPositive,
+        crate::BloodType::ONegative,
+    ] {
+        let key = DataKey::BloodTypeUnits(*bt);
+        bump_persistent(env, &key);
     }
 }
 
@@ -242,15 +296,11 @@ pub fn is_eligible_for_archival(
 /// Returns `Ok(true)` if archival was performed, `Ok(false)` if the unit is
 /// not yet eligible, and `Err` if the unit does not exist.
 pub fn archive_unit_history(env: &Env, unit_id: u64) -> Result<bool, Error> {
-    use soroban_sdk::Map;
-
-    let units: Map<u64, BloodUnit> = env
+    let unit: BloodUnit = env
         .storage()
         .persistent()
-        .get(&BLOOD_UNITS)
-        .unwrap_or(Map::new(env));
-
-    let unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
+        .get(&DataKey::Unit(unit_id))
+        .ok_or(Error::UnitNotFound)?;
 
     let history_key = (HISTORY, unit_id);
     let history: Vec<StatusChangeEvent> = env
@@ -299,70 +349,79 @@ pub fn archive_unit_history(env: &Env, unit_id: u64) -> Result<bool, Error> {
 ///
 /// Returns `Ok(true)` if pruning was performed, `Ok(false)` if not eligible.
 pub fn archive_custody_events(env: &Env, unit_id: u64) -> Result<bool, Error> {
-    use soroban_sdk::{Map, String as SorobanString};
+    use soroban_sdk::String as SorobanString;
 
-    let units: Map<u64, BloodUnit> = env
+    let unit: BloodUnit = env
         .storage()
         .persistent()
-        .get(&BLOOD_UNITS)
-        .unwrap_or(Map::new(env));
-
-    let unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
+        .get(&DataKey::Unit(unit_id))
+        .ok_or(Error::UnitNotFound)?;
 
     if !is_terminal_status(unit.status) {
         return Ok(false);
     }
 
     let current_time = env.ledger().timestamp();
-    // Require the same cooling-off window as history archival
-    let terminal_timestamp = unit
-        .delivery_timestamp
-        .or(unit.transfer_timestamp)
-        .unwrap_or(0);
+    // Derive the terminal timestamp from the unit's last actual history event,
+    // matching the approach used by archive_unit_history.  Using
+    // delivery_timestamp / transfer_timestamp is wrong for Discarded/Expired
+    // units — those fields are never set, causing terminal_timestamp to fall
+    // back to 0 and the guard to be bypassed entirely (current_time is always
+    // >> ARCHIVE_AFTER_DAYS * SECONDS_PER_DAY for any real timestamp).
+    let history_key = (HISTORY, unit_id);
+    let history: Vec<StatusChangeEvent> = env
+        .storage()
+        .persistent()
+        .get(&history_key)
+        .unwrap_or(Vec::new(env));
+    let terminal_timestamp = if history.is_empty() {
+        0u64
+    } else {
+        history.get(history.len() - 1).unwrap().timestamp
+    };
     if current_time < terminal_timestamp.saturating_add(ARCHIVE_AFTER_DAYS * SECONDS_PER_DAY) {
         return Ok(false);
     }
 
-    let mut custody_events: Map<SorobanString, CustodyEvent> = env
+    // Use the per-unit index to find only this unit's event_ids — O(k) where k = events
+    // for this unit, avoiding an O(n) scan over all custody events across all units.
+    let unit_events_key = DataKey::UnitCustodyEvents(unit_id);
+    let event_ids: Vec<SorobanString> = env
         .storage()
         .persistent()
-        .get(&CUSTODY_EVENTS)
-        .unwrap_or(Map::new(env));
+        .get(&unit_events_key)
+        .unwrap_or(Vec::new(env));
+
+    if event_ids.is_empty() {
+        return Ok(false);
+    }
 
     let mut confirmed: u32 = 0;
     let mut cancelled: u32 = 0;
     let mut last_event_at: u64 = 0;
-    let mut keys_to_remove: Vec<SorobanString> = Vec::new(env);
 
-    for (event_id, event) in custody_events.iter() {
-        if event.unit_id != unit_id {
-            continue;
-        }
-        match event.status {
-            CustodyStatus::Confirmed => confirmed += 1,
-            CustodyStatus::Cancelled => cancelled += 1,
-            CustodyStatus::Pending => {
-                // Pending events for a terminal unit are stale — remove them too
+    for i in 0..event_ids.len() {
+        let event_id = event_ids.get(i).unwrap();
+        let record_key = DataKey::CustodyRecord(event_id.clone());
+        if let Some(event) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, CustodyEvent>(&record_key)
+        {
+            match event.status {
+                CustodyStatus::Confirmed => confirmed += 1,
+                CustodyStatus::Cancelled => cancelled += 1,
+                CustodyStatus::Pending | CustodyStatus::Recovered => {}
             }
+            if event.initiated_at > last_event_at {
+                last_event_at = event.initiated_at;
+            }
+            env.storage().persistent().remove(&record_key);
         }
-        if event.initiated_at > last_event_at {
-            last_event_at = event.initiated_at;
-        }
-        keys_to_remove.push_back(event_id);
     }
 
-    if keys_to_remove.is_empty() {
-        return Ok(false);
-    }
-
-    for i in 0..keys_to_remove.len() {
-        let key = keys_to_remove.get(i).unwrap();
-        custody_events.remove(key);
-    }
-    env.storage()
-        .persistent()
-        .set(&CUSTODY_EVENTS, &custody_events);
-    bump_persistent(env, &CUSTODY_EVENTS);
+    // Clear the per-unit index now that its events have been archived
+    env.storage().persistent().remove(&unit_events_key);
 
     let summary = ArchivedCustodySummary {
         total_confirmed: confirmed,

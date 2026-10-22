@@ -53,11 +53,12 @@ export class AnomalyService {
     reviewedBy: string,
   ): Promise<AnomalyIncidentEntity> {
     const incident = await this.findOne(id);
-    await this.repo.update(id, {
+    const updated = await this.repo.save({
+      ...incident,
       status: dto.status,
       reviewNotes: dto.reviewNotes ?? null,
       reviewedBy,
     });
-    return { ...incident, ...dto, reviewedBy };
+    return updated;
   }
 }

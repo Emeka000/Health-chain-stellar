@@ -3,6 +3,8 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
 
+import { PaginatedResponse, PaginationQueryDto, PaginationUtil } from '../common/pagination';
+
 import { ActivityType } from '../user-activity/enums/activity-type.enum';
 import { UserActivityService } from '../user-activity/user-activity.service';
 
@@ -61,12 +63,24 @@ export class ApprovalService {
     
     await this.userActivityService.logActivity({
       userId: params.requesterId,
-      activityType: ActivityType.PERMISSION_CHANGED,
+      activityType: ActivityType.APPROVAL_REQUESTED,
       description: `Created approval request for ${params.actionType}`,
       metadata: { requestId: saved.id, ...params.metadata },
     });
 
     return saved;
+  }
+
+  async isApproved(targetId: string, actionType: ApprovalActionType): Promise<boolean> {
+    const request = await this.requestRepository.findOne({
+      where: {
+        targetId,
+        actionType,
+        status: ApprovalStatus.APPROVED,
+      },
+    });
+
+    return !!request;
   }
 
   async submitDecision(params: {
@@ -107,6 +121,13 @@ export class ApprovalService {
 
     const saved = await this.requestRepository.save(request);
 
+    await this.userActivityService.logActivity({
+      userId: params.userId,
+      activityType: ActivityType.APPROVAL_DECIDED,
+      description: `${params.decision} approval request ${params.requestId}`,
+      metadata: { requestId: params.requestId, decision: params.decision },
+    });
+
     if (saved.status === ApprovalStatus.APPROVED) {
       this.eventEmitter.emit('approval.approved', saved);
     }
@@ -114,14 +135,22 @@ export class ApprovalService {
     return saved;
   }
 
-  async getPendingRequests(): Promise<ApprovalRequestEntity[]> {
-    return this.requestRepository.find({
+  async getPendingRequests(
+    paginationDto?: PaginationQueryDto,
+  ): Promise<PaginatedResponse<ApprovalRequestEntity>> {
+    const { page = 1, pageSize = 25 } = paginationDto ?? {};
+
+    const [requests, totalCount] = await this.requestRepository.findAndCount({
       where: {
         status: ApprovalStatus.PENDING,
         expiresAt: MoreThan(new Date()),
       },
       order: { createdAt: 'DESC' },
+      skip: PaginationUtil.calculateSkip(page, pageSize),
+      take: pageSize,
     });
+
+    return PaginationUtil.createResponse(requests, page, pageSize, totalCount);
   }
 
   async getRequestById(id: string): Promise<ApprovalRequestEntity> {

@@ -23,8 +23,12 @@ import { PaginatedResponse } from '../common/pagination';
 
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderQueryParamsDto } from './dto/order-query-params.dto';
+import { UpdateOrderDto } from './dto/update-order.dto';
 import { UpdateRequestStatusDto } from './dto/update-request-status.dto';
+import { RaiseDisputeDto } from './dto/raise-dispute.dto';
+import { ResolveDisputeDto } from './dto/resolve-dispute.dto';
 import { OrdersService } from './orders.service';
+import { OrderStateAuditService } from './services/order-state-audit.service';
 import { Order } from './types/order.types';
 import { SlaService } from '../sla/sla.service';
 
@@ -32,14 +36,35 @@ interface AuthenticatedRequest {
   user?: {
     id: string;
     role?: string;
+    organizationId?: string | null;
   };
 }
 
+@ApiTags('Orders')
+@ApiBearerAuth()
 @Controller('orders')
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService, private readonly slaService: SlaService) {}
+  constructor(
+    private readonly ordersService: OrdersService,
+    private readonly slaService: SlaService,
+    private readonly auditService: OrderStateAuditService,
+  ) {}
+
+  /**
+   * GET /orders/state-audit
+   * Returns all orders with inconsistent or invalid materialized state (Issue #617).
+   */
+  @RequirePermissions(Permission.ADMIN_ACCESS)
+  @ApiOperation({ summary: 'Get state audit' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @Get('state-audit')
+  auditOrderStates() {
+    return this.auditService.auditAll();
+  }
 
   @RequirePermissions(Permission.VIEW_ORDER)
+  @ApiOperation({ summary: 'Get' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get()
   async findAllWithFilters(
     @Query(
@@ -63,6 +88,7 @@ export class OrdersController {
       }),
     )
     params: OrderQueryParamsDto,
+    @Request() req: AuthenticatedRequest,
   ): Promise<PaginatedResponse<Order>> {
     // Additional validation for date range
     if (params.startDate && params.endDate) {
@@ -75,13 +101,23 @@ export class OrdersController {
       }
     }
 
-    return this.ordersService.findAllWithFilters(params);
+    return this.ordersService.findAllWithFilters(params, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   @RequirePermissions(Permission.VIEW_ORDER)
+  @ApiOperation({ summary: 'Get :id' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.ordersService.findOne(id);
+  findOne(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
+    return this.ordersService.findOne(id, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   /**
@@ -90,31 +126,57 @@ export class OrdersController {
    * Each row contains: order_id, event_type, payload, actor_id, timestamp.
    */
   @RequirePermissions(Permission.VIEW_ORDER)
+  @ApiOperation({ summary: 'Get :id sla' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id/sla')
   getOrderSla(@Param('id') id: string) {
     return this.slaService.getOrderMetrics(id);
   }
 
   @RequirePermissions(Permission.VIEW_ORDER)
+  @ApiOperation({ summary: 'Get :id history' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id/history')
-  getOrderHistory(@Param('id') id: string) {
-    return this.ordersService.getOrderHistory(id);
+  getOrderHistory(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
+    return this.ordersService.getOrderHistory(id, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   @RequirePermissions(Permission.VIEW_ORDER)
+  @ApiOperation({ summary: 'Get :id track' })
+  @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id/track')
-  trackOrder(@Param('id') id: string) {
-    return this.ordersService.trackOrder(id);
+  trackOrder(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
+    return this.ordersService.trackOrder(id, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   @RequirePermissions(Permission.VIEW_ORDER)
+  @ApiOperation({ summary: 'Post :id preview fees' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post(':id/preview-fees')
-  previewOrderFees(@Param('id') id: string, @Body() previewData: any) {
+  previewOrderFees(
+    @Param('id') id: string,
+    @Body() previewData: any,
+    @Request() req: AuthenticatedRequest,
+  ) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
-    return this.ordersService.previewOrderFees(id, previewData);
+    return this.ordersService.previewOrderFees(id, previewData, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   @RequirePermissions(Permission.CREATE_ORDER)
+  @ApiOperation({ summary: 'Post' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post()
   create(
     @Body() createOrderDto: CreateOrderDto,
@@ -122,16 +184,32 @@ export class OrdersController {
   ) {
     const actorId: string | undefined = req.user?.id;
 
-    return this.ordersService.create(createOrderDto, actorId);
+    return this.ordersService.create(createOrderDto, actorId, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   @RequirePermissions(Permission.UPDATE_ORDER)
+  @ApiOperation({ summary: 'Patch :id' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateOrderDto: any) {
-    return this.ordersService.update(id, updateOrderDto);
+  update(
+    @Param('id') id: string,
+    @Body() updateOrderDto: UpdateOrderDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.ordersService.update(id, updateOrderDto, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   @RequirePermissions(Permission.UPDATE_ORDER)
+  @ApiOperation({ summary: 'Patch :id status' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id/status')
   updateStatus(
     @Param('id') id: string,
@@ -145,10 +223,17 @@ export class OrdersController {
       statusUpdateDto,
       actorId,
       actorRole,
+      {
+        userId: req.user?.id ?? 'unknown',
+        role: req.user?.role,
+        organizationId: req.user?.organizationId ?? null,
+      },
     );
   }
 
   @RequirePermissions(Permission.MANAGE_RIDERS)
+  @ApiOperation({ summary: 'Patch :id assign rider' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id/assign-rider')
   assignRider(
     @Param('id') id: string,
@@ -156,42 +241,63 @@ export class OrdersController {
     @Request() req: AuthenticatedRequest,
   ) {
     const actorId: string | undefined = req.user?.id;
-    return this.ordersService.assignRider(id, riderId, actorId);
+    return this.ordersService.assignRider(id, riderId, actorId, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
+  }
+
+  @RequirePermissions(Permission.UPDATE_ORDER)
+  @ApiOperation({ summary: 'Post :id raise dispute' })
+  @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @Post(':id/disputes')
+  raiseDispute(
+    @Param('id') id: string,
+    @Body() raiseDisputeDto: RaiseDisputeDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    const actorId: string | undefined = req.user?.id;
+    return this.ordersService.raiseDispute(id, raiseDisputeDto, actorId, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
+  }
+
+  @RequirePermissions(Permission.ADMIN_ACCESS)
+  @ApiOperation({ summary: 'Patch :id disputes :disputeId resolve' })
+  @ApiResponse({ status: 200, description: 'Resource updated successfully' })
+  @Patch(':id/disputes/:disputeId/resolve')
+  resolveDispute(
+    @Param('id') id: string,
+    @Param('disputeId') disputeId: string,
+    @Body() resolveDisputeDto: ResolveDisputeDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    const actorId: string | undefined = req.user?.id;
+    return this.ordersService.resolveDispute(
+      id,
+      disputeId,
+      resolveDisputeDto,
+      actorId,
+      {
+        userId: req.user?.id ?? 'unknown',
+        role: req.user?.role,
+        organizationId: req.user?.organizationId ?? null,
+      },
+    );
   }
 
   @RequirePermissions(Permission.DELETE_ORDER)
+  @ApiOperation({ summary: 'Delete :id' })
+  @ApiResponse({ status: 200, description: 'Resource deleted successfully' })
   @Delete(':id')
-  @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
-    const actorId: string | undefined = req.user?.id;
-    return this.ordersService.remove(id, actorId);
-  }
-
-  @RequirePermissions(Permission.UPDATE_ORDER)
-  @Patch(':id/raise-dispute')
-  @HttpCode(HttpStatus.OK)
-  raiseDispute(
-    @Param('id') id: string,
-
-    @Body() dto: any,
-    @Request() req: AuthenticatedRequest,
-  ) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
-    return this.ordersService.raiseDispute(id, dto, req.user?.id);
-  }
-
-  @RequirePermissions(Permission.UPDATE_ORDER)
-  @Auditable({ action: 'order.resolve-dispute', resourceType: 'Order' })
-  @UseInterceptors(AuditLogInterceptor)
-  @Patch(':id/resolve-dispute')
-  @HttpCode(HttpStatus.OK)
-  resolveDispute(
-    @Param('id') id: string,
-
-    @Body() dto: any,
-    @Request() req: AuthenticatedRequest,
-  ) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
-    return this.ordersService.resolveDispute(id, dto, req.user?.id);
+    return this.ordersService.remove(id, {
+      userId: req.user?.id ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 }

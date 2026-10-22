@@ -22,9 +22,19 @@
     "test:contracts:watch": "jest --testPathPatterns='__contracts__' --watch",
     "test:contracts:cov": "jest --testPathPatterns='__contracts__' --coverage --detectOpenHandles --forceExit",
     "prepare": "cd .. && husky backend/.husky",
-    "seed": "ts-node -r tsconfig-paths/register src/scripts/seed.ts"
+    "seed": "ts-node -r tsconfig-paths/register src/scripts/seed.ts",
+    "migration:run": "typeorm migration:run -d dist/data-source.js",
+    "migration:revert": "typeorm migration:revert -d dist/data-source.js",
+    "migration:generate": "typeorm migration:generate -d dist/data-source.js",
+    "migration:create": "typeorm migration:create"
   },
   "dependencies": {
+    "@healthchain/base-sdk": "*",
+    "@healthchain/coordinator-sdk": "*",
+    "@healthchain/inventory-sdk": "*",
+    "@healthchain/payments-sdk": "*",
+    "@healthchain/requests-sdk": "*",
+    "@healthchain/temperature-sdk": "*",
     "@aws-sdk/client-s3": "^3.600.0",
     "@aws-sdk/s3-request-presigner": "^3.600.0",
     "@nest-lab/throttler-storage-redis": "^1.2.0",
@@ -45,7 +55,6 @@
     "@nestjs/websockets": "^11.1.14",
     "@stellar/stellar-sdk": "^14.5.0",
     "@types/bull": "^3.15.9",
-    "africastalking": "^0.7.9",
     "bullmq": "^5.69.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.3",

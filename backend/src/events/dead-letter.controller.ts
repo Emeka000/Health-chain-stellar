@@ -1,0 +1,129 @@
+import {
+    Body,
+    BadRequestException,
+    Controller,
+    DefaultValuePipe,
+    Delete,
+    Get,
+    Param,
+    ParseIntPipe,
+    Post,
+    Query,
+} from '@nestjs/common';
+import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
+import { Permission } from '../auth/enums/permission.enum';
+import { DeadLetterService } from './dead-letter.service';
+import {
+    DeadLetterReason,
+    ErrorCategory,
+    ReplayRequest,
+} from './canonical-event.envelope';
+import { CanonicalEventEmitterService } from './canonical-event-emitter.service';
+
+@ApiTags('Events')
+@ApiBearerAuth()
+@RequirePermissions(Permission.ADMIN_ACCESS)
+@Controller('dead-letter')
+export class DeadLetterController {
+    constructor(
+        private readonly deadLetterService: DeadLetterService,
+        private readonly eventEmitter: CanonicalEventEmitterService,
+    ) { }
+
+    /**
+     * Query dead-letter events
+     */
+    @ApiOperation({ summary: 'Get' })
+    @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+    @Get()
+    async queryDeadLetters(
+        @Query('eventTypes') eventTypes?: string,
+        @Query('deadLetterReasons') deadLetterReasons?: string,
+        @Query('errorCategories') errorCategories?: string,
+        @Query('startTime') startTime?: string,
+        @Query('endTime') endTime?: string,
+        @Query('isReplayable') isReplayable?: string,
+        @Query('isPoisonMessage') isPoisonMessage?: string,
+        @Query('replayed') replayed?: string,
+        @Query('limit') limit?: string,
+    ) {
+        return this.deadLetterService.queryDeadLetters({
+            eventTypes: eventTypes ? eventTypes.split(',') : undefined,
+            deadLetterReasons: deadLetterReasons
+                ? (deadLetterReasons.split(',') as DeadLetterReason[])
+                : undefined,
+            errorCategories: errorCategories
+                ? (errorCategories.split(',') as ErrorCategory[])
+                : undefined,
+            startTime: startTime ? new Date(startTime) : undefined,
+            endTime: endTime ? new Date(endTime) : undefined,
+            isReplayable: isReplayable ? isReplayable === 'true' : undefined,
+            isPoisonMessage: isPoisonMessage ? isPoisonMessage === 'true' : undefined,
+            replayed: replayed ? replayed === 'true' : undefined,
+            limit: limit ? parseInt(limit, 10) : undefined,
+        });
+    }
+
+    /**
+     * Get dead-letter statistics
+     */
+    @ApiOperation({ summary: 'Get statistics' })
+    @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+    @Get('statistics')
+    async getStatistics(
+        @Query('startTime') startTime?: string,
+        @Query('endTime') endTime?: string,
+    ) {
+        return this.deadLetterService.getStatistics({
+            startTime: startTime ? new Date(startTime) : undefined,
+            endTime: endTime ? new Date(endTime) : undefined,
+        });
+    }
+
+    /**
+     * Get a specific dead-letter event
+     */
+    @ApiOperation({ summary: 'Get :id' })
+    @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+    @Get(':id')
+    async getDeadLetter(@Param('id') id: string) {
+        const events = await this.deadLetterService.queryDeadLetters({
+            limit: 1,
+        });
+        return events.find((e) => e.id === id);
+    }
+
+    /**
+     * Replay dead-letter events
+     */
+    @ApiOperation({ summary: 'Post replay' })
+    @ApiResponse({ status: 201, description: 'Resource created successfully' })
+    @Post('replay')
+    async replayDeadLetters(@Body() request: ReplayRequest) {
+        return this.deadLetterService.replayDeadLetters(
+            request,
+            async (event) => {
+                // Re-emit the event
+                await this.eventEmitter.emit(event, { skipValidation: false });
+            },
+        );
+    }
+
+    /**
+     * Purge old dead-letter events
+     */
+    @ApiOperation({ summary: 'Delete purge' })
+    @ApiResponse({ status: 200, description: 'Resource deleted successfully' })
+    @Delete('purge')
+    async purgeOldEvents(
+        @Query('olderThanDays', new DefaultValuePipe(30), ParseIntPipe)
+        days: number,
+    ) {
+        if (days < 7) {
+            throw new BadRequestException('olderThanDays must be at least 7');
+        }
+        return {
+            deletedCount: await this.deadLetterService.purgeOldEvents(days),
+        };
+    }
+}

@@ -153,6 +153,23 @@ Admin-only: Unlock a locked user account.
 
 **Response:** `200 OK`
 
+## Role-to-Permission Matrix
+
+For a complete table of which role holds which permission, see
+**[docs/rbac.md](../../../../docs/rbac.md)**.
+
+That document also covers:
+- How permission resolution works at request time
+- Every `Permission` enum value and what it allows
+- Known gaps (permissions in the enum that are currently ungranted, causing 403 for all roles)
+- Step-by-step instructions for adding or changing a grant via a migration
+
+A Jest test at [`__tests__/rbac-coverage.spec.ts`](./__tests__/rbac-coverage.spec.ts)
+fails if any `Permission` enum value is not seeded to at least one role, keeping the
+matrix and the migrations in sync.
+
+---
+
 ## Usage
 
 ### Protecting Routes

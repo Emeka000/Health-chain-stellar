@@ -10,4 +10,5 @@ pub enum AnalyticsError {
     InvalidPeriod = 903,
     PeriodNotFound = 904,
     MetricNotFound = 905,
+    InvalidAmount = 906,
 }

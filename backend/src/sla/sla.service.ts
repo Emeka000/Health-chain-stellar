@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SlaRecordEntity } from './entities/sla-record.entity';
 import { SlaStage } from './enums/sla-stage.enum';
-import { SlaBreachQueryDto } from './dto/sla-breach-query.dto';
+import { SlaBreachQueryDto, SlaBreachResponseDto } from './dto/sla-breach-query.dto';
 
 /** SLA budgets in seconds per stage per urgency tier */
 const SLA_BUDGETS: Record<string, Record<SlaStage, number>> = {
@@ -133,8 +133,12 @@ export class SlaService {
     };
   }
 
-  /** Query breached records with optional filters */
-  async queryBreaches(query: SlaBreachQueryDto): Promise<SlaRecordEntity[]> {
+  /** Query breached records with optional filters and pagination */
+  async queryBreaches(query: SlaBreachQueryDto): Promise<SlaBreachResponseDto> {
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 25;
+    const skip = (page - 1) * pageSize;
+
     const qb = this.slaRepo.createQueryBuilder('sla').where('sla.breached = true');
 
     if (query.hospitalId) qb.andWhere('sla.hospitalId = :hospitalId', { hospitalId: query.hospitalId });
@@ -145,7 +149,19 @@ export class SlaService {
     if (query.startDate) qb.andWhere('sla.startedAt >= :startDate', { startDate: query.startDate });
     if (query.endDate) qb.andWhere('sla.startedAt <= :endDate', { endDate: query.endDate });
 
-    return qb.orderBy('sla.startedAt', 'DESC').getMany();
+    const [data, total] = await qb
+      .orderBy('sla.startedAt', 'DESC')
+      .skip(skip)
+      .take(pageSize)
+      .getManyAndCount();
+
+    return {
+      data,
+      total,
+      page,
+      pageSize,
+      totalPages: Math.ceil(total / pageSize),
+    };
   }
 
   /** Aggregate breach rate grouped by a dimension (hospital | bloodBank | rider | urgencyTier) */

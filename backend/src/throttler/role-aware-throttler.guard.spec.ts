@@ -5,6 +5,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 
 import request from 'supertest';
 
+import { getEffectiveRoleThrottleLimit } from '../config/throttle-limits.config';
 import { RoleAwareThrottlerGuard } from './role-aware-throttler.guard';
 
 /** Minimal request shape the guard reads */
@@ -20,22 +21,22 @@ interface FakeRequest {
 class RoleThrottleProbeController {
   @Get('admin')
   adminProbe(@Req() _req: FakeRequest) {
-    return { ok: true, role: 'ADMIN' };
+    return { ok: true, role: 'admin' };
   }
 
   @Get('hospital')
   hospitalProbe(@Req() _req: FakeRequest) {
-    return { ok: true, role: 'HOSPITAL' };
+    return { ok: true, role: 'hospital' };
   }
 
   @Get('public')
   publicProbe(@Req() _req: FakeRequest) {
-    return { ok: true, role: 'PUBLIC' };
+    return { ok: true, role: 'public' };
   }
 
   @Get('ussd')
   ussdProbe(@Req() _req: FakeRequest) {
-    return { ok: true, role: 'USSD' };
+    return { ok: true, role: 'ussd' };
   }
 }
 
@@ -78,7 +79,7 @@ describe('RoleAwareThrottlerGuard — ADMIN role', () => {
   let app: INestApplication;
 
   beforeEach(async () => {
-    app = await buildApp('ADMIN');
+    app = await buildApp('admin');
   });
 
   afterEach(async () => {
@@ -102,7 +103,7 @@ describe('RoleAwareThrottlerGuard — PUBLIC role', () => {
 
   beforeEach(async () => {
     // Build with a tiny PUBLIC limit so tests run fast
-    app = await buildApp('PUBLIC', 'public-user-1');
+    app = await buildApp('public', 'public-user-1');
   });
 
   afterEach(async () => {
@@ -148,7 +149,7 @@ describe('RoleAwareThrottlerGuard — PUBLIC role', () => {
 
       const a = mod.createNestApplication();
       a.use((_req: any, _res: any, next: () => void) => {
-        _req.user = { id: 'pub-tiny', role: 'PUBLIC' };
+        _req.user = { id: 'pub-tiny', role: 'public' };
         next();
       });
       await a.init();
@@ -176,7 +177,7 @@ describe('RoleAwareThrottlerGuard — USSD role', () => {
   let app: INestApplication;
 
   beforeEach(async () => {
-    app = await buildApp('USSD', 'ussd-user-1');
+    app = await buildApp('ussd', 'ussd-user-1');
   });
 
   afterEach(async () => {
@@ -196,7 +197,7 @@ describe('RoleAwareThrottlerGuard — HOSPITAL role', () => {
   let app: INestApplication;
 
   beforeEach(async () => {
-    app = await buildApp('HOSPITAL', 'hospital-user-1');
+    app = await buildApp('hospital', 'hospital-user-1');
   });
 
   afterEach(async () => {
@@ -209,13 +210,14 @@ describe('RoleAwareThrottlerGuard — HOSPITAL role', () => {
       .expect(200);
   });
 
-  it('resolves higher limit than PUBLIC (200 vs 30)', () => {
-    // Limits are defined in config; assert the config values directly
-    // so the test doesn't need to exhaust 200 requests
-    const { ROLE_THROTTLE_LIMITS } = require('../config/throttle-limits.config');
-    expect(ROLE_THROTTLE_LIMITS['HOSPITAL'].limit).toBeGreaterThan(
-      ROLE_THROTTLE_LIMITS['PUBLIC'].limit,
-    );
+  it('applies the 2x emergency weight to the hospital limit', () => {
+    expect(getEffectiveRoleThrottleLimit('hospital')).toBe(200 * 2);
+  });
+});
+
+describe('RoleAwareThrottlerGuard — VENDOR role', () => {
+  it('applies the blood-bank vendor limit', () => {
+    expect(getEffectiveRoleThrottleLimit('vendor')).toBe(500);
   });
 });
 
@@ -225,7 +227,7 @@ describe('RoleAwareThrottlerGuard — rate-limit response headers', () => {
   let app: INestApplication;
 
   beforeEach(async () => {
-    app = await buildApp('HOSPITAL', 'hosp-header-user');
+    app = await buildApp('hospital', 'hosp-header-user');
   });
 
   afterEach(async () => {

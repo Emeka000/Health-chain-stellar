@@ -36,10 +36,15 @@ export class DonationController {
   }
 
   @Patch(':id/confirm')
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Submit transaction hash to confirm a payment donation' })
   @ApiResponse({ status: 200, type: DonationEntity })
-  async confirmDonation(@Param('id') id: string, @Body() dto: ConfirmDonationDto) {
-    return this.donationService.confirmDonation(id, dto.transactionHash);
+  async confirmDonation(
+    @Param('id') id: string,
+    @Body() dto: ConfirmDonationDto,
+    @Request() req: any,
+  ) {
+    return this.donationService.confirmDonation(id, dto.transactionHash, req.user?.id);
   }
 
   @Get('my-donations')

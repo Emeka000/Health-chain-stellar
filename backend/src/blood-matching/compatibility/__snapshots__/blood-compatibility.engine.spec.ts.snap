@@ -1,0 +1,97 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`BloodCompatibilityEngine matrix snapshot plasma matrix matches expected snapshot 1`] = `
+{
+  "A+": [
+    "A+",
+    "AB+",
+  ],
+  "A-": [
+    "A-",
+    "A+",
+    "AB-",
+    "AB+",
+  ],
+  "AB+": [
+    "AB+",
+  ],
+  "AB-": [
+    "AB-",
+    "AB+",
+  ],
+  "B+": [
+    "B+",
+    "AB+",
+  ],
+  "B-": [
+    "B-",
+    "B+",
+    "AB-",
+    "AB+",
+  ],
+  "O+": [
+    "O+",
+    "A+",
+    "B+",
+    "AB+",
+  ],
+  "O-": [
+    "O-",
+    "O+",
+    "A-",
+    "A+",
+    "B-",
+    "B+",
+    "AB-",
+    "AB+",
+  ],
+}
+`;
+
+exports[`BloodCompatibilityEngine matrix snapshot red cell matrix matches expected snapshot 1`] = `
+{
+  "A+": [
+    "O-",
+    "O+",
+    "A-",
+    "A+",
+  ],
+  "A-": [
+    "O-",
+    "A-",
+  ],
+  "AB+": [
+    "O-",
+    "O+",
+    "A-",
+    "A+",
+    "B-",
+    "B+",
+    "AB-",
+    "AB+",
+  ],
+  "AB-": [
+    "O-",
+    "A-",
+    "B-",
+    "AB-",
+  ],
+  "B+": [
+    "O-",
+    "O+",
+    "B-",
+    "B+",
+  ],
+  "B-": [
+    "O-",
+    "B-",
+  ],
+  "O+": [
+    "O-",
+    "O+",
+  ],
+  "O-": [
+    "O-",
+  ],
+}
+`;

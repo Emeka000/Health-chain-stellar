@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { ConsentModule } from '../consent/consent.module';
 import { DonationEntity } from './entities/donation.entity';
 import { PledgeEntity } from './entities/pledge.entity';
 import { DonationService } from './services/donation.service';
@@ -15,6 +16,7 @@ import { UserActivityModule } from '../user-activity/user-activity.module';
     TypeOrmModule.forFeature([DonationEntity, PledgeEntity]),
     SorobanModule,
     UserActivityModule,
+    ConsentModule,
   ],
   providers: [DonationService, PledgeService],
   controllers: [DonationController, PledgeController],

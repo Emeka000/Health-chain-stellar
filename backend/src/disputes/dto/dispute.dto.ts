@@ -29,10 +29,6 @@ export class ResolveDisputeDto {
   /** Structured outcome required for arbitration traceability (#585). */
   @IsEnum(DisputeOutcome)
   outcome: DisputeOutcome;
-
-  /** Identity of the arbitrator recording the resolution. */
-  @IsString()
-  resolvedBy: string;
 }
 
 export class AddNoteDto {

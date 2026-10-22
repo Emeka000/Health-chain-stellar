@@ -1,40 +1,64 @@
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsBoolean,
+  IsEmail,
   IsEnum,
   IsOptional,
   IsString,
-  IsNumber,
-  IsBoolean,
+  IsUUID,
+  MaxLength,
 } from 'class-validator';
 
-import { RiderStatus } from '../enums/rider-status.enum';
 import { VehicleType } from '../enums/vehicle-type.enum';
 
 export class UpdateRiderDto {
-  @IsEnum(VehicleType)
+  @ApiPropertyOptional()
   @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  firstName?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  lastName?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  phone?: string;
+
+  @ApiPropertyOptional({ enum: VehicleType })
+  @IsOptional()
+  @IsEnum(VehicleType)
   vehicleType?: VehicleType;
 
-  @IsString()
+  @ApiPropertyOptional()
   @IsOptional()
-  vehicleNumber?: string;
+  @IsString()
+  @MaxLength(50)
+  vehiclePlate?: string;
 
-  @IsString()
+  @ApiPropertyOptional()
   @IsOptional()
+  @IsString()
+  @MaxLength(100)
   licenseNumber?: string;
 
-  @IsEnum(RiderStatus)
+  @ApiPropertyOptional()
   @IsOptional()
-  status?: RiderStatus;
+  @IsUUID()
+  preferredAreaId?: string;
 
-  @IsOptional()
-  @IsNumber()
-  latitude?: number;
-
-  @IsOptional()
-  @IsNumber()
-  longitude?: number;
-
+  @ApiPropertyOptional()
   @IsOptional()
   @IsBoolean()
-  isVerified?: boolean;
+  isAvailable?: boolean;
 }

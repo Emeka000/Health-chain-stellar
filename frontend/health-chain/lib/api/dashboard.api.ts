@@ -17,18 +17,9 @@ export interface DashboardStats {
  * Fetch aggregated dashboard statistics.
  * Maps to GET /api/v1/dashboard/stats
  *
- * Falls back to placeholder data while the endpoint is implemented.
+ * The React Query isError state in the consuming hook should render an error banner
+ * if the backend is unreachable.
  */
 export async function fetchDashboardStats(): Promise<DashboardStats> {
-  try {
-    return await api.get<DashboardStats>(`/${API_PREFIX}/dashboard/stats`);
-  } catch {
-    // Placeholder until backend endpoint is live
-    return {
-      totalBloodUnits: 2300,
-      pendingRequests: 42,
-      activeDeliveries: 18,
-      totalDonors: 120,
-    };
-  }
+  return api.get<DashboardStats>(`/${API_PREFIX}/dashboard/stats`);
 }

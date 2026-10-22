@@ -8,6 +8,18 @@ import {
   IsDateString,
 } from 'class-validator';
 
+export const ORDER_SORTABLE_COLUMNS = [
+  'id',
+  'placedAt',
+  'updatedAt',
+  'status',
+  'bloodType',
+  'quantity',
+  'urgency',
+] as const;
+
+export type OrderSortableColumn = (typeof ORDER_SORTABLE_COLUMNS)[number];
+
 export class OrderQueryParamsDto {
   @IsString()
   hospitalId: string;
@@ -33,8 +45,8 @@ export class OrderQueryParamsDto {
   bloodBank?: string;
 
   @IsOptional()
-  @IsString()
-  sortBy?: string;
+  @IsIn(ORDER_SORTABLE_COLUMNS)
+  sortBy?: OrderSortableColumn;
 
   @IsOptional()
   @IsIn(['asc', 'desc'])

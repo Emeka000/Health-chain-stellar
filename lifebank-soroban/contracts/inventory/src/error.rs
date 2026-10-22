@@ -18,6 +18,7 @@ pub enum ContractError {
     InvalidTimestamp = 115,
     InvalidQuantity = 116,
     InvalidExpiration = 117,
+    BatchTooLarge = 118,
 
     // State errors (120-129)
     AlreadyExists = 120,
@@ -30,6 +31,7 @@ pub enum ContractError {
     InsufficientBalance = 130,
     InsufficientPermissions = 131,
     NotAuthorizedBloodBank = 132,
+    NotUnitOwner = 133,
 
     // Blood-specific errors (140-149)
     BloodUnitNotAvailable = 140,
@@ -39,7 +41,16 @@ pub enum ContractError {
     ReservationNotFound = 150,
     ReservationExpired = 151,
     NotReservationOwner = 152,
+    ReservationNotExpired = 153,
 
     // Circuit breaker (160)
     ContractPaused = 160,
+
+    // Role-based access control (170-179)
+    InvalidRole = 170,
+    InsufficientRolePermission = 171,
+
+    // Cross-contract synchronisation (180-189)
+    RegistryNotConfigured = 180,
+    RegistryCallFailed = 181,
 }

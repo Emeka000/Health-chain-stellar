@@ -47,6 +47,20 @@ export class PermissionsGuard implements CanActivate {
       return true;
     }
 
+    // Reject metadata that contains undefined/null entries (e.g. a decorator
+    // referencing a Permission enum member that does not exist). Treating these
+    // as "allow" would silently open the route to every authenticated user.
+    const invalidPermissions = requiredPermissions.filter(
+      (permission) => permission === undefined || permission === null,
+    );
+    if (invalidPermissions.length > 0) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        message: 'Forbidden: invalid permission requirement',
+        requiredPermissions,
+      });
+    }
+
     const request = context.switchToHttp().getRequest<{
       user?: { id: string; email: string; role: string };
     }>();

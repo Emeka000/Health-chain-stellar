@@ -1,7 +1,8 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 
-import type { Job, Queue } from 'bullmq';
+import { QueueEvents } from 'bullmq';
+import type { Queue } from 'bullmq';
 
 export interface QueueCounters {
   /** Total jobs added to the main queue since process start. */
@@ -71,6 +72,8 @@ export class QueueMetricsService implements OnModuleInit {
 
   private since = new Date().toISOString();
 
+  private queueEvents?: QueueEvents;
+
   constructor(
     @InjectQueue('soroban-tx-queue') private readonly txQueue: Queue,
     @InjectQueue('soroban-dlq') private readonly dlq: Queue,
@@ -137,38 +140,47 @@ export class QueueMetricsService implements OnModuleInit {
   // ─── Bull event listeners ──────────────────────────────────────────────────
 
   private attachQueueListeners(): void {
-    // Main queue events
+    // A BullMQ Queue only emits a limited set of events. `waiting` is one of
+    // them, so it can be observed directly on the queue.
     this.txQueue.on('waiting', (_jobId: string) => {
       this.counters.queued++;
     });
 
-    this.txQueue.on('active', (job: Job) => {
-      this.counters.processing++;
-      this.jobStartTimes.set(job.id, Date.now());
+    // `active`, `completed`, `failed` and `stalled` are emitted by a Worker
+    // (or QueueEvents), not by the Queue itself. Subscribe via QueueEvents
+    // using the same connection as the queue.
+    this.queueEvents = new QueueEvents('soroban-tx-queue', {
+      connection: this.txQueue.opts.connection,
     });
 
-    this.txQueue.on('completed', (job: Job) => {
+    this.queueEvents.on('active', ({ jobId }) => {
+      this.counters.processing++;
+      this.jobStartTimes.set(jobId, Date.now());
+    });
+
+    this.queueEvents.on('completed', ({ jobId }) => {
       this.counters.processing = Math.max(0, this.counters.processing - 1);
       this.counters.success++;
-      this.recordTiming(job.id);
+      this.recordTiming(jobId);
     });
 
-    this.txQueue.on('failed', (job: Job, _err: Error) => {
+    this.queueEvents.on('failed', ({ jobId }) => {
       this.counters.processing = Math.max(0, this.counters.processing - 1);
       this.counters.failure++;
-
-      // If there are attempts remaining, Bull will retry — count it
-      const attemptsRemaining =
-        (job.opts.attempts ?? 1) - (job.attemptsMade + 1);
-      if (attemptsRemaining > 0) {
-        this.counters.retries++;
-      }
+      // Retry accounting is handled by the processor via incrementRetry().
+      this.jobStartTimes.delete(jobId);
     });
 
-    this.txQueue.on('stalled', (_job: Job) => {
+    this.queueEvents.on('stalled', ({ jobId }) => {
       // Stalled jobs are re-queued by Bull; treat as a retry
       this.counters.retries++;
-      this.logger.warn(`[Metrics] Stalled job detected — counted as retry`);
+      this.logger.warn(
+        `[Metrics] Stalled job detected (${jobId}) — counted as retry`,
+      );
+    });
+
+    this.queueEvents.on('error', (err: Error) => {
+      this.logger.error(`[Metrics] QueueEvents error: ${err.message}`);
     });
 
     // DLQ queue events — the processor also calls incrementDlq() directly,

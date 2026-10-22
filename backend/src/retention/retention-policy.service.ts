@@ -112,7 +112,7 @@ export class RetentionPolicyService {
           lastName: null,
           name: `[ANONYMISED]`,
           phoneNumber: null,
-          passwordHash: undefined, // invalidate credentials
+          passwordHash: null, // invalidate credentials
           isActive: false,
           anonymised: true,
         });

@@ -1,0 +1,19 @@
+[package]
+name = "integration-tests"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# The integration_test.rs file is declared as a [[test]] target so that
+# `cargo test -p integration-tests` compiles and runs it like a standard
+# Rust integration test binary (with std, linked against soroban testutils).
+[[test]]
+name = "integration_test"
+path = "integration_test.rs"
+
+[dependencies]
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+coordinator-contract = { path = "../contracts/coordinator" }
+temperature-contract = { path = "../contracts/temperature" }

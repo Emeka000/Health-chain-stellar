@@ -41,9 +41,23 @@ Ensure you have Node.js installed on your machine.
 ```Bash
 npm install
 ```
-3. Run the development server:
+3. Create a local environment file from the example:
+```Bash
+   cp .env.example .env.local
+```
+4. Run the development server:
 ```Bash
 npm run dev
 ```
-4. Open http://localhost:3000 to view the Landing Page.
-5. Navigate to http://localhost:3000/dashboard to view the Admin Interface.
+5. Open http://localhost:3000 to view the Landing Page.
+6. Navigate to http://localhost:3000/dashboard to view the Admin Interface.
+
+### Environment
+
+The frontend supports the following environment variables:
+
+- `NEXT_PUBLIC_API_URL` — backend API base URL (default: `http://localhost:3001`)
+- `NEXT_PUBLIC_API_PREFIX` — backend API prefix (default: `api/v1`)
+- `NEXT_PUBLIC_WS_URL` — WebSocket server URL (default: `ws://localhost:3001`)
+
+Next.js loads local overrides from `.env.local`. Make sure the backend is running at the configured API and WebSocket URLs before using the frontend.

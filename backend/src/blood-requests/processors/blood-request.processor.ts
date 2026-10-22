@@ -52,6 +52,11 @@ export class BloodRequestProcessor extends WorkerHost {
 
     // Check SLA breach before processing
     const slaWindowMs = SLA_WINDOWS_MS[urgency];
+    if (slaWindowMs === undefined) {
+      throw new Error(
+        `No SLA window configured for urgency "${urgency}" (request ${requestId})`,
+      );
+    }
     const elapsedMs = Date.now() - enqueuedAt;
     if (elapsedMs > slaWindowMs) {
       this.logger.warn(

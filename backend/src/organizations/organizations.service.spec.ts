@@ -18,6 +18,7 @@ import { EmailProvider } from '../notifications/providers/email.provider';
 
 import { OrganizationEntity } from './entities/organization.entity';
 import { OrganizationVerificationStatus } from './enums/organization-verification-status.enum';
+import { OrganizationRepository } from './organizations.repository';
 import { OrganizationsService } from './organizations.service';
 
 describe('OrganizationsService', () => {
@@ -27,6 +28,7 @@ describe('OrganizationsService', () => {
     create: jest.Mock;
     save: jest.Mock;
     find: jest.Mock;
+    createActiveQueryBuilder: jest.Mock;
   };
   let emailProvider: { send: jest.Mock };
   let soroban: { submitTransactionAndWait: jest.Mock };
@@ -51,6 +53,7 @@ describe('OrganizationsService', () => {
       create: jest.fn((v) => ({ ...v })),
       save: jest.fn(async (e) => ({ ...e })),
       find: jest.fn(),
+      createActiveQueryBuilder: jest.fn(),
     };
     emailProvider = { send: jest.fn().mockResolvedValue(undefined) };
     soroban = {
@@ -69,6 +72,7 @@ describe('OrganizationsService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         OrganizationsService,
+        OrganizationRepository,
         { provide: getRepositoryToken(OrganizationEntity), useValue: repo },
         { provide: EmailProvider, useValue: emailProvider },
         { provide: SorobanService, useValue: soroban },
@@ -157,6 +161,64 @@ describe('OrganizationsService', () => {
       expect(result.data.status).toBe(OrganizationVerificationStatus.REJECTED);
       expect(result.data.rejectionReason).toBe('Incomplete documentation');
       expect(emailProvider.send).toHaveBeenCalled();
+    });
+  });
+
+  describe('search', () => {
+    it('returns only public verified org fields for public search', async () => {
+      const queryBuilder = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          {
+            id: 'org-1',
+            name: 'Public Health Org',
+            description: 'Regional provider',
+            type: 'hospital',
+            city: 'Lagos',
+            state: 'Lagos',
+            country: 'Nigeria',
+            website: 'https://example.org',
+            rating: 4.8,
+            status: OrganizationVerificationStatus.APPROVED,
+            isActive: true,
+            email: 'secret@example.org',
+            phoneNumber: '+2348000000000',
+            licenseNumber: 'LIC-123',
+            licenseDocumentPath: '/secret/license.pdf',
+            certificateDocumentPath: '/secret/certificate.pdf',
+            rejectionReason: 'internal note',
+            verifiedByUserId: 'admin-1',
+            blockchainTxHash: '0xabc',
+            blockchainAddress: 'addr-123',
+          },
+        ]),
+      };
+
+      repo.createActiveQueryBuilder.mockReturnValue(queryBuilder);
+
+      const result = await service.search({ query: 'health', page: 1, pageSize: 10 });
+
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0]).toEqual(
+        expect.objectContaining({
+          id: 'org-1',
+          name: 'Public Health Org',
+          description: 'Regional provider',
+          type: 'hospital',
+          city: 'Lagos',
+          status: OrganizationVerificationStatus.APPROVED,
+        }),
+      );
+      expect(result.data[0]).not.toHaveProperty('email');
+      expect(result.data[0]).not.toHaveProperty('phoneNumber');
+      expect(result.data[0]).not.toHaveProperty('licenseNumber');
+      expect(result.data[0]).not.toHaveProperty('licenseDocumentPath');
+      expect(result.data[0]).not.toHaveProperty('rejectionReason');
+      expect(result.data[0]).not.toHaveProperty('verifiedByUserId');
+      expect(result.data[0]).not.toHaveProperty('blockchainTxHash');
+      expect(result.data[0]).not.toHaveProperty('blockchainAddress');
     });
   });
 });

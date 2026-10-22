@@ -1,8 +1,11 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /// <reference types="jest" />
 import { getQueueToken } from '@nestjs/bullmq';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
 
+import { OnChainTxStateEntity } from '../entities/on-chain-tx-state.entity';
 import { ConfirmationService } from '../services/confirmation.service';
 import { JobDeduplicationPlugin } from '../plugins/job-deduplication.plugin';
 import { IdempotencyService } from '../services/idempotency.service';
@@ -116,6 +119,14 @@ describe('SorobanService', () => {
         {
           provide: QueueMetricsService,
           useValue: mockQueueMetricsService,
+        },
+        {
+          provide: EventEmitter2,
+          useValue: { emit: jest.fn() },
+        },
+        {
+          provide: getRepositoryToken(OnChainTxStateEntity),
+          useValue: { findOne: jest.fn().mockResolvedValue(null), create: jest.fn((d: unknown) => d), save: jest.fn() },
         },
       ],
     }).compile();

@@ -7,7 +7,7 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 
 import {
   PaginatedResponse,
@@ -23,18 +23,33 @@ import { UpdateRiderLocationDto } from './dto/update-rider-location.dto';
 import { UpdateRiderStatusDto } from './dto/update-rider-status.dto';
 import { WorkingHoursDto } from './dto/working-hours.dto';
 import { RiderEntity } from './entities/rider.entity';
-import { RiderStatus } from './enums/rider-status.enum';
+import {
+  ALLOWED_STATUS_TRANSITIONS,
+  RiderStatus,
+} from './enums/rider-status.enum';
 
-const ALLOWED_STATUS_TRANSITIONS: Record<RiderStatus, RiderStatus[]> = {
-  [RiderStatus.OFFLINE]: [RiderStatus.AVAILABLE],
-  [RiderStatus.AVAILABLE]: [
-    RiderStatus.OFFLINE,
-    RiderStatus.BUSY,
-    RiderStatus.ON_DELIVERY,
-  ],
-  [RiderStatus.BUSY]: [RiderStatus.AVAILABLE, RiderStatus.OFFLINE],
-  [RiderStatus.ON_DELIVERY]: [RiderStatus.AVAILABLE, RiderStatus.OFFLINE],
+/** Public record shape returned by getAvailableRiders — maps to RiderEntity */
+export type RiderRecord = RiderEntity & {
+  averageRating: number;
+  activeDeliveries: number;
 };
+
+function haversineKm(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
 @Injectable()
 export class RidersService {
@@ -225,184 +240,187 @@ export class RidersService {
     };
   }
 
-  async getAvailableRiders() {
+  async getAvailableRiders(): Promise<{ message: string; data: RiderRecord[] }> {
     const riders = await this.riderRepository.find({
       where: { status: RiderStatus.AVAILABLE, isVerified: true },
     });
+
+    const activeCounts = await this.countActiveDeliveries(
+      riders.map((r) => r.id),
+    );
+
+    const data: RiderRecord[] = riders.map((r) => ({
+      ...r,
+      averageRating: r.rating,
+      activeDeliveries: activeCounts.get(r.id) ?? 0,
+    }));
     return {
       message: 'Available riders retrieved successfully',
-      data: riders,
+      data,
     };
   }
 
-  async queryAvailability(dto: AvailabilityQueryDto) {
-    const riders = await this.riderRepository.find({
-      where: { status: RiderStatus.AVAILABLE, isVerified: true },
-    });
+  /**
+   * Aggregated rider statistics for the admin dashboard.
+   */
+  async getStatistics(): Promise<{
+    message: string;
+    data: {
+      total: number;
+      byStatus: Record<string, number>;
+      verified: number;
+      available: number;
+    };
+  }> {
+    const riders = await this.riderRepository.find();
 
-    let results = riders;
+    const byStatus: Record<string, number> = {};
+    let verified = 0;
+    let available = 0;
 
-    if (dto.area) {
-      results = results.filter(
-        (r) =>
-          Array.isArray(r.preferredAreas) &&
-          r.preferredAreas.some((a) =>
-            a.toLowerCase().includes(dto.area!.toLowerCase()),
-          ),
-      );
-    }
-
-    if (
-      dto.latitude !== undefined &&
-      dto.longitude !== undefined &&
-      dto.radiusKm !== undefined
-    ) {
-      results = results.filter((rider) => {
-        if (rider.latitude === null || rider.longitude === null) return false;
-        const latKm = Math.abs(rider.latitude - dto.latitude!) * 111;
-        const lngKm =
-          Math.abs(rider.longitude - dto.longitude!) *
-          111 *
-          Math.cos((dto.latitude! * Math.PI) / 180);
-        return Math.sqrt(latKm ** 2 + lngKm ** 2) <= dto.radiusKm!;
-      });
+    for (const rider of riders) {
+      byStatus[rider.status] = (byStatus[rider.status] ?? 0) + 1;
+      if (rider.isVerified) {
+        verified += 1;
+      }
+      if (rider.status === RiderStatus.AVAILABLE) {
+        available += 1;
+      }
     }
 
     return {
-      message: 'Availability query successful',
-      data: results,
-      total: results.length,
+      message: 'Rider statistics retrieved successfully',
+      data: {
+        total: riders.length,
+        byStatus,
+        verified,
+        available,
+      },
     };
   }
 
-  async getNearbyRiders(latitude: number, longitude: number, radiusKm: number) {
-    const riders = await this.riderRepository.find({
-      where: { status: RiderStatus.AVAILABLE, isVerified: true },
-    });
+  /**
+   * Counts in-flight dispatches per rider so dispatch scoring reflects
+   * current workload rather than lifetime completed deliveries.
+   */
+  private async countActiveDeliveries(
+    riderIds: string[],
+  ): Promise<Map<string, number>> {
+    const counts = new Map<string, number>();
+    if (riderIds.length === 0) {
+      return counts;
+    }
 
-    const nearbyRiders = riders.filter((rider) => {
-      if (rider.latitude === null || rider.longitude === null) {
-        return false;
-      }
-      const latKm = Math.abs(rider.latitude - latitude) * 111;
-      const lngKm =
-        Math.abs(rider.longitude - longitude) *
-        111 *
-        Math.cos((latitude * Math.PI) / 180);
-      return Math.sqrt(latKm ** 2 + lngKm ** 2) <= radiusKm;
-    });
+    const rows = await this.riderRepository.manager
+      .createQueryBuilder()
+      .select('dispatch.rider_id', 'riderId')
+      .addSelect('COUNT(*)', 'count')
+      .from('dispatches', 'dispatch')
+      .where('dispatch.rider_id IN (:...riderIds)', { riderIds })
+      .andWhere('dispatch.status IN (:...activeStatuses)', {
+        activeStatuses: ['assigned', 'accepted', 'picked_up', 'in_transit'],
+      })
+      .groupBy('dispatch.rider_id')
+      .getRawMany<{ riderId: string; count: string }>();
+
+    for (const row of rows) {
+      counts.set(row.riderId, parseInt(row.count, 10));
+    }
+    return counts;
+  }
+
+  async getNearbyRiders(
+    query: AvailabilityQueryDto,
+  ): Promise<{ message: string; data: RiderRecord[] }> {
+    const { latitude, longitude, radiusKm = 10 } = query;
+
+    const qb = this.riderRepository
+      .createQueryBuilder('rider')
+      .where('rider.status = :status', { status: RiderStatus.AVAILABLE })
+      .andWhere('rider.isVerified = :isVerified', { isVerified: true })
+      .andWhere('rider.latitude IS NOT NULL')
+      .andWhere('rider.longitude IS NOT NULL');
+
+    const riders = await qb.getMany();
+
+    const nearby = riders
+      .map((r) => ({
+        rider: r,
+        distanceKm: haversineKm(
+          latitude,
+          longitude,
+          Number(r.latitude),
+          Number(r.longitude),
+        ),
+      }))
+      .filter((entry) => entry.distanceKm <= radiusKm)
+      .sort((a, b) => a.distanceKm - b.distanceKm);
+
+    const activeCounts = await this.countActiveDeliveries(
+      nearby.map((entry) => entry.rider.id),
+    );
+
+    const data: RiderRecord[] = nearby.map((entry) => ({
+      ...entry.rider,
+      averageRating: entry.rider.rating,
+      activeDeliveries: activeCounts.get(entry.rider.id) ?? 0,
+    }));
 
     return {
       message: 'Nearby riders retrieved successfully',
-      data: nearbyRiders,
+      data,
     };
   }
 
-  async getPerformance(id: string): Promise<{
-    message: string;
-    data: {
-      riderId: string;
-      totalDeliveries: number;
-      completedDeliveries: number;
-      cancelledDeliveries: number;
-      failedDeliveries: number;
-      successRate: number;
-      onTimeRate: number;
-      rating: number;
-      status: RiderStatus;
-      isVerified: boolean;
+  async getLeaderboard(limit = 10) {
+    const riders = await this.riderRepository.find({
+      where: { isVerified: true },
+      relations: ['user'],
+      order: { rating: 'DESC', totalDeliveries: 'DESC' },
+      take: limit,
+    });
+
+    return {
+      message: 'Rider leaderboard retrieved successfully',
+      data: riders.map((rider, index) => ({
+        rank: index + 1,
+        riderId: rider.id,
+        name: rider.user?.name ?? null,
+        rating: rider.rating,
+        totalDeliveries: rider.totalDeliveries,
+      })),
     };
-  }> {
-    const { data: rider } = await this.findOne(id);
+  }
 
-    const total =
-      rider.completedDeliveries +
-      rider.cancelledDeliveries +
-      rider.failedDeliveries;
+  async getPerformance(id: string) {
+    const riderResult = await this.findOne(id);
+    const rider = riderResult.data;
 
-    const successRate =
-      total === 0
-        ? 0
-        : Math.round((rider.completedDeliveries / total) * 10000) / 100;
-
-    const onTimeRate = successRate;
+    const activeDeliveries = await this.countActiveDeliveries([rider.id]);
 
     return {
       message: 'Rider performance retrieved successfully',
       data: {
         riderId: rider.id,
-        totalDeliveries: total,
-        completedDeliveries: rider.completedDeliveries,
-        cancelledDeliveries: rider.cancelledDeliveries,
-        failedDeliveries: rider.failedDeliveries,
-        successRate,
-        onTimeRate,
         rating: rider.rating,
+        totalDeliveries: rider.totalDeliveries,
+        activeDeliveries: activeDeliveries.get(rider.id) ?? 0,
         status: rider.status,
         isVerified: rider.isVerified,
       },
     };
   }
 
-  async getLeaderboard(limit = 10): Promise<{
-    message: string;
-    data: Array<{
-      rank: number;
-      riderId: string;
-      completedDeliveries: number;
-      successRate: number;
-      rating: number;
-    }>;
-  }> {
-    const riders = await this.riderRepository.find({
-      where: { isVerified: true },
-    });
-
-    const ranked = riders
-      .map((r) => {
-        const total =
-          r.completedDeliveries + r.cancelledDeliveries + r.failedDeliveries;
-        const successRate =
-          total === 0
-            ? 0
-            : Math.round((r.completedDeliveries / total) * 10000) / 100;
-        return {
-          riderId: r.id,
-          completedDeliveries: r.completedDeliveries,
-          successRate,
-          rating: r.rating,
-        };
-      })
-      .sort(
-        (a, b) =>
-          b.completedDeliveries - a.completedDeliveries ||
-          b.successRate - a.successRate ||
-          b.rating - a.rating,
-      )
-      .slice(0, limit)
-      .map((r, i) => ({ rank: i + 1, ...r }));
-
-    return { message: 'Leaderboard retrieved successfully', data: ranked };
-  }
-
-  private emitStatusChangeEvent(rider: RiderEntity, previousStatus: RiderStatus) {
-    if (
-      previousStatus === RiderStatus.OFFLINE &&
-      rider.status === RiderStatus.AVAILABLE
-    ) {
-      this.eventEmitter.emit('rider.online', { riderId: rider.id, userId: rider.userId });
-    } else if (
-      previousStatus !== RiderStatus.OFFLINE &&
-      rider.status === RiderStatus.OFFLINE
-    ) {
-      this.eventEmitter.emit('rider.offline', { riderId: rider.id, userId: rider.userId });
-    }
-
+  private emitStatusChangeEvent(
+    rider: RiderEntity,
+    previousStatus: RiderStatus,
+  ): void {
     this.eventEmitter.emit('rider.status.changed', {
       riderId: rider.id,
       userId: rider.userId,
       previousStatus,
-      newStatus: rider.status,
+      status: rider.status,
+      changedAt: new Date(),
     });
   }
 }

@@ -1,11 +1,88 @@
 #![no_std]
+#![deny(deprecated)]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, Env,
+    contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, Env,
 };
+
+mod request_client {
+    use soroban_sdk::{contractclient, Env};
+
+    #[contractclient(name = "RequestContractClient")]
+    #[allow(dead_code)]
+    pub trait RequestContractInterface {
+        fn get_request_counter(env: Env) -> u64;
+    }
+}
+
+use request_client::RequestContractClient;
+
+#[contractevent(topics = ["delivery", "init"], data_format = "vec")]
+pub struct DeliveryInitialized {
+    pub admin: Address,
+    pub request_contract: Address,
+}
+
+/// Emitted when the current admin proposes a new admin. The transfer only
+/// completes once the proposed address calls `accept_admin`.
+#[contractevent(topics = ["delivery", "admin_proposed"], data_format = "vec")]
+pub struct AdminProposed {
+    pub current_admin: Address,
+    pub proposed_admin: Address,
+}
+
+/// Emitted when the proposed admin accepts and takes over the admin role.
+#[contractevent(topics = ["delivery", "admin_transferred"], data_format = "vec")]
+pub struct AdminTransferred {
+    pub previous_admin: Address,
+    pub new_admin: Address,
+}
+
+/// Emitted when the admin upgrades the contract's wasm code.
+#[contractevent(topics = ["delivery", "upgraded"], data_format = "vec")]
+pub struct ContractUpgraded {
+    pub admin: Address,
+    pub new_wasm_hash: Bytes,
+}
+
+#[contractevent(topics = ["comply"], data_format = "vec")]
+pub struct ComplianceAttested {
+    pub delivery_id: u64,
+    pub compliance_hash: Bytes,
+    pub is_compliant: bool,
+}
+
+/// Emitted when the admin redefines the temperature band a delivery must stay
+/// within. `previous` is the band in effect before this call; without it an
+/// indexer could not tell what the compliance bar moved from.
+#[contractevent(topics = ["delivery", "thresholds"], data_format = "vec")]
+pub struct TemperatureThresholdsUpdated {
+    pub admin: Address,
+    pub min_celsius: i32,
+    pub max_celsius: i32,
+    pub previous_min_celsius: i32,
+    pub previous_max_celsius: i32,
+}
+
+/// Emitted when the admin changes which proofs a delivery must supply.
+#[contractevent(topics = ["delivery", "proofs"], data_format = "vec")]
+pub struct ProofRequirementsUpdated {
+    pub admin: Address,
+    pub requires_photo_proof: bool,
+    pub requires_recipient_signature: bool,
+    pub requires_temperature_log: bool,
+    pub prev_requires_photo_proof: bool,
+    pub prev_requires_recipient_sig: bool,
+    pub prev_requires_temperature_log: bool,
+}
 
 const DEFAULT_MIN_TEMPERATURE_C: i32 = 2;
 const DEFAULT_MAX_TEMPERATURE_C: i32 = 6;
+const CONTRACT_VERSION: u32 = 1;
+
+/// Persistent storage TTL constants (ledgers; one ledger ≈ 5 s on mainnet).
+const TTL_THRESHOLD: u32 = 518_400; // ~30 days
+const TTL_EXTEND_TO: u32 = 1_036_800; // ~60 days
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -14,6 +91,9 @@ pub enum Error {
     AlreadyInitialized = 700,
     NotInitialized = 701,
     DeliveryNotFound = 702,
+    Unauthorized = 703,
+    InvalidInput = 704,
+    AlreadyAttested = 705,
 }
 
 #[contracttype]
@@ -35,6 +115,7 @@ pub struct ProofRequirements {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
     Admin,
+    PendingAdmin,
     RequestContract,
     DeliveryCounter,
     TemperatureThresholds,
@@ -77,13 +158,21 @@ impl DeliveryContract {
         env.storage()
             .instance()
             .set(&DataKey::ProofRequirements, &proof_requirements);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
 
-        env.events().publish(
-            (symbol_short!("init"), symbol_short!("v1")),
-            (admin, request_contract),
-        );
+        DeliveryInitialized {
+            admin,
+            request_contract,
+        }
+        .publish(&env);
 
         Ok(())
+    }
+
+    pub fn version(_env: Env) -> u32 {
+        CONTRACT_VERSION
     }
 
     pub fn is_initialized(env: Env) -> bool {
@@ -95,6 +184,102 @@ impl DeliveryContract {
             .instance()
             .get(&DataKey::Admin)
             .ok_or(Error::NotInitialized)
+    }
+
+    /// Returns the address that has been proposed as the next admin, if any.
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::PendingAdmin)
+    }
+
+    /// Begin a two-step admin transfer. The current admin nominates
+    /// `new_admin`, who must then call `accept_admin` to complete the transfer.
+    pub fn propose_admin(env: Env, admin: Address, new_admin: Address) -> Result<(), Error> {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if admin != stored {
+            return Err(Error::Unauthorized);
+        }
+        if new_admin == stored {
+            return Err(Error::InvalidInput);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        AdminProposed {
+            current_admin: admin,
+            proposed_admin: new_admin,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Complete a pending admin transfer. Must be called by the proposed admin.
+    pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        new_admin.require_auth();
+        let pending: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmin)
+            .ok_or(Error::Unauthorized)?;
+        if new_admin != pending {
+            return Err(Error::Unauthorized);
+        }
+        let previous: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.storage().instance().remove(&DataKey::PendingAdmin);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        AdminTransferred {
+            previous_admin: previous,
+            new_admin,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Replace the contract's wasm code. Admin only.
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: Bytes) -> Result<(), Error> {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if admin != stored {
+            return Err(Error::Unauthorized);
+        }
+
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        ContractUpgraded {
+            admin,
+            new_wasm_hash,
+        }
+        .publish(&env);
+
+        Ok(())
     }
 
     pub fn get_request_contract(env: Env) -> Result<Address, Error> {
@@ -125,8 +310,97 @@ impl DeliveryContract {
             .ok_or(Error::NotInitialized)
     }
 
-    /// Record a compliance attestation hash for a completed delivery.
-    /// The hash is produced off-chain by the backend after evaluating telemetry.
+    /// Update the cold-chain temperature thresholds. Admin only.
+    pub fn set_temperature_thresholds(
+        env: Env,
+        admin: Address,
+        thresholds: TemperatureThresholds,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if admin != stored {
+            return Err(Error::Unauthorized);
+        }
+        if thresholds.min_celsius > thresholds.max_celsius {
+            return Err(Error::InvalidInput);
+        }
+        let previous: TemperatureThresholds = env
+            .storage()
+            .instance()
+            .get(&DataKey::TemperatureThresholds)
+            .ok_or(Error::NotInitialized)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::TemperatureThresholds, &thresholds);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        TemperatureThresholdsUpdated {
+            admin,
+            min_celsius: thresholds.min_celsius,
+            max_celsius: thresholds.max_celsius,
+            previous_min_celsius: previous.min_celsius,
+            previous_max_celsius: previous.max_celsius,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Update the proof requirements. Admin only.
+    pub fn set_proof_requirements(
+        env: Env,
+        admin: Address,
+        requirements: ProofRequirements,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if admin != stored {
+            return Err(Error::Unauthorized);
+        }
+        let previous: ProofRequirements = env
+            .storage()
+            .instance()
+            .get(&DataKey::ProofRequirements)
+            .ok_or(Error::NotInitialized)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::ProofRequirements, &requirements);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        ProofRequirementsUpdated {
+            admin,
+            requires_photo_proof: requirements.requires_photo_proof,
+            requires_recipient_signature: requirements.requires_recipient_signature,
+            requires_temperature_log: requirements.requires_temperature_log,
+            prev_requires_photo_proof: previous.requires_photo_proof,
+            prev_requires_recipient_sig: previous.requires_recipient_signature,
+            prev_requires_temperature_log: previous.requires_temperature_log,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Record a compliance attestation for a completed delivery.
+    ///
+    /// This function implements an **oracle attestation pattern**: the backend
+    /// evaluates the delivery's telemetry (temperature readings, photo proof,
+    /// recipient signature, temperature log) against the configured
+    /// `TemperatureThresholds` and `ProofRequirements` off-chain, produces a
+    /// `compliance_hash` committing to that evaluation, and then calls this
+    /// function to record the result on-chain. Only the stored admin may attest.
     pub fn record_compliance_attestation(
         env: Env,
         admin: Address,
@@ -135,19 +409,63 @@ impl DeliveryContract {
         is_compliant: bool,
     ) -> Result<(), Error> {
         admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if admin != stored {
+            return Err(Error::Unauthorized);
+        }
         if !Self::is_initialized(env.clone()) {
             return Err(Error::NotInitialized);
         }
 
-        env.storage().persistent().set(
-            &DataKey::ComplianceAttestation(delivery_id),
-            &(compliance_hash.clone(), is_compliant),
-        );
+        // Delivery ids mirror request ids, which start at 1. Reject anything
+        // the request contract has never issued so an attestation cannot
+        // squat on an id that does not exist yet.
+        if delivery_id == 0 {
+            return Err(Error::DeliveryNotFound);
+        }
 
-        env.events().publish(
-            (symbol_short!("comply"), symbol_short!("v1")),
-            (delivery_id, compliance_hash, is_compliant),
-        );
+        let request_contract = Self::get_request_contract(env.clone())?;
+        let request_counter = RequestContractClient::new(&env, &request_contract)
+            .try_get_request_counter()
+            .map_err(|_| Error::DeliveryNotFound)?
+            .map_err(|_| Error::DeliveryNotFound)?;
+
+        if delivery_id > request_counter {
+            return Err(Error::DeliveryNotFound);
+        }
+
+        let stored_counter = Self::get_delivery_counter(env.clone())?;
+        if request_counter > stored_counter {
+            env.storage()
+                .instance()
+                .set(&DataKey::DeliveryCounter, &request_counter);
+        }
+
+        let attestation_key = DataKey::ComplianceAttestation(delivery_id);
+        if env.storage().persistent().has(&attestation_key) {
+            return Err(Error::AlreadyAttested);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&attestation_key, &(compliance_hash.clone(), is_compliant));
+        env.storage()
+            .persistent()
+            .extend_ttl(&attestation_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        ComplianceAttested {
+            delivery_id,
+            compliance_hash,
+            is_compliant,
+        }
+        .publish(&env);
 
         Ok(())
     }

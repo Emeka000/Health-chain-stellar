@@ -4,6 +4,7 @@ import { validateEnv } from './validate-env';
 /** Minimal valid config satisfying all required fields */
 const validConfig = {
   DATABASE_NAME: 'healthchain',
+  CORS_ORIGIN: 'http://localhost:3000',
   JWT_SECRET: 'super-secret-key-that-is-long-enough',
   JWT_REFRESH_SECRET: 'another-secret-key-that-is-long-enough',
   MAPS_API_KEY: 'maps-key-123',
@@ -33,7 +34,7 @@ describe('validateEnv', () => {
 
       expect(result.DATABASE_NAME).toBe('healthchain');
       expect(result.JWT_SECRET).toBe('super-secret-key-that-is-long-enough');
-      expect(result.PORT).toBe(3000); // default
+      expect(result.PORT).toBe(3001); // default
       expect(result.NODE_ENV).toBe('development'); // default
       expect(result.REDIS_HOST).toBe('localhost'); // default
     });
@@ -71,6 +72,14 @@ describe('validateEnv', () => {
       expect(() => validateEnv(rest)).toThrow();
       expect(stderrSpy).toHaveBeenCalledWith(
         expect.stringContaining('DATABASE_NAME'),
+      );
+    });
+
+    it('throws when CORS_ORIGIN is missing', () => {
+      const { CORS_ORIGIN: _, ...rest } = validConfig;
+      expect(() => validateEnv(rest)).toThrow();
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining('CORS_ORIGIN'),
       );
     });
 

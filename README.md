@@ -50,18 +50,79 @@ All critical actions are enforced by smart contracts, reducing fraud and manual 
 
 ## Getting Started
 
-### Local Development Setup
+### Prerequisites
 
-For contributors, we provide a Docker Compose stack for easy local development:
+| Dependency | Version | Purpose |
+|---|---|---|
+| Node.js | >= 20.x | Backend and frontend runtime |
+| Docker + Docker Compose | latest | PostgreSQL (:5432) and Redis (:6379) |
+| Rust + Cargo | stable | Soroban smart contracts |
+| Stellar CLI (`stellar`) | >= 21.x | Deploy and invoke contracts |
+
+### Quick Start
 
 ```bash
-# Start Postgres + Redis
+# 1. Start PostgreSQL and Redis
 docker-compose up -d
 
-# Setup backend
+# 2. Set up the backend
 cd backend
+cp .env.example .env   # edit DATABASE_PASSWORD, JWT_SECRET at minimum
 npm install
-npm run start:dev
+npm run build
+npm run migration:run
+npm run start:dev      # http://localhost:3001 — Swagger UI at /docs
 ```
 
-See [DOCKER_SETUP.md](./DOCKER_SETUP.md) for detailed instructions and optional development tools.
+```bash
+# 3. Set up the frontend (separate terminal)
+cd frontend/health-chain
+npm install
+npm run dev            # http://localhost:3000
+```
+
+For contract deployment, full environment variable reference, and contributor guidelines see **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
+
+### Service Ports
+
+| Service | Port |
+|---|---|
+| Next.js frontend | `:3000` |
+| NestJS backend | `:3001` |
+| Swagger UI | `:3001/docs` |
+| PostgreSQL | `:5432` |
+| Redis | `:6379` |
+| Bull Board (optional tools profile) | `:3002` |
+
+## Project Structure
+
+| Directory | README |
+|-----------|--------|
+| `backend/` | [Backend README](./backend/README.md) |
+| `contracts/` | [Contracts README](./contracts/README.md) |
+| `lifebank-soroban/` | [Lifebank Soroban README](./lifebank-soroban/README.md) |
+| `lifebank-soroban/docs/contracts/` | [Contract Reference Docs](./lifebank-soroban/docs/contracts/) |
+| `docs/architecture.md` | [Architecture Diagram](./docs/architecture.md) |
+
+## Handsoff notes
+
+<!-- handsoff-issue-1291 -->
+- #1291: [contracts/temperature] log_reading never emits an event for detected violations
+
+<!-- handsoff-issue-1490 -->
+- #1490: [backend/auth] Account lockout is never enforced — ensureAccountIsUsable() has no throw for a still-locked account
+
+<!-- handsoff-issue-1452 -->
+- #1452: [lifebank/payments] Mirrored BloodRequest struct is missing a field, so every cross-call to the requests contract fails and create_payment/create_escrow become permanently
+
+<!-- handsoff-issue-1454 -->
+- #1454: [lifebank/payments] index_by_request never extends its persistent-storage TTL, letting the DuplicatePayment guard silently expire
+
+<!-- handsoff-issue-1455 -->
+- #1455: [lifebank/payments] update_status can silently exit Disputed status, bypassing resolve_dispute and leaving stale dispute fields
+
+<!-- handsoff-issue-1482 -->
+- #1482: [lifebank/temperature] compute_excursion_data trusts stale is_violation flags computed under a historical threshold instead of re-validating against the current one
+
+<!-- handsoff-issue-1675 -->
+- #1675: [backend/auth, backend/route-deviation] #1490 and #1531 were closed by README-only commits and are still present

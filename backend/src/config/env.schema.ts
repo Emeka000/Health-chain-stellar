@@ -11,6 +11,7 @@ import {
   IsNotEmpty,
   Matches,
   IsInt,
+  ValidateIf,
 } from 'class-validator';
 
 /**
@@ -30,22 +31,29 @@ export class EnvironmentVariables {
   @IsInt()
   @Min(1)
   @Max(65535)
-  PORT: number = 3000;
+  PORT: number = 3001;
 
   @IsOptional()
   @IsString()
   API_PREFIX: string = 'api/v1';
 
-  @IsOptional()
   @IsString()
-  CORS_ORIGIN: string = '*';
+  @IsNotEmpty({ message: 'CORS_ORIGIN is required' })
+  CORS_ORIGIN: string;
 
   @IsOptional()
   @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   TRUST_PROXY: boolean = false;
 
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  ENABLE_SWAGGER: boolean = false;
+
   // ─── Database ─────────────────────────────────────────────────────────────
+  // Canonical naming: DATABASE_* (not DB_*). All database config reads from these keys.
+  // TypeOrmModule and data-source.ts are both hardcoded to use DATABASE_* env vars.
 
   @IsOptional()
   @IsString()
@@ -72,13 +80,14 @@ export class EnvironmentVariables {
 
   // ─── JWT ──────────────────────────────────────────────────────────────────
 
+  @ValidateIf((obj) => obj.NODE_ENV !== 'test')
   @IsString()
-  @IsNotEmpty({ message: 'JWT_SECRET is required' })
-  @Matches(/^(?!your-super-secret).{16,}$/, {
+  @IsNotEmpty({ message: 'JWT_SECRET is required (not a hardcoded fallback)' })
+  @Matches(/^(?!default-secret|your-super-secret).{16,}$/, {
     message:
-      'JWT_SECRET must be at least 16 characters and not the default placeholder',
+      'JWT_SECRET must be at least 16 characters and not a known placeholder',
   })
-  JWT_SECRET: string;
+  JWT_SECRET: string = '';
 
   @IsOptional()
   @IsString()
@@ -96,17 +105,27 @@ export class EnvironmentVariables {
   @IsString()
   JWT_EXPIRES_IN: string = '1h';
 
+  @ValidateIf((obj) => obj.NODE_ENV !== 'test')
   @IsString()
-  @IsNotEmpty({ message: 'JWT_REFRESH_SECRET is required' })
-  @Matches(/^(?!your-super-secret).{16,}$/, {
+  @IsNotEmpty({ message: 'JWT_REFRESH_SECRET is required (not a hardcoded fallback)' })
+  @Matches(/^(?!refresh-secret|your-super-secret).{16,}$/, {
     message:
-      'JWT_REFRESH_SECRET must be at least 16 characters and not the default placeholder',
+      'JWT_REFRESH_SECRET must be at least 16 characters and not a known placeholder',
   })
-  JWT_REFRESH_SECRET: string;
+  JWT_REFRESH_SECRET: string = '';
 
   @IsOptional()
   @IsString()
   JWT_REFRESH_EXPIRES_IN: string = '7d';
+
+  @ValidateIf((obj) => obj.NODE_ENV !== 'test')
+  @IsString()
+  @IsNotEmpty({ message: 'LOCAL_SIGN_SECRET is required (not a hardcoded fallback)' })
+  @Matches(/^(?!change-me-in-production).{16,}$/, {
+    message:
+      'LOCAL_SIGN_SECRET must be at least 16 characters and not the default placeholder',
+  })
+  LOCAL_SIGN_SECRET: string = '';
 
   // ─── Redis ────────────────────────────────────────────────────────────────
 
@@ -127,15 +146,59 @@ export class EnvironmentVariables {
   @IsNotEmpty({ message: 'MAPS_API_KEY is required' })
   MAPS_API_KEY: string;
 
-  // ─── Soroban Blockchain ───────────────────────────────────────────────────
+  // ─── Soroban Blockchain ───────────────────────────────────────────────
 
   @IsUrl({}, { message: 'SOROBAN_RPC_URL must be a valid URL' })
   @IsNotEmpty({ message: 'SOROBAN_RPC_URL is required' })
   SOROBAN_RPC_URL: string;
 
+  // ─── Per-contract addresses (all 10 deployed contracts) ─────────────────
+
+  @IsOptional()
   @IsString()
-  @IsNotEmpty({ message: 'SOROBAN_CONTRACT_ID is required' })
-  SOROBAN_CONTRACT_ID: string;
+  SOROBAN_COORDINATOR_CONTRACT_ID: string = '';
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_IDENTITY_CONTRACT_ID: string = '';
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_INVENTORY_CONTRACT_ID: string = '';
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_PAYMENTS_CONTRACT_ID: string = '';
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_REQUESTS_CONTRACT_ID: string = '';
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_TEMPERATURE_CONTRACT_ID: string = '';
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_MATCHING_CONTRACT_ID: string = '';
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_REPUTATION_CONTRACT_ID: string = '';
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_DELIVERY_CONTRACT_ID: string = '';
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_ANALYTICS_CONTRACT_ID: string = '';
+
+  // ─── Legacy contract ID (kept for backward compatibility) ──────────────
+
+  @IsOptional()
+  @IsString()
+  SOROBAN_CONTRACT_ID: string = '';
 
   @IsString()
   @IsNotEmpty({ message: 'SOROBAN_SECRET_KEY is required' })

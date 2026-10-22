@@ -4,13 +4,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 
 import { CreatePolicyVersionDto } from './dto/create-policy-version.dto';
 import { ListPolicyVersionsDto } from './dto/list-policy-versions.dto';
 import { UpdatePolicyVersionDto } from './dto/update-policy-version.dto';
 import { PolicyVersionEntity } from './entities/policy-version.entity';
 import { PolicyVersionStatus } from './enums/policy-version-status.enum';
+import { PolicyReplayService } from './policy-replay.service';
 import { ActivePolicySnapshot, OperationalPolicyRules } from './policy-config.types';
 
 @Injectable()
@@ -20,6 +21,7 @@ export class PolicyCenterService {
   constructor(
     @InjectRepository(PolicyVersionEntity)
     private readonly repo: Repository<PolicyVersionEntity>,
+    private readonly replayService: PolicyReplayService,
   ) {}
 
   getDefaultRules(): OperationalPolicyRules {
@@ -46,6 +48,69 @@ export class PolicyCenterService {
         defaultQuietHoursStart: '22:00',
         defaultQuietHoursEnd: '06:00',
         defaultEmergencyBypassTier: 'normal',
+      },
+      quarantine: {
+        triggerMatrix: {
+          temperatureBreach: {
+            enabled: true,
+            minTempC: 2,
+            maxTempC: 6,
+            autoQuarantine: true,
+            requiredEvidence: ['temperature_log', 'sensor_reading'],
+          },
+          contaminationSuspected: {
+            enabled: true,
+            autoQuarantine: false,
+            requiredEvidence: ['lab_report', 'visual_inspection'],
+            approvalRequired: true,
+          },
+          manualOperatorAction: {
+            enabled: true,
+            requiredEvidence: ['operator_notes'],
+            approvalRequired: false,
+          },
+          anomalyDetection: {
+            enabled: true,
+            autoQuarantine: true,
+            requiredEvidence: ['anomaly_report'],
+          },
+        },
+        dispositionRules: {
+          temperatureBreach: {
+            defaultDisposition: 'RELEASE',
+            autoApproveThresholdHours: 24,
+            requiredApprovals: 1,
+          },
+          contaminationSuspected: {
+            defaultDisposition: 'DISCARD',
+            requiredApprovals: 2,
+          },
+          manualOperatorAction: {
+            defaultDisposition: 'RELEASE',
+            requiredApprovals: 1,
+          },
+          anomalyDetection: {
+            defaultDisposition: 'RELEASE',
+            autoApproveThresholdHours: 48,
+            requiredApprovals: 1,
+          },
+        },
+        evidenceRequirements: {
+          minimumEvidenceCount: 1,
+          allowedEvidenceTypes: [
+            'image',
+            'document',
+            'log',
+            'report',
+            'temperature_log',
+            'sensor_reading',
+            'lab_report',
+            'visual_inspection',
+            'operator_notes',
+            'anomaly_report',
+          ],
+          maxEvidenceSizeMb: 10,
+        },
       },
     };
   }
@@ -117,6 +182,9 @@ export class PolicyCenterService {
       throw new BadRequestException('Only draft versions can be edited');
     }
 
+    // Immutability guard (Issue #618)
+    this.replayService.assertMutable(existing);
+
     if (dto.rules) {
       existing.rules = this.mergeRules(existing.rules, dto.rules);
       this.validateRules(existing.rules);
@@ -155,7 +223,41 @@ export class PolicyCenterService {
       throw new BadRequestException('Cannot activate an already-expired version');
     }
 
-    const currentlyActive = await this.repo.findOne({
+    return this.repo.manager.transaction((manager) =>
+      this.promoteVersion(manager, target, actor, now, PolicyVersionStatus.SUPERSEDED),
+    );
+  }
+
+  async rollbackToVersion(id: string, actor: string): Promise<PolicyVersionEntity> {
+    const target = await this.getVersion(id);
+    this.validateRules(target.rules);
+
+    const now = new Date();
+    if (target.effectiveFrom && target.effectiveFrom > now) {
+      throw new BadRequestException('Cannot roll back to a version before effectiveFrom');
+    }
+
+    // A previously-active version had its window closed (effectiveTo = now)
+    // when it was superseded. Re-open it so it is served again after rollback.
+    target.effectiveTo = null;
+
+    // Demote + activate atomically: a failure must never leave the policy
+    // without an ACTIVE version (which would reset it to default rules).
+    return this.repo.manager.transaction((manager) =>
+      this.promoteVersion(manager, target, actor, now, PolicyVersionStatus.ROLLED_BACK),
+    );
+  }
+
+  private async promoteVersion(
+    manager: EntityManager,
+    target: PolicyVersionEntity,
+    actor: string,
+    now: Date,
+    demotedStatus: PolicyVersionStatus.SUPERSEDED | PolicyVersionStatus.ROLLED_BACK,
+  ): Promise<PolicyVersionEntity> {
+    const repo = manager.getRepository(PolicyVersionEntity);
+
+    const currentlyActive = await repo.findOne({
       where: {
         policyName: target.policyName,
         status: PolicyVersionStatus.ACTIVE,
@@ -164,37 +266,20 @@ export class PolicyCenterService {
     });
 
     if (currentlyActive && currentlyActive.id !== target.id) {
-      currentlyActive.status = PolicyVersionStatus.SUPERSEDED;
+      currentlyActive.status = demotedStatus;
       currentlyActive.effectiveTo = now;
-      await this.repo.save(currentlyActive);
+      if (demotedStatus === PolicyVersionStatus.ROLLED_BACK) {
+        currentlyActive.rollbackFromVersionId = target.id;
+      }
+      await repo.save(currentlyActive);
     }
 
     target.status = PolicyVersionStatus.ACTIVE;
     target.activatedAt = now;
     target.activatedBy = actor;
 
-    return this.repo.save(target);
-  }
-
-  async rollbackToVersion(id: string, actor: string): Promise<PolicyVersionEntity> {
-    const target = await this.getVersion(id);
-
-    const currentlyActive = await this.repo.findOne({
-      where: {
-        policyName: target.policyName,
-        status: PolicyVersionStatus.ACTIVE,
-      },
-      order: { version: 'DESC' },
-    });
-
-    if (currentlyActive && currentlyActive.id !== target.id) {
-      currentlyActive.status = PolicyVersionStatus.ROLLED_BACK;
-      currentlyActive.effectiveTo = new Date();
-      currentlyActive.rollbackFromVersionId = target.id;
-      await this.repo.save(currentlyActive);
-    }
-
-    return this.activateVersion(id, actor);
+    // Lock snapshot: persist rules hash and mark immutable (Issue #618)
+    return this.replayService.lockSnapshot(target, manager);
   }
 
   async getActivePolicySnapshot(

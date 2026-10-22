@@ -1,16 +1,20 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
+import Redis from 'ioredis';
 
 import { OrderConfirmedEvent, OrderRiderAssignedEvent } from '../events';
 import { MapsService } from '../maps/maps.service';
 import { PolicyCenterService } from '../policy-center/policy-center.service';
 import { RiderRecord, RidersService } from '../riders/riders.service';
+import { REDIS_CLIENT } from '../redis/redis.constants';
+
+const DEDUP_TTL_SECONDS = 3600;
+const DEDUP_KEY_PREFIX = 'rider-assignment:dedup:';
 
 @Injectable()
 export class RiderAssignmentService {
   private readonly logger = new Logger(RiderAssignmentService.name);
-  private readonly processedEvents = new Set<string>();
   private readonly assignmentLogs: AssignmentLog[] = [];
   private readonly activeAssignments = new Map<string, ActiveAssignmentState>();
   private readonly defaultAcceptanceTimeoutMs: number;
@@ -22,6 +26,7 @@ export class RiderAssignmentService {
     private readonly eventEmitter: EventEmitter2,
     private readonly configService: ConfigService,
     private readonly policyCenterService: PolicyCenterService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {
     this.defaultAcceptanceTimeoutMs = this.configService.get<number>(
       'ASSIGNMENT_ACCEPTANCE_TIMEOUT_MS',
@@ -32,27 +37,16 @@ export class RiderAssignmentService {
 
   @OnEvent('order.confirmed')
   async handleOrderConfirmed(event: OrderConfirmedEvent) {
-    const eventKey = this.getEventKey(
-      'order.confirmed',
-      event.orderId,
-      event.timestamp,
-    );
-
-    if (this.isEventProcessed(eventKey)) {
-      this.logger.warn(`Duplicate event detected: ${eventKey}`);
+    const key = `${DEDUP_KEY_PREFIX}order.confirmed:${event.orderId}:${event.timestamp.getTime()}`;
+    if (!(await this.acquireDedup(key))) {
+      this.logger.warn(`Duplicate event skipped: ${key}`);
       return;
     }
 
-    this.logger.log(
-      `Handling order confirmed for rider assignment: ${event.orderId}`,
-    );
+    this.logger.log(`Handling order confirmed for rider assignment: ${event.orderId}`);
     await this.startAutomatedAssignment(event);
-    this.markEventProcessed(eventKey);
 
-    return {
-      message: 'Rider assignment initiated',
-      data: { orderId: event.orderId },
-    };
+    return { message: 'Rider assignment initiated', data: { orderId: event.orderId } };
   }
 
   /**
@@ -227,25 +221,14 @@ export class RiderAssignmentService {
     };
   }
 
-  private getEventKey(
-    eventName: string,
-    orderId: string,
-    timestamp: Date,
-  ): string {
-    return `${eventName}:${orderId}:${timestamp.getTime()}`;
-  }
-
-  private isEventProcessed(eventKey: string): boolean {
-    return this.processedEvents.has(eventKey);
-  }
-
-  private markEventProcessed(eventKey: string): void {
-    this.processedEvents.add(eventKey);
-    const cleanupTimer = setTimeout(
-      () => this.processedEvents.delete(eventKey),
-      3600000,
-    );
-    cleanupTimer.unref?.();
+  private async acquireDedup(key: string): Promise<boolean> {
+    try {
+      const result = await this.redis.set(key, '1', 'EX', DEDUP_TTL_SECONDS, 'NX');
+      return result === 'OK';
+    } catch (err) {
+      this.logger.error(`Dedup store error for key ${key}: ${(err as Error).message}`);
+      return true; // allow processing on Redis failure
+    }
   }
 
   private async startAutomatedAssignment(

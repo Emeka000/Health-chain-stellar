@@ -21,7 +21,10 @@ import { ErrorCode } from '../common/errors/error-codes.enum';
 import { AuthSessionFallbackStore } from '../redis/auth-session-fallback.store';
 import { RedisCircuitBreaker } from '../redis/redis-circuit-breaker';
 import { REDIS_CLIENT } from '../redis/redis.constants';
-import { SecurityEventLoggerService, SecurityEventType } from '../user-activity/security-event-logger.service';
+import {
+  SecurityEventLoggerService,
+  SecurityEventType,
+} from '../user-activity/security-event-logger.service';
 import { UserActivityService } from '../user-activity/user-activity.service';
 import { UserEntity } from '../users/entities/user.entity';
 import { TwoFactorAuthEntity } from '../users/entities/two-factor-auth.entity';
@@ -29,6 +32,7 @@ import { TwoFactorAuthEntity } from '../users/entities/two-factor-auth.entity';
 import { JwtKeyService } from './jwt-key.service';
 import { JwtPayload } from './jwt.strategy';
 import { AuthSessionRepository } from './repositories/auth-session.repository';
+import { SessionRiskService, RiskLevel } from './session-risk.service';
 import { validatePasswordStrength } from './utils/password-strength.util';
 import {
   hashPassword,
@@ -36,6 +40,7 @@ import {
   dummyVerify,
 } from './utils/password.util';
 import { MfaService } from './mfa/mfa.service';
+import { PasswordResetService } from './password-reset.service';
 
 export interface SessionMetadata {
   ipAddress?: string | null;
@@ -63,12 +68,23 @@ export class AuthService {
     private readonly userActivityService: UserActivityService,
     private readonly securityEventLogger: SecurityEventLoggerService,
     private readonly mfaService: MfaService,
+    private readonly passwordResetService: PasswordResetService,
+    private readonly sessionRiskService: SessionRiskService,
   ) {
     this.circuitBreaker = new RedisCircuitBreaker();
     this.fallbackStore = new AuthSessionFallbackStore();
-    this.maxFailedLoginAttempts = this.configService.get<number>('MAX_FAILED_LOGIN_ATTEMPTS', 5);
-    this.accountLockMinutes = this.configService.get<number>('ACCOUNT_LOCK_MINUTES', 15);
-    this.passwordHistoryLength = this.configService.get<number>('PASSWORD_HISTORY_LENGTH', 3);
+    this.maxFailedLoginAttempts = this.configService.get<number>(
+      'MAX_FAILED_LOGIN_ATTEMPTS',
+      5,
+    );
+    this.accountLockMinutes = this.configService.get<number>(
+      'ACCOUNT_LOCK_MINUTES',
+      15,
+    );
+    this.passwordHistoryLength = this.configService.get<number>(
+      'PASSWORD_HISTORY_LENGTH',
+      3,
+    );
   }
 
   async validateUser(
@@ -87,7 +103,10 @@ export class AuthService {
     return valid ? user : null;
   }
 
-  async login(loginDto: { email: string; password: string; role?: string }, meta: SessionMetadata = {}) {
+  async login(
+    loginDto: { email: string; password: string; role?: string },
+    meta: SessionMetadata = {},
+  ) {
     const user = await this.userRepository.findOne({
       where: { email: loginDto.email.toLowerCase() },
     });
@@ -144,7 +163,8 @@ export class AuthService {
     // If MFA is enabled, return a challenge instead of full tokens
     const mfaEnabled = await this.mfaService.isMfaEnabled(user.id);
     if (mfaEnabled) {
-      return { mfa_required: true, user_id: user.id };
+      const mfaChallenge = await this.mfaService.createLoginChallenge(user.id);
+      return { mfa_required: true, user_id: user.id, mfa_challenge: mfaChallenge };
     }
 
     const sessionId = randomBytes(16).toString('hex');
@@ -153,27 +173,65 @@ export class AuthService {
       email: user.email,
       role: user.role ?? loginDto.role ?? 'donor',
       sid: sessionId,
+      organizationId: user.organizationId ?? null,
     };
 
     const { accessToken, refreshToken, refreshExpiresInSeconds } =
       this.issueTokens(payload);
-    await this.createSession(user, sessionId, refreshExpiresInSeconds);
+    await this.createSession(user, sessionId, refreshExpiresInSeconds, meta);
     await this.enforceConcurrentSessionLimit(user.id);
 
-    await this.securityEventLogger.logEvent({
-      eventType: SecurityEventType.AUTH_LOGIN_SUCCESS,
-      userId: user.id,
-      email: user.email,
-      sessionId,
-      description: 'User login succeeded',
-      metadata: { role: payload.role },
-      ipAddress: meta.ipAddress ?? null,
-      userAgent: meta.userAgent ?? null,
-    }).catch(() => undefined);
+    // Score session risk and log if elevated
+    const risk = await this.sessionRiskService
+      .scoreSession(user.id, sessionId, {
+        ipAddress: meta.ipAddress,
+        userAgent: meta.userAgent,
+        createdAt: new Date(),
+      })
+      .catch(() => null);
+
+    await this.securityEventLogger
+      .logEvent({
+        eventType: SecurityEventType.AUTH_LOGIN_SUCCESS,
+        userId: user.id,
+        email: user.email,
+        sessionId,
+        description: 'User login succeeded',
+        metadata: { role: payload.role },
+        ipAddress: meta.ipAddress ?? null,
+        userAgent: meta.userAgent ?? null,
+        ...(risk && {
+          riskScore: risk.score,
+          riskLevel: risk.level,
+          riskSignals: risk.signals as unknown as Record<string, boolean>,
+        }),
+      })
+      .catch(() => undefined);
+
+    if (risk && risk.requiresStepUp) {
+      await this.securityEventLogger
+        .logEvent({
+          eventType: SecurityEventType.AUTH_STEP_UP_REQUIRED,
+          userId: user.id,
+          email: user.email,
+          sessionId,
+          description: `Step-up auth required: risk score ${risk.score} (${risk.level})`,
+          riskScore: risk.score,
+          riskLevel: risk.level,
+          riskSignals: risk.signals as unknown as Record<string, boolean>,
+          ipAddress: meta.ipAddress ?? null,
+          userAgent: meta.userAgent ?? null,
+        })
+        .catch(() => undefined);
+    }
 
     return {
       access_token: accessToken,
       refresh_token: refreshToken,
+      ...(risk?.requiresStepUp && {
+        step_up_required: true,
+        risk_level: risk.level,
+      }),
     };
   }
 
@@ -181,12 +239,34 @@ export class AuthService {
    * Exchange a valid MFA token (issued by MfaService) for a full access + refresh token pair.
    */
   async exchangeMfaToken(mfaToken: string, meta: SessionMetadata = {}) {
-    const userId = this.mfaService.verifyMfaToken(mfaToken);
+    const userId = await this.mfaService.verifyMfaToken(mfaToken);
 
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
       throw new UnauthorizedException(
-        JSON.stringify({ code: ErrorCode.AUTH_INVALID_CREDENTIALS, message: 'User not found' }),
+        JSON.stringify({
+          code: ErrorCode.AUTH_INVALID_CREDENTIALS,
+          message: 'User not found',
+        }),
+      );
+    }
+
+    // Re-check account state; it may have changed since the password step
+    if (!user.isActive) {
+      throw new ForbiddenException(
+        JSON.stringify({
+          code: ErrorCode.AUTH_FORBIDDEN,
+          message: 'Account is inactive',
+        }),
+      );
+    }
+    await this.ensureAccountIsUsable(user);
+    if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
+      throw new ForbiddenException(
+        JSON.stringify({
+          code: ErrorCode.AUTH_ACCOUNT_LOCKED,
+          message: 'Account is temporarily locked',
+        }),
       );
     }
 
@@ -196,6 +276,7 @@ export class AuthService {
       email: user.email,
       role: user.role,
       sid: sessionId,
+      organizationId: user.organizationId ?? null,
     };
 
     const { accessToken, refreshToken, refreshExpiresInSeconds } =
@@ -203,18 +284,40 @@ export class AuthService {
     await this.createSession(user, sessionId, refreshExpiresInSeconds, meta);
     await this.enforceConcurrentSessionLimit(user.id);
 
-    await this.securityEventLogger.logEvent({
-      eventType: SecurityEventType.AUTH_LOGIN_SUCCESS,
-      userId: user.id,
-      email: user.email,
-      sessionId,
-      description: 'User login succeeded via MFA',
-      metadata: { role: payload.role, mfa: true },
-      ipAddress: meta.ipAddress ?? null,
-      userAgent: meta.userAgent ?? null,
-    }).catch(() => undefined);
+    const risk = await this.sessionRiskService
+      .scoreSession(user.id, sessionId, {
+        ipAddress: meta.ipAddress,
+        userAgent: meta.userAgent,
+        createdAt: new Date(),
+      })
+      .catch(() => null);
 
-    return { access_token: accessToken, refresh_token: refreshToken };
+    await this.securityEventLogger
+      .logEvent({
+        eventType: SecurityEventType.AUTH_LOGIN_SUCCESS,
+        userId: user.id,
+        email: user.email,
+        sessionId,
+        description: 'User login succeeded via MFA',
+        metadata: { role: payload.role, mfa: true },
+        ipAddress: meta.ipAddress ?? null,
+        userAgent: meta.userAgent ?? null,
+        ...(risk && {
+          riskScore: risk.score,
+          riskLevel: risk.level,
+          riskSignals: risk.signals as unknown as Record<string, boolean>,
+        }),
+      })
+      .catch(() => undefined);
+
+    return {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      ...(risk?.requiresStepUp && {
+        step_up_required: true,
+        risk_level: risk.level,
+      }),
+    };
   }
 
   async register(registerDto: {
@@ -261,6 +364,19 @@ export class AuthService {
     });
     const savedUser = await this.userRepository.save(user);
 
+    if (requireVerification) {
+      try {
+        await this.passwordResetService.sendVerificationEmail(
+          savedUser.id,
+          savedUser.email,
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Failed to send verification email for ${savedUser.email}: ${(error as Error).message}`,
+        );
+      }
+    }
+
     return {
       message: 'Registration successful',
       user: {
@@ -277,10 +393,7 @@ export class AuthService {
       const payload = this.jwtService.verify<JwtPayload & { jti?: string }>(
         refreshToken,
         {
-          secret: this.configService.get<string>(
-            'JWT_REFRESH_SECRET',
-            'refresh-secret',
-          ),
+          secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
         },
       );
 
@@ -340,15 +453,29 @@ export class AuthService {
         );
       }
 
+      const currentUser = await this.userRepository.findOne({
+        where: { id: payload.sub },
+      });
+      if (!currentUser || currentUser.deletedAt || !currentUser.isActive) {
+        await this.revokeSessionFamily(payload.sub, payload.sid, payload.email);
+        throw new UnauthorizedException(
+          JSON.stringify({
+            code: ErrorCode.AUTH_INVALID_REFRESH_TOKEN,
+            message: 'User account is no longer active',
+          }),
+        );
+      }
+
       this.logger.log(
         `Refresh token consumed for user ${payload.email}. Rotating tokens.`,
       );
 
       const newPayload: JwtPayload = {
-        sub: payload.sub,
-        email: payload.email,
-        role: payload.role,
+        sub: currentUser.id,
+        email: currentUser.email,
+        role: currentUser.role ?? payload.role ?? 'donor',
         sid: payload.sid,
+        organizationId: currentUser.organizationId ?? payload.organizationId ?? null,
       };
 
       const {
@@ -392,6 +519,7 @@ export class AuthService {
     refreshToken: string;
     refreshExpiresInSeconds: number;
   } {
+    const { kid, secret } = this.jwtKeyService.getActiveKey();
     const accessToken = this.jwtService.sign(
       payload as unknown as Record<string, unknown>,
       { secret, keyid: kid },
@@ -412,9 +540,7 @@ export class AuthService {
     return this.jwtService.sign(
       { ...payload, jti } as unknown as Record<string, unknown>,
       {
-        secret:
-          this.configService.get<string>('JWT_REFRESH_SECRET') ??
-          'refresh-secret',
+        secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
         expiresIn: refreshExpiresIn,
       },
     );
@@ -444,7 +570,72 @@ export class AuthService {
     const sessions = await Promise.all(
       sessionIds.map((sid) => this.getSessionById(sid)),
     );
-    return sessions.filter((session) => session && !session.revokedAt);
+    const active = sessions.filter((session) => session && !session.revokedAt);
+
+    // Attach risk scores to each session
+    return Promise.all(
+      active.map(async (session) => {
+        if (!session) return session;
+        const risk = await this.sessionRiskService
+          .scoreSession(userId, session.sessionId ?? '', {
+            ipAddress: session.ipAddress,
+            userAgent: session.userAgent,
+          })
+          .catch(() => null);
+        return {
+          ...session,
+          riskScore: risk?.score ?? null,
+          riskLevel: risk?.level ?? null,
+          riskSignals: risk?.signals ?? null,
+        };
+      }),
+    );
+  }
+
+  /**
+   * Revoke a session if its risk score meets or exceeds the given threshold.
+   * Returns the risk result regardless of whether revocation occurred.
+   */
+  async revokeIfRisky(
+    userId: string,
+    sessionId: string,
+    minRiskLevel: RiskLevel = RiskLevel.HIGH,
+  ) {
+    const session = await this.getSessionById(sessionId);
+    if (!session || session.revokedAt) {
+      return { revoked: false, reason: 'session_not_found_or_already_revoked' };
+    }
+
+    const risk = await this.sessionRiskService.scoreSession(userId, sessionId, {
+      ipAddress: session.ipAddress,
+      userAgent: session.userAgent,
+    });
+
+    const levelOrder = [
+      RiskLevel.LOW,
+      RiskLevel.MEDIUM,
+      RiskLevel.HIGH,
+      RiskLevel.CRITICAL,
+    ];
+    const shouldRevoke =
+      levelOrder.indexOf(risk.level) >= levelOrder.indexOf(minRiskLevel);
+
+    if (shouldRevoke) {
+      await this.revokeSession(userId, sessionId);
+      await this.securityEventLogger
+        .logEvent({
+          eventType: SecurityEventType.AUTH_SESSION_RISK_ELEVATED,
+          userId,
+          sessionId,
+          description: `Session auto-revoked due to risk level ${risk.level} (score ${risk.score})`,
+          riskScore: risk.score,
+          riskLevel: risk.level,
+          riskSignals: risk.signals as unknown as Record<string, boolean>,
+        })
+        .catch(() => undefined);
+    }
+
+    return { revoked: shouldRevoke, risk };
   }
 
   /**
@@ -659,6 +850,28 @@ export class AuthService {
   }
 
   private async ensureAccountIsUsable(user: UserEntity) {
+    if (!user.isActive) {
+      throw new ForbiddenException(
+        JSON.stringify({
+          code: ErrorCode.AUTH_FORBIDDEN,
+          message: 'Account is inactive',
+        }),
+      );
+    }
+
+    const requireVerification = this.configService.get<boolean>(
+      'REQUIRE_EMAIL_VERIFICATION',
+      false,
+    );
+    if (requireVerification && !user.emailVerified) {
+      throw new ForbiddenException(
+        JSON.stringify({
+          code: ErrorCode.AUTH_EMAIL_NOT_VERIFIED,
+          message: 'Please verify your email address before logging in',
+        }),
+      );
+    }
+
     if (!user.lockedUntil) {
       return;
     }
@@ -683,19 +896,6 @@ export class AuthService {
           ),
         );
       return;
-    }
-
-    const requireVerification = this.configService.get<boolean>(
-      'REQUIRE_EMAIL_VERIFICATION',
-      false,
-    );
-    if (requireVerification && !user.emailVerified) {
-      throw new ForbiddenException(
-        JSON.stringify({
-          code: ErrorCode.AUTH_EMAIL_NOT_VERIFIED,
-          message: 'Please verify your email address before logging in',
-        }),
-      );
     }
   }
 
@@ -754,7 +954,6 @@ export class AuthService {
       expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
       ...(meta.ipAddress && { ipAddress: meta.ipAddress }),
       ...(meta.userAgent && { userAgent: meta.userAgent }),
-      ...(meta.geoHint && { geoHint: meta.geoHint }),
     };
 
     await this.circuitBreaker.execute(
@@ -783,7 +982,6 @@ export class AuthService {
         expiresAt: new Date(Date.now() + ttlSeconds * 1000),
         ipAddress: meta.ipAddress ?? undefined,
         userAgent: meta.userAgent ?? undefined,
-        geoHint: meta.geoHint ?? undefined,
       });
     } catch (error: unknown) {
       this.logger.warn(

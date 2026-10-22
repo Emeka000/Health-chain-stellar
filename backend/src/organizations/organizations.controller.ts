@@ -14,6 +14,12 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 
 import { memoryStorage } from 'multer';
 
@@ -23,24 +29,36 @@ import { Permission } from '../auth/enums/permission.enum';
 
 import { CreateOrganizationReviewDto } from './dto/create-organization-review.dto';
 import { ModerateOrganizationReviewDto } from './dto/moderate-organization-review.dto';
+import {
+  ReapplyOrganizationDto,
+  ReinstateOrganizationDto,
+  SuspendOrganizationDto,
+  UnverifyOrganizationDto,
+} from './dto/org-lifecycle.dto';
 import { OrganizationReviewQueryDto } from './dto/organization-review-query.dto';
 import { RegisterOrganizationDto } from './dto/register-organization.dto';
 import { RejectOrganizationDto } from './dto/reject-organization.dto';
 import { ReportOrganizationReviewDto } from './dto/report-organization-review.dto';
 import { SearchOrganizationsDto } from './dto/search-organizations.dto';
+import { OrgVerificationLifecycleService } from './services/org-verification-lifecycle.service';
 import { OrganizationsService } from './organizations.service';
 import { OrganizationReviewsService } from './services/organization-reviews.service';
 import { VerificationSyncService } from './services/verification-sync.service';
 
+@ApiTags('Organizations')
+@ApiBearerAuth()
 @Controller('organizations')
 export class OrganizationsController {
   constructor(
     private readonly organizationsService: OrganizationsService,
     private readonly organizationReviewsService: OrganizationReviewsService,
     private readonly verificationSyncService: VerificationSyncService,
+    private readonly lifecycleService: OrgVerificationLifecycleService,
   ) {}
 
   @Public()
+  @ApiOperation({ summary: 'Register a new organization' })
+  @ApiResponse({ status: 201, description: 'Organization registered successfully' })
   @Post('register')
   @UseInterceptors(
     FileFieldsInterceptor(
@@ -66,12 +84,16 @@ export class OrganizationsController {
   }
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
+  @ApiOperation({ summary: 'List organizations pending approval' })
+  @ApiResponse({ status: 200, description: 'Pending organizations retrieved successfully' })
   @Get('pending')
   listPending() {
     return this.organizationsService.listPending();
   }
 
   @Public()
+  @ApiOperation({ summary: 'Search organizations' })
+  @ApiResponse({ status: 200, description: 'Matching organizations retrieved successfully' })
   @Get('search')
   search(
     @Query(
@@ -87,6 +109,8 @@ export class OrganizationsController {
   }
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
+  @ApiOperation({ summary: 'Approve an organization' })
+  @ApiResponse({ status: 200, description: 'Organization approved successfully' })
   @Patch(':id/approve')
   approve(
     @Param('id', ParseUUIDPipe) id: string,
@@ -96,6 +120,8 @@ export class OrganizationsController {
   }
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
+  @ApiOperation({ summary: 'Reject an organization' })
+  @ApiResponse({ status: 200, description: 'Organization rejected successfully' })
   @Patch(':id/reject')
   reject(
     @Param('id', ParseUUIDPipe) id: string,
@@ -105,6 +131,8 @@ export class OrganizationsController {
     return this.organizationsService.reject(id, dto, req.user.id);
   }
 
+  @ApiOperation({ summary: 'Submit a review for an organization' })
+  @ApiResponse({ status: 201, description: 'Review submitted successfully' })
   @Post(':id/reviews')
   submitReview(
     @Param('id', ParseUUIDPipe) organizationId: string,
@@ -118,6 +146,8 @@ export class OrganizationsController {
     );
   }
 
+  @ApiOperation({ summary: 'List reviews for an organization' })
+  @ApiResponse({ status: 200, description: 'Organization reviews retrieved successfully' })
   @Get(':id/reviews')
   listReviews(
     @Param('id', ParseUUIDPipe) organizationId: string,
@@ -136,6 +166,8 @@ export class OrganizationsController {
     );
   }
 
+  @ApiOperation({ summary: 'Report an organization review' })
+  @ApiResponse({ status: 201, description: 'Review reported successfully' })
   @Post('reviews/:reviewId/report')
   reportReview(
     @Param('reviewId', ParseUUIDPipe) reviewId: string,
@@ -150,6 +182,8 @@ export class OrganizationsController {
   }
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
+  @ApiOperation({ summary: 'Moderate an organization review' })
+  @ApiResponse({ status: 200, description: 'Review moderated successfully' })
   @Patch('reviews/:reviewId/moderate')
   moderateReview(
     @Param('reviewId', ParseUUIDPipe) reviewId: string,
@@ -163,6 +197,8 @@ export class OrganizationsController {
     );
   }
 
+  @ApiOperation({ summary: 'Delete an organization review' })
+  @ApiResponse({ status: 200, description: 'Review deleted successfully' })
   @Delete('reviews/:reviewId')
   deleteReview(
     @Param('reviewId', ParseUUIDPipe) reviewId: string,
@@ -180,6 +216,8 @@ export class OrganizationsController {
   // =========================================================================
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
+  @ApiOperation({ summary: 'Sync organization verification to the blockchain' })
+  @ApiResponse({ status: 201, description: 'Verification synced to blockchain successfully' })
   @Post(':id/verify-on-chain')
   verifyOnChain(
     @Param('id', ParseUUIDPipe) organizationId: string,
@@ -189,6 +227,8 @@ export class OrganizationsController {
   }
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
+  @ApiOperation({ summary: 'Revoke organization verification on the blockchain' })
+  @ApiResponse({ status: 201, description: 'Verification revoked successfully' })
   @Post(':id/revoke-verification')
   revokeVerification(
     @Param('id', ParseUUIDPipe) organizationId: string,
@@ -201,6 +241,8 @@ export class OrganizationsController {
   }
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
+  @ApiOperation({ summary: 'Retry organization verification sync' })
+  @ApiResponse({ status: 201, description: 'Verification sync retried successfully' })
   @Post(':id/retry-sync')
   retrySyncVerification(
     @Param('id', ParseUUIDPipe) organizationId: string,
@@ -209,24 +251,50 @@ export class OrganizationsController {
   }
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
-  @Get(':id/sync-status')
-  getSyncStatus(
-    @Param('id', ParseUUIDPipe) organizationId: string,
+  @ApiOperation({ summary: 'Suspend an organization' })
+  @ApiResponse({ status: 200, description: 'Organization suspended successfully' })
+  @Patch(':id/suspend')
+  suspend(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SuspendOrganizationDto,
+    @Req() req: { user: { id: string } },
   ) {
-    return this.verificationSyncService.getSyncStatus(organizationId);
+    return this.lifecycleService.suspend(id, dto, req.user.id);
   }
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
-  @Get('verification/pending-syncs')
-  listPendingSyncs() {
-    return this.verificationSyncService.listPendingSyncs();
+  @ApiOperation({ summary: 'Reinstate a suspended organization' })
+  @ApiResponse({ status: 200, description: 'Organization reinstated successfully' })
+  @Patch(':id/reinstate')
+  reinstate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReinstateOrganizationDto,
+    @Req() req: { user: { id: string } },
+  ) {
+    return this.lifecycleService.reinstate(id, dto, req.user.id);
   }
 
   @RequirePermissions(Permission.ADMIN_ACCESS)
-  @Post(':id/check-mismatch')
-  checkSyncMismatch(
-    @Param('id', ParseUUIDPipe) organizationId: string,
+  @ApiOperation({ summary: 'Unverify an organization' })
+  @ApiResponse({ status: 200, description: 'Organization unverified successfully' })
+  @Patch(':id/unverify')
+  unverify(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UnverifyOrganizationDto,
+    @Req() req: { user: { id: string } },
   ) {
-    return this.verificationSyncService.checkSyncMismatch(organizationId);
+    return this.lifecycleService.unverify(id, dto, req.user.id);
+  }
+
+  @Public()
+  @ApiOperation({ summary: 'Reapply for organization verification' })
+  @ApiResponse({ status: 200, description: 'Reapplication submitted successfully' })
+  @Patch(':id/reapply')
+  reapply(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReapplyOrganizationDto,
+    @Req() req: { user: { id: string } },
+  ) {
+    return this.lifecycleService.reapply(id, dto, req.user.id);
   }
 }

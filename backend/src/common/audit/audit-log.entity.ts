@@ -10,11 +10,17 @@ import {
  * Insert-only audit log for security-sensitive mutations.
  * No UPDATE or DELETE is permitted at the ORM level — enforced by
  * AuditLogService which only exposes `insert()`.
+ *
+ * Enhanced with correlation ID, category, severity, and additional metadata
+ * for comprehensive audit trail and compliance requirements.
  */
 @Entity('audit_logs')
 @Index('idx_audit_logs_actor', ['actorId'])
 @Index('idx_audit_logs_resource', ['resourceType', 'resourceId'])
 @Index('idx_audit_logs_timestamp', ['timestamp'])
+@Index('idx_audit_logs_correlation', ['correlationId'])
+@Index('idx_audit_logs_category', ['category'])
+@Index('idx_audit_logs_severity', ['severity'])
 export class AuditLogEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -30,6 +36,14 @@ export class AuditLogEntity {
   /** Human-readable action label, e.g. "blood-unit.status-changed". */
   @Column({ type: 'varchar', length: 128 })
   action: string;
+
+  /** Audit category (authentication, financial, privileged_access, etc.) */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  category: string | null;
+
+  /** Severity level (critical, high, medium, low) */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  severity: string | null;
 
   /** Entity type, e.g. "BloodUnit", "Dispute", "User", "Order". */
   @Column({ name: 'resource_type', type: 'varchar', length: 64 })
@@ -50,6 +64,23 @@ export class AuditLogEntity {
   /** IP address of the originating request. */
   @Column({ name: 'ip_address', type: 'varchar', length: 64, nullable: true })
   ipAddress: string | null;
+
+  /** User agent string from the request. */
+  @Column({ name: 'user_agent', type: 'varchar', length: 512, nullable: true })
+  userAgent: string | null;
+
+  /** Correlation ID for tracing related operations across services. */
+  @Column({
+    name: 'correlation_id',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+  })
+  correlationId: string | null;
+
+  /** Additional context metadata (e.g., reason, comment, geo location). */
+  @Column({ type: 'jsonb', nullable: true })
+  metadata: Record<string, unknown> | null;
 
   @CreateDateColumn({ name: 'timestamp' })
   timestamp: Date;

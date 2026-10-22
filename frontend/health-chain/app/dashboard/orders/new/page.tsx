@@ -7,15 +7,15 @@ import {
   BloodType,
   BloodBankAvailability,
   NewOrderPayload,
-  NewOrderResponse,
 } from "@/lib/types/orders";
 import { StepIndicator } from "@/components/orders/new/StepIndicator";
 import { Step1BloodSelection } from "@/components/orders/new/Step1BloodSelection";
 import { Step2BloodBankSelection } from "@/components/orders/new/Step2BloodBankSelection";
 import { Step3Confirmation } from "@/components/orders/new/Step3Confirmation";
+import { useAuthStore } from "@/lib/stores/auth.store";
+import { placeOrder } from "@/lib/api/orders.api";
+import { fetchBloodBankAvailability } from "@/lib/api/bloodBanks.api";
 
-// Hospital defaults — replace with real auth context values
-const HOSPITAL_ID = "HOSP-001";
 const HOSPITAL_LAT = 6.5244;
 const HOSPITAL_LNG = 3.3792;
 
@@ -27,57 +27,11 @@ const STEPS = [
 
 const POLLING_INTERVAL_MS = 30_000;
 
-// Mock blood bank data — replace with real API call when endpoint is available
-const generateMockBloodBanks = (bloodType: BloodType): BloodBankAvailability[] => [
-  {
-    id: "BB-001",
-    name: "Central Blood Bank",
-    location: "Lagos Island",
-    latitude: 6.4541,
-    longitude: 3.3947,
-    distanceKm: 8.2,
-    estimatedDeliveryMinutes: 25,
-    stock: { "A+": 12, "A-": 3, "B+": 8, "B-": 0, "AB+": 5, "AB-": 2, "O+": 20, "O-": 1 },
-    stockLevel: "adequate",
-  },
-  {
-    id: "BB-002",
-    name: "Mainland Blood Centre",
-    location: "Yaba",
-    latitude: 6.5095,
-    longitude: 3.3711,
-    distanceKm: 4.1,
-    estimatedDeliveryMinutes: 15,
-    stock: { "A+": 2, "A-": 0, "B+": 1, "B-": 0, "AB+": 0, "AB-": 0, "O+": 3, "O-": 0 },
-    stockLevel: "critical",
-  },
-  {
-    id: "BB-003",
-    name: "Ikeja General Blood Store",
-    location: "Ikeja",
-    latitude: 6.6018,
-    longitude: 3.3515,
-    distanceKm: 9.8,
-    estimatedDeliveryMinutes: 35,
-    stock: { "A+": 0, "A-": 0, "B+": 0, "B-": 0, "AB+": 0, "AB-": 0, "O+": 0, "O-": 0 },
-    stockLevel: "out_of_stock",
-  },
-  {
-    id: "BB-004",
-    name: "Victoria Island Medical Bank",
-    location: "Victoria Island",
-    latitude: 6.4281,
-    longitude: 3.4219,
-    distanceKm: 12.5,
-    estimatedDeliveryMinutes: 40,
-    stock: { "A+": 6, "A-": 4, "B+": 9, "B-": 3, "AB+": 2, "AB-": 1, "O+": 15, "O-": 5 },
-    stockLevel: bloodType === "O-" ? "low" : "adequate",
-  },
-];
-
 export default function NewOrderPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const user = useAuthStore((s) => s.user);
+  const hospitalId = (user?.hospitalId as string | undefined) ?? user?.id ?? "";
 
   // Read step from URL, default to 1
   const stepFromUrl = Number(searchParams.get("step")) || 1;
@@ -113,31 +67,12 @@ export default function NewOrderPage() {
   // Fetch blood bank availability
   const fetchBloodBanks = useCallback(
     async (silent = false) => {
-      if (!bloodType) return;
+      if (!bloodType || !hospitalId) return;
       if (!silent) setBanksLoading(true);
       setBanksError(null);
-
       try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
-        const apiPrefix = process.env.NEXT_PUBLIC_API_PREFIX || "api/v1";
-
-        // Attempt real API call; fall back to mock data if endpoint not yet implemented
-        try {
-          const res = await fetch(
-            `${apiUrl}/${apiPrefix}/blood-banks/availability?bloodType=${bloodType}&hospitalId=${HOSPITAL_ID}`,
-          );
-          if (!res.ok) throw new Error("API not available");
-          const data: BloodBankAvailability[] = await res.json();
-          const sorted = [...data].sort((a, b) => a.distanceKm - b.distanceKm);
-          setBloodBanks(sorted);
-        } catch {
-          // Fallback to mock data while backend endpoint is pending
-          const mock = generateMockBloodBanks(bloodType).sort(
-            (a, b) => a.distanceKm - b.distanceKm,
-          );
-          setBloodBanks(mock);
-        }
-
+        const banks = await fetchBloodBankAvailability(bloodType, hospitalId);
+        setBloodBanks(banks);
         setLastUpdated(new Date());
       } catch (err) {
         setBanksError(
@@ -147,7 +82,7 @@ export default function NewOrderPage() {
         setBanksLoading(false);
       }
     },
-    [bloodType],
+    [bloodType, hospitalId],
   );
 
   // Set up WebSocket + polling when on step 2
@@ -201,27 +136,13 @@ export default function NewOrderPage() {
     if (!bloodType || !selectedBankId) throw new Error("Missing order details.");
 
     const payload: NewOrderPayload = {
-      hospitalId: HOSPITAL_ID,
+      hospitalId,
       bloodType,
       quantity,
       bloodBankId: selectedBankId,
     };
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
-    const apiPrefix = process.env.NEXT_PUBLIC_API_PREFIX || "api/v1";
-
-    const res = await fetch(`${apiUrl}/${apiPrefix}/orders`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      const errorData = await res.json().catch(() => ({}));
-      throw new Error(errorData.message || `Failed to place order (${res.status})`);
-    }
-
-    const data: NewOrderResponse = await res.json();
+    const data = await placeOrder(payload);
     router.push(`/dashboard/orders?newOrder=${data.orderId}`);
   };
 

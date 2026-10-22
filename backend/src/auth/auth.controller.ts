@@ -26,6 +26,7 @@ import { Throttle } from '@nestjs/throttler';
 
 import { RateLimit } from '../common/decorators/rate-limit.decorator';
 import { IdempotencyInterceptor } from '../common/idempotency/idempotency.interceptor';
+import { getClientIp } from '../common/utils/client-ip.util';
 
 import { AuthService } from './auth.service';
 import { PasswordResetService } from './password-reset.service';
@@ -42,7 +43,8 @@ import {
   VerifyEmailDto,
 } from './dto/auth.dto';
 import { Permission } from './enums/permission.enum';
-import { IsNotEmpty, IsString } from 'class-validator';
+import { IsNotEmpty, IsString, IsOptional, IsIn } from 'class-validator';
+import { RiskLevel } from './session-risk.service';
 
 export class MfaExchangeDto {
   @IsString()
@@ -117,6 +119,7 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @UseInterceptors(IdempotencyInterceptor)
   @Post('login')
   @HttpCode(HttpStatus.OK)
@@ -176,9 +179,8 @@ export class AuthController {
   })
   async login(@Body() loginDto: LoginDto, @Request() req: any) {
     const meta = {
-      ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? null,
+      ipAddress: getClientIp(req),
       userAgent: (req.headers['user-agent'] as string) ?? null,
-      geoHint: (req.headers['x-geo-hint'] as string) ?? null,
     };
     return this.authService.login(loginDto, meta);
   }
@@ -324,6 +326,23 @@ export class AuthController {
     @Param('sessionId') sessionId: string,
   ) {
     return this.authService.revokeSession(req.user.id, sessionId);
+  }
+
+  @Post('sessions/:sessionId/risk-revoke')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Revoke a session if its risk level meets the threshold',
+    description: 'Scores the session risk and revokes it if at or above the specified level',
+  })
+  @ApiParam({ name: 'sessionId', description: 'Session ID to evaluate' })
+  @ApiQuery({ name: 'minLevel', enum: RiskLevel, required: false, description: 'Minimum risk level to trigger revocation (default: high)' })
+  async revokeIfRisky(
+    @Request() req: any,
+    @Param('sessionId') sessionId: string,
+    @Query('minLevel') minLevel?: RiskLevel,
+  ) {
+    return this.authService.revokeIfRisky(req.user.id, sessionId, minLevel ?? RiskLevel.HIGH);
   }
 
   @UseInterceptors(IdempotencyInterceptor)
@@ -484,13 +503,14 @@ export class AuthController {
     return this.passwordResetService.verifyEmail(token);
   }
 
+  @Public()
   @Post('resend-verification')
   @HttpCode(HttpStatus.OK)
-  @ApiBearerAuth()
   @ApiOperation({ summary: 'Resend verification email' })
+  @ApiBody({ type: RequestPasswordResetDto })
   @ApiResponse({ status: 200, description: 'Verification email sent' })
-  async resendVerification(@Request() req: any) {
-    return this.passwordResetService.resendVerificationEmail(req.user.id);
+  async resendVerification(@Body() dto: RequestPasswordResetDto) {
+    return this.passwordResetService.resendVerificationEmail(dto.email);
   }
 
   // ── MFA token exchange ────────────────────────────────────────────────────
@@ -515,9 +535,8 @@ export class AuthController {
   })
   async exchangeMfaToken(@Body() dto: MfaExchangeDto, @Request() req: any) {
     const meta = {
-      ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? null,
+      ipAddress: getClientIp(req),
       userAgent: (req.headers['user-agent'] as string) ?? null,
-      geoHint: (req.headers['x-geo-hint'] as string) ?? null,
     };
     return this.authService.exchangeMfaToken(dto.mfaToken, meta);
   }

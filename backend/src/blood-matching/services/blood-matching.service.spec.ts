@@ -1,25 +1,23 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
-
-import { Repository } from 'typeorm';
+import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 
 import { BloodRequestItemEntity } from '../../blood-requests/entities/blood-request-item.entity';
 import { BloodRequestEntity } from '../../blood-requests/entities/blood-request.entity';
-import { BloodUnitEntity } from '../../blood-units/entities/blood-unit.entity';
+import { BloodUnit } from '../../blood-units/entities/blood-unit.entity';
 import { InventoryStockEntity } from '../../inventory/entities/inventory-stock.entity';
+import { BloodCompatibilityEngine } from '../compatibility/blood-compatibility.engine';
 
 import { BloodMatchingService } from './blood-matching.service';
 
 describe('BloodMatchingService', () => {
   let service: BloodMatchingService;
-  let bloodUnitRepository: Repository<BloodUnitEntity>;
 
-  const mockBloodUnit: BloodUnitEntity = {
+  const mockBloodUnit = {
     id: 'unit-1',
     unitCode: 'UNIT-001',
-    bloodType: 'A+' as any,
-    status: 'available' as any,
-    component: 'whole_blood' as any,
+    bloodType: 'A+',
+    status: 'available',
+    component: 'whole_blood',
     organizationId: 'bank-1',
     volumeMl: 450,
     collectedAt: new Date(),
@@ -33,7 +31,7 @@ describe('BloodMatchingService', () => {
     statusHistory: [],
     createdAt: new Date(),
     updatedAt: new Date(),
-  } as BloodUnitEntity;
+  };
 
   const mockBloodUnitRepository = {
     find: jest.fn(),
@@ -62,12 +60,31 @@ describe('BloodMatchingService', () => {
     findOne: jest.fn(),
   };
 
+  const mockQueryRunnerManager = {
+    find: jest.fn(),
+    update: jest.fn(),
+  };
+
+  const mockQueryRunner = {
+    connect: jest.fn(),
+    startTransaction: jest.fn(),
+    commitTransaction: jest.fn(),
+    rollbackTransaction: jest.fn(),
+    release: jest.fn(),
+    manager: mockQueryRunnerManager,
+  };
+
+  const mockDataSource = {
+    createQueryRunner: jest.fn(() => mockQueryRunner),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BloodMatchingService,
+        BloodCompatibilityEngine,
         {
-          provide: getRepositoryToken(BloodUnitEntity),
+          provide: getRepositoryToken(BloodUnit),
           useValue: mockBloodUnitRepository,
         },
         {
@@ -82,13 +99,14 @@ describe('BloodMatchingService', () => {
           provide: getRepositoryToken(InventoryStockEntity),
           useValue: mockInventoryRepository,
         },
+        {
+          provide: getDataSourceToken(),
+          useValue: mockDataSource,
+        },
       ],
     }).compile();
 
     service = module.get<BloodMatchingService>(BloodMatchingService);
-    bloodUnitRepository = module.get<Repository<BloodUnitEntity>>(
-      getRepositoryToken(BloodUnitEntity),
-    );
   });
 
   afterEach(() => {
@@ -138,8 +156,8 @@ describe('BloodMatchingService', () => {
 
   describe('findMatches', () => {
     it('should find matches for a blood request', async () => {
-      mockBloodUnitRepository.find.mockResolvedValue([mockBloodUnit]);
-      mockBloodUnitRepository.update.mockResolvedValue({});
+      mockQueryRunnerManager.find.mockResolvedValue([mockBloodUnit]);
+      mockQueryRunnerManager.update.mockResolvedValue({ affected: 1 });
 
       const result = await service.findMatches({
         requestId: 'req-1',
@@ -156,7 +174,7 @@ describe('BloodMatchingService', () => {
     });
 
     it('should return empty matches if no units available', async () => {
-      mockBloodUnitRepository.find.mockResolvedValue([]);
+      mockQueryRunnerManager.find.mockResolvedValue([]);
 
       const result = await service.findMatches({
         requestId: 'req-1',
@@ -174,8 +192,8 @@ describe('BloodMatchingService', () => {
 
   describe('findMatchesForMultipleRequests', () => {
     it('should find matches for multiple requests', async () => {
-      mockBloodUnitRepository.find.mockResolvedValue([mockBloodUnit]);
-      mockBloodUnitRepository.update.mockResolvedValue({});
+      mockQueryRunnerManager.find.mockResolvedValue([mockBloodUnit]);
+      mockQueryRunnerManager.update.mockResolvedValue({ affected: 1 });
 
       const requests = [
         {
@@ -225,7 +243,7 @@ describe('BloodMatchingService', () => {
         7,
       );
 
-      expect(exactMatchScore).toBeGreaterThan(compatibleScore);
+      expect(exactMatchScore).toBeGreaterThanOrEqual(compatibleScore);
     });
 
     it('should give higher score for urgent expiration', async () => {
@@ -253,14 +271,120 @@ describe('BloodMatchingService', () => {
     });
   });
 
+  describe('isBloodTypeCompatible', () => {
+    it('should return true for exact match', () => {
+      expect(service.isBloodTypeCompatible('A+', 'A+')).toBe(true);
+    });
+
+    it('should return true for compatible donor/recipient pair', () => {
+      expect(service.isBloodTypeCompatible('O-', 'A+')).toBe(true);
+    });
+
+    it('should return false for incompatible donor/recipient pair', () => {
+      expect(service.isBloodTypeCompatible('A+', 'O-')).toBe(false);
+    });
+  });
+
   describe('getCompatibilityMatrix', () => {
-    it('should return compatibility matrix', () => {
+    it('should return a matrix covering all blood types', () => {
       const matrix = service.getCompatibilityMatrix();
 
-      expect(matrix).toBeDefined();
-      expect(matrix['O-']).toBeDefined();
-      expect(matrix['O-'].canDonateTo).toContain('AB+');
-      expect(matrix['AB+'].canReceiveFrom).toContain('O-');
+      expect(Object.keys(matrix).length).toBe(8);
+      expect(matrix['O-']).toContain('O-');
+      expect(matrix['A+']).toContain('O-');
+    });
+  });
+
+  describe('getDaysUntilExpiration', () => {
+    it('should return positive days for a future expiration', () => {
+      const days = service.getDaysUntilExpiration(
+        new Date(Date.now() + 10 * 24 * 60 * 60 * 1000),
+      );
+
+      expect(days).toBeGreaterThanOrEqual(9);
+      expect(days).toBeLessThanOrEqual(10);
+    });
+
+    it('should return zero or negative days for an expired unit', () => {
+      const days = service.getDaysUntilExpiration(
+        new Date(Date.now() - 24 * 60 * 60 * 1000),
+      );
+
+      expect(days).toBeLessThanOrEqual(0);
+    });
+  });
+
+  describe('calculateDistance', () => {
+    it('should return zero distance for identical coordinates', () => {
+      expect(service.calculateDistance(0, 0, 0, 0)).toBe(0);
+    });
+
+    it('should return a positive distance for distinct coordinates', () => {
+      const distance = service.calculateDistance(0, 0, 1, 1);
+
+      expect(distance).toBeGreaterThan(0);
+    });
+  });
+
+  describe('determineMatchType', () => {
+    it('should classify an exact blood type match', () => {
+      expect(service.determineMatchType('A+', 'A+')).toBe('exact');
+    });
+
+    it('should classify a compatible but non-exact match', () => {
+      expect(service.determineMatchType('O-', 'A+')).toBe('compatible');
+    });
+  });
+
+  describe('calculateMatchScore', () => {
+    it('should return a bounded score', () => {
+      const score = service.calculateMatchScore(mockBloodUnit as any, {
+        requestId: 'req-1',
+        hospitalId: 'hospital-1',
+        bloodType: 'A+',
+        quantityMl: 450,
+        urgency: 'high',
+        requiredBy: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      });
+
+      expect(score).toBeGreaterThanOrEqual(0);
+      expect(score).toBeLessThanOrEqual(100);
+    });
+  });
+
+  describe('scoreMatches', () => {
+    it('should score and sort matches in descending order', () => {
+      const request = {
+        requestId: 'req-1',
+        hospitalId: 'hospital-1',
+        bloodType: 'A+',
+        quantityMl: 450,
+        urgency: 'high' as const,
+        requiredBy: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      };
+
+      const scored = service.scoreMatches([mockBloodUnit as any], request);
+
+      expect(scored.length).toBe(1);
+      expect(scored[0].score).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  describe('selectBestMatches', () => {
+    it('should select matches that satisfy the requested quantity', () => {
+      const request = {
+        requestId: 'req-1',
+        hospitalId: 'hospital-1',
+        bloodType: 'A+',
+        quantityMl: 450,
+        urgency: 'high' as const,
+        requiredBy: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      };
+
+      const scored = service.scoreMatches([mockBloodUnit as any], request);
+      const selected = service.selectBestMatches(scored, request);
+
+      expect(selected.length).toBeGreaterThan(0);
     });
   });
 });

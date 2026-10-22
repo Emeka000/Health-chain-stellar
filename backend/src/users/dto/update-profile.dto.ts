@@ -3,7 +3,6 @@ import {
   IsOptional,
   IsEmail,
   IsPhoneNumber,
-  IsUrl,
   MaxLength,
   MinLength,
   IsObject,
@@ -40,10 +39,6 @@ export class UpdateProfileDto {
   @IsOptional()
   @MaxLength(100)
   region?: string;
-
-  @IsUrl()
-  @IsOptional()
-  avatarUrl?: string;
 
   @IsObject()
   @IsOptional()

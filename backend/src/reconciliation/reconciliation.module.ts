@@ -7,6 +7,7 @@ import { SorobanModule } from '../soroban/soroban.module';
 
 import { ReconciliationRunEntity } from './entities/reconciliation-run.entity';
 import { ReconciliationMismatchEntity } from './entities/reconciliation-mismatch.entity';
+import { ReconciliationSnapshotEntity } from './entities/reconciliation-snapshot.entity';
 import { ReconciliationController } from './reconciliation.controller';
 import { ReconciliationService } from './reconciliation.service';
 
@@ -15,6 +16,7 @@ import { ReconciliationService } from './reconciliation.service';
     TypeOrmModule.forFeature([
       ReconciliationRunEntity,
       ReconciliationMismatchEntity,
+      ReconciliationSnapshotEntity,
       DonationEntity,
       DisputeEntity,
     ]),

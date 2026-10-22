@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class CreatePlannedRouteDto {
   @IsString()
@@ -41,10 +41,14 @@ export class LocationUpdateDto {
   orderId: string;
 
   @IsNumber()
+  @Min(-90)
+  @Max(90)
   @Type(() => Number)
   latitude: number;
 
   @IsNumber()
+  @Min(-180)
+  @Max(180)
   @Type(() => Number)
   longitude: number;
 
@@ -54,6 +58,12 @@ export class LocationUpdateDto {
 }
 
 export class AcknowledgeDeviationDto {
+  /**
+   * @deprecated Actor identity is taken from the authenticated JWT (`req.user.id`).
+   * This field is ignored by the controller and retained only for backward
+   * compatibility with existing clients.
+   */
+  @IsOptional()
   @IsString()
-  userId: string;
+  userId?: string;
 }

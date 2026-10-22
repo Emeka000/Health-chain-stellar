@@ -45,8 +45,13 @@ export class OnboardingController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get onboarding by id (owner or admin)' })
-  getById(@Param('id') id: string) {
-    return this.service.getById(id);
+  getById(
+    @Param('id') id: string,
+    @User('id') userId: string,
+    @User('permissions') permissions: string[],
+  ) {
+    const isAdmin = Array.isArray(permissions) && permissions.includes(Permission.MANAGE_USERS);
+    return this.service.getById(id, userId, isAdmin);
   }
 
   @Get()

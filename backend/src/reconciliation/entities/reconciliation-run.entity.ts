@@ -23,4 +23,12 @@ export class ReconciliationRunEntity extends BaseEntity {
 
   @Column({ name: 'error_message', type: 'text', nullable: true })
   errorMessage: string | null;
+
+  /** Reference to the snapshot used for resume support */
+  @Column({ name: 'snapshot_id', type: 'uuid', nullable: true })
+  snapshotId: string | null;
+
+  /** Idempotency key — prevents duplicate runs for the same trigger */
+  @Column({ name: 'idempotency_key', type: 'varchar', length: 128, nullable: true, unique: true })
+  idempotencyKey: string | null;
 }

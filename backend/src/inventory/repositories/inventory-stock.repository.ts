@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, UpdateResult } from 'typeorm';
 import { InventoryStockEntity } from '../entities/inventory-stock.entity';
+import { BloodComponent } from '../../blood-units/enums/blood-component.enum';
+import { BloodType } from '../../blood-units/enums/blood-type.enum';
 
 @Injectable()
 export class InventoryStockRepository {
@@ -10,15 +12,22 @@ export class InventoryStockRepository {
     private readonly repo: Repository<InventoryStockEntity>,
   ) {}
 
-  findById(id: string): Promise<InventoryStockEntity | null> {
-    return this.repo.findOne({ where: { id } });
+  findById(id: string, bloodBankId: string): Promise<InventoryStockEntity | null> {
+    return this.repo.findOne({ where: { id, bloodBankId } });
   }
 
   findByBankAndType(
     bloodBankId: string,
     bloodType: string,
+    component: BloodComponent | string = BloodComponent.WHOLE_BLOOD,
   ): Promise<InventoryStockEntity | null> {
-    return this.repo.findOne({ where: { bloodBankId, bloodType } } as any);
+    return this.repo.findOne({
+      where: {
+        bloodBankId,
+        bloodType: bloodType as BloodType,
+        component: component as BloodComponent,
+      },
+    });
   }
 
   findAndCount(

@@ -16,9 +16,11 @@ import { LocationHistoryEntity } from '../location-history/entities/location-his
 import { RetentionController } from './retention.controller';
 import { RetentionService } from './retention.service';
 import { RetentionPolicyService } from './retention-policy.service';
+import { RetentionExecutorService } from './retention-executor.service';
 import { SensitiveDataService } from './sensitive-data.service';
 import { RetentionPolicyEntity } from './entities/retention-policy.entity';
 import { DataRedactionEntity } from './entities/data-redaction.entity';
+import { LegalHoldEntity } from './entities/legal-hold.entity';
 
 @Module({
   imports: [
@@ -32,12 +34,13 @@ import { DataRedactionEntity } from './entities/data-redaction.entity';
       LocationHistoryEntity,
       RetentionPolicyEntity,
       DataRedactionEntity,
+      LegalHoldEntity,
     ]),
     RedisModule,
     AuditLogModule,
   ],
-  providers: [RetentionService, RetentionPolicyService, SensitiveDataService],
+  providers: [RetentionService, RetentionPolicyService, RetentionExecutorService, SensitiveDataService],
   controllers: [RetentionController],
-  exports: [RetentionService, RetentionPolicyService, SensitiveDataService],
+  exports: [RetentionService, RetentionPolicyService, RetentionExecutorService, SensitiveDataService],
 })
 export class RetentionModule {}

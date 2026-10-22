@@ -8,19 +8,20 @@
 import { useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Toast } from '../ui/Toast';
-import { useToast } from '../../lib/hooks/useToast';
+import { ToastContext, useToastState } from '../../lib/hooks/useToast';
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
-  const { toasts, hideToast, error } = useToast();
+  const toastState = useToastState();
+  const { toasts, hideToast, error } = toastState;
   const searchParams = useSearchParams();
 
   useEffect(() => {
     // Check for session expiry reason in URL
     const reason = searchParams.get('reason');
-    
+
     if (reason === 'session_expired') {
       error('Your session has expired. Please sign in again.');
-      
+
       // Clean up URL
       if (typeof window !== 'undefined') {
         const url = new URL(window.location.href);
@@ -31,7 +32,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, [searchParams, error]);
 
   return (
-    <>
+    <ToastContext.Provider value={toastState}>
       {children}
       <div className="fixed top-4 right-4 z-50 flex flex-col gap-2">
         {toasts.map((toast) => (
@@ -43,6 +44,6 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
           />
         ))}
       </div>
-    </>
+    </ToastContext.Provider>
   );
 }

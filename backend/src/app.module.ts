@@ -1,8 +1,9 @@
 import { BullModule } from '@nestjs/bullmq';
-import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
@@ -11,47 +12,80 @@ import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis'
 import { AnomalyModule } from './anomaly/anomaly.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { ApprovalModule } from './approvals/approval.module';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from './auth/guards/permissions.guard';
 import { BatchImportModule } from './batch-import/batch-import.module';
 import { BlockchainModule } from './blockchain/blockchain.module';
+import { BloodMatchingModule } from './blood-matching/blood-matching.module';
 import { BloodRequestsModule } from './blood-requests/blood-requests.module';
 import { BloodUnitsModule } from './blood-units/blood-units.module';
-import { AuditLogModule } from './common/audit/audit-log.module';
+import { ColdChainModule } from './cold-chain/cold-chain.module';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { CorrelationIdService } from './common/middleware/correlation-id.service';
+import { ApiCompatibilityInterceptor } from './common/versioning/api-compatibility.interceptor';
 import { AppConfigModule } from './config/config.module';
-import { DatabaseSyncGuard } from './config/database-sync.guard';
+import { THROTTLE_TTL_MS } from './config/throttle-limits.config';
+import { ConsentModule } from './consent/consent.module';
+import { ContractEventIndexerModule } from './contract-event-indexer/contract-event-indexer.module';
+import { CustodyModule } from './custody/custody.module';
+import { DeliveryProofModule } from './delivery-proof/delivery-proof.module';
 import { DispatchModule } from './dispatch/dispatch.module';
+import { DisputesModule } from './disputes/disputes.module';
+import { DonationModule } from './donations/donation.module';
+import { DonorEligibilityModule } from './donor-eligibility/donor-eligibility.module';
 import { DonorImpactModule } from './donor-impact/donor-impact.module';
 import { EscalationModule } from './escalation/escalation.module';
+import { EscrowGovernanceModule } from './escrow-governance/escrow-governance.module';
 import { EventsModule } from './events/events.module';
+import { FeeCorrectionModule } from './fee-correction/fee-correction.module';
+import { FileMetadataModule } from './file-metadata/file-metadata.module';
+import { HealthModule } from './health/health.module';
 import { HospitalsModule } from './hospitals/hospitals.module';
+import { IncidentReviewsModule } from './incident-reviews/incident-reviews.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { LocationHistoryModule } from './location-history/location-history.module';
 import { MapsModule } from './maps/maps.module';
+import { MediaProcessingModule } from './media-processing/media-processing.module';
+import { MigrationSafetyModule } from './migrations/migration-safety.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { OnboardingModule } from './onboarding/onboarding.module';
+import { OrdersModule } from './orders/orders.module';
+import { OrganizationsModule } from './organizations/organizations.module';
 import { PolicyCenterModule } from './policy-center/policy-center.module';
 import { ProofBundleModule } from './proof-bundle/proof-bundle.module';
+import { ReadinessModule } from './readiness/readiness.module';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
+import { RedisModule } from './redis/redis.module';
+import { RegionsModule } from './regions/regions.module';
+import { ReportingModule } from './reporting/reporting.module';
+import { ReputationModule } from './reputation/reputation.module';
+import { RetentionModule } from './retention/retention.module';
+import { RidersModule } from './riders/riders.module';
 import { RouteDeviationModule } from './route-deviation/route-deviation.module';
-import { FileMetadataModule } from './file-metadata/file-metadata.module';
+import { SlaModule } from './sla/sla.module';
+import { SorobanModule } from './soroban/soroban.module';
+import { SurgeSimulationModule } from './surge-simulation/surge-simulation.module';
+import { RoleAwareThrottlerGuard } from './throttler/role-aware-throttler.guard';
+import { throttleGetTracker } from './throttler/throttle-tracker.util';
 import { TrackingModule } from './tracking/tracking.module';
 import { TransparencyModule } from './transparency/transparency.module';
-import { UserActivityModule } from './user-activity/user-activity.module';
 import { UsersModule } from './users/users.module';
-import { WorkflowModule } from './workflow/workflow.module';
+import { UssdModule } from './ussd-session/ussd.module';
 
 import type Redis from 'ioredis';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    // ── Single authoritative configuration bootstrap ──────────────────────
+    AppConfigModule,
+
     EventEmitterModule.forRoot(),
-    // Global BullMQ Redis connection — individual modules register their own queues
+    ScheduleModule.forRoot(),
+
+    // Global BullMQ Redis connection
     BullModule.forRootAsync({
-      imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
         connection: {
           host: configService.get<string>('REDIS_HOST', 'localhost'),
@@ -60,34 +94,35 @@ import type Redis from 'ioredis';
       }),
       inject: [ConfigService],
     }),
+
     TypeOrmModule.forRootAsync({
-      imports: [ConfigModule],
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres',
-        host: config.get<string>('DB_HOST', 'localhost'),
-        port: config.get<number>('DB_PORT', 5432),
-        username: config.get<string>('DB_USERNAME', 'postgres'),
-        password: config.get<string>('DB_PASSWORD', 'postgres'),
-        database: config.get<string>('DB_DATABASE', 'health_chain'),
-        autoLoadEntities: true,
-        synchronize: true, // DEV ONLY
-      }),
+      useFactory: (config: ConfigService) => {
+        const nodeEnv = config.get<string>('NODE_ENV', 'development');
+        const synchronize = nodeEnv === 'development' || nodeEnv === 'test';
+        return {
+          type: 'postgres',
+          host: config.get<string>('DATABASE_HOST', 'localhost'),
+          port: config.get<number>('DATABASE_PORT', 5432),
+          username: config.get<string>('DATABASE_USERNAME', 'postgres'),
+          password: config.get<string>('DATABASE_PASSWORD', ''),
+          database: config.get<string>('DATABASE_NAME'),
+          autoLoadEntities: true,
+          synchronize,
+          migrations: ['dist/migrations/*.js'],
+          migrationsRun: false,
+        };
+      },
       inject: [ConfigService],
     }),
-    /**
-     * ThrottlerModule with Redis storage for distributed rate limiting.
-     * Per-role limits are resolved at request time by RoleAwareThrottlerGuard;
-     * the base limit here acts as a fallback only.
-     */
+
     ThrottlerModule.forRootAsync({
-      imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         throttlers: [
           {
             name: 'default',
             ttl: THROTTLE_TTL_MS,
-            limit: 30, // fallback; overridden per-role by RoleAwareThrottlerGuard
+            limit: 30,
           },
         ],
         storage: new ThrottlerStorageRedisService({
@@ -98,44 +133,93 @@ import type Redis from 'ioredis';
         getTracker: throttleGetTracker,
       }),
     }),
+
+    // ── Core infrastructure ───────────────────────────────────────────────
+    RedisModule,
     UsersModule,
     AuthModule,
-    InventoryModule,
-    NotificationsModule,
-    UserActivityModule,
-    EventsModule,
-    TrackingModule,
+
+    // ── Health & observability ────────────────────────────────────────────
+    HealthModule,
+
+    // ── Domain modules ────────────────────────────────────────────────────
     AnomalyModule,
+    ApprovalModule,
     BatchImportModule,
-    WorkflowModule,
+    BlockchainModule,
+    BloodMatchingModule,
     BloodRequestsModule,
     BloodUnitsModule,
-    BlockchainModule,
+    ColdChainModule,
+    ConsentModule,
+    ContractEventIndexerModule,
+    CustodyModule,
+    DeliveryProofModule,
     DispatchModule,
-    EscalationModule,
+    DisputesModule,
+    DonationModule,
+    DonorEligibilityModule,
     DonorImpactModule,
-    LocationHistoryModule,
-    HospitalsModule,
-    MapsModule,
-    TransparencyModule,
-    ProofBundleModule,
-    PolicyCenterModule,
-    ReconciliationModule,
-    RouteDeviationModule,
+    EscalationModule,
+    EscrowGovernanceModule,
+    EventsModule,
+    // NOTE: FeePolicyModule (from fee-policy/) is imported via FeeCorrectionModule & OrdersModule.
+    // fee-policy-validation module is intentionally NOT imported as it is superseded and would
+    // collide with the fee_policies table under an incompatible schema. See issue #1340.
+    FeeCorrectionModule,
     FileMetadataModule,
+    HospitalsModule,
+    IncidentReviewsModule,
+    InventoryModule,
+    LocationHistoryModule,
+    MapsModule,
+    MediaProcessingModule,
+    MigrationSafetyModule,
+    NotificationsModule,
+    OnboardingModule,
+    OrdersModule,
+    OrganizationsModule,
+    PolicyCenterModule,
+    ProofBundleModule,
+    ReadinessModule,
+    ReconciliationModule,
+    RegionsModule,
+    ReportingModule,
+    ReputationModule,
+    RetentionModule,
+    RidersModule,
+    RouteDeviationModule,
+    SlaModule,
+    SorobanModule,
+    SurgeSimulationModule,
+    TrackingModule,
+    TransparencyModule,
+    UssdModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
-    { provide: APP_GUARD, useClass: JwtAuthGuard },
-    /**
-     * Runs after JWT so req.user is populated before role resolution.
-     * Replaces the generic ThrottlerGuard with role-aware limits.
-     */
-    { provide: APP_GUARD, useClass: RoleAwareThrottlerGuard },
-    /** Permission enforcement applied globally; use @RequirePermissions() to specify */
-    { provide: APP_GUARD, useClass: PermissionsGuard },
     CorrelationIdService,
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: PermissionsGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RoleAwareThrottlerGuard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: ApiCompatibilityInterceptor,
+    },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(CorrelationIdMiddleware).forRoutes('*');
+  }
+}

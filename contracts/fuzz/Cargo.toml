@@ -10,22 +10,29 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1.3", features = ["derive"] }
-soroban-sdk = { version = "22.0.0", features = ["testutils"] }
+soroban-sdk = { version = "27.0.2", features = ["testutils"] }
 
 [dependencies.health_chain_contract]
 path = ".."
 package = "healthchain"
 
 [[bin]]
-name = "fuzz_target_1"
-path = "fuzz_targets/fuzz_target_1.rs"
+name = "fuzz_custody_transfer"
+path = "fuzz_targets/fuzz_custody_transfer.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
-name = "fuzz_custody_transfer"
-path = "fuzz_targets/fuzz_custody_transfer.rs"
+name = "fuzz_payments"
+path = "fuzz_targets/fuzz_payments.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_disputes"
+path = "fuzz_targets/fuzz_disputes.rs"
 test = false
 doc = false
 bench = false

@@ -169,9 +169,12 @@ export class OnboardingService {
     return this.repo.save(onboarding);
   }
 
-  async getById(id: string): Promise<PartnerOnboardingEntity> {
+  async getById(id: string, requestingUserId: string, isAdmin: boolean): Promise<PartnerOnboardingEntity> {
     const o = await this.repo.findOne({ where: { id } });
     if (!o) throw new NotFoundException('Onboarding not found');
+    if (!isAdmin && o.submittedBy !== requestingUserId) {
+      throw new NotFoundException('Onboarding not found');
+    }
     return o;
   }
 

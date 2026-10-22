@@ -2,17 +2,20 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
+  ServiceUnavailableException,
   Logger,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 
 import * as QRCode from 'qrcode';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 
 import { PermissionsService } from '../auth/permissions.service';
 import { DonorEligibilityService } from '../donor-eligibility/donor-eligibility.service';
 import { NotificationChannel } from '../notifications/enums/notification-channel.enum';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ActorRegistryService, ActorType } from '../registry/actor-registry.service';
 import { BloodUnitTrail } from '../soroban/entities/blood-unit-trail.entity';
 import { SorobanService } from '../soroban/soroban.service';
 
@@ -36,6 +39,7 @@ import { OrganizationEntity } from '../organizations/entities/organization.entit
 interface AuthenticatedUserContext {
   id: string;
   role: string;
+  organizationId?: string;
 }
 
 @Injectable()
@@ -50,18 +54,19 @@ export class BloodUnitsService {
     private readonly permissionsService: PermissionsService,
     private readonly donorEligibilityService: DonorEligibilityService,
     private readonly quarantineService: QuarantineService,
+    private readonly actorRegistry: ActorRegistryService,
     private readonly eventEmitter: EventEmitter2,
     @InjectRepository(BloodUnitTrail)
 
     private readonly trailRepository: Repository<BloodUnitTrail>,
     @InjectRepository(BloodUnitEntity)
     private readonly bloodUnitRepository: Repository<BloodUnitEntity>,
-    @InjectRepository(BloodUnit)
-    private readonly inventoryRepository: Repository<BloodUnit>,
     @InjectRepository(TransferRecord)
     private readonly transferRepository: Repository<TransferRecord>,
     @InjectRepository(OrganizationEntity)
     private readonly orgRepository: Repository<OrganizationEntity>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
   ) {}
 
 
@@ -79,15 +84,12 @@ export class BloodUnitsService {
     }
 
     const unitNumber = await this.generateUniqueUnitNumber(dto.bloodType);
-    const expirationTimestamp = Math.floor(
-      new Date(dto.expirationDate).getTime() / 1000,
-    );
 
     const result = await this.sorobanService.registerBloodUnit({
       bankId: dto.bankId,
+      serialNumber: unitNumber,
       bloodType: dto.bloodType,
       quantityMl: dto.quantityMl,
-      expirationTimestamp,
       donorId: dto.donorId,
     });
 
@@ -129,6 +131,108 @@ export class BloodUnitsService {
     };
   }
 
+  private validateExpirationDate(expirationDate: string | Date): void {
+    const expiry = new Date(expirationDate);
+    if (Number.isNaN(expiry.getTime())) {
+      throw new BadRequestException('Invalid expiration date');
+    }
+    if (expiry.getTime() <= Date.now()) {
+      throw new BadRequestException('Expiration date must be in the future');
+    }
+  }
+
+  private async validateBloodBankAuthorization(
+    bankId: string,
+    user?: AuthenticatedUserContext,
+  ): Promise<void> {
+    if (!user) {
+      throw new ForbiddenException('Authentication required to register blood units');
+    }
+
+    if (user.role === 'admin') {
+      return;
+    }
+
+    if (user.organizationId && user.organizationId === bankId) {
+      return;
+    }
+
+    const authorized = await this.permissionsService.hasPermission(
+      user.id,
+      'blood-units:register',
+    );
+    if (!authorized) {
+      throw new ForbiddenException(
+        'You are not authorized to register blood units for this blood bank',
+      );
+    }
+  }
+
+  private async generateUniqueUnitNumber(bloodType: string): Promise<string> {
+    const prefix = `BU-${bloodType.replace(/[^A-Za-z0-9]/g, '').toUpperCase()}`;
+    const maxAttempts = 5;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const random = Math.random().toString(36).slice(2, 8).toUpperCase();
+      const candidate = `${prefix}-${Date.now().toString(36).toUpperCase()}-${random}`;
+      const existing = await this.bloodUnitRepository.findOne({
+        where: { unitNumber: candidate },
+      });
+      if (!existing) {
+        return candidate;
+      }
+    }
+
+    throw new ServiceUnavailableException(
+      'Unable to generate a unique blood unit number, please retry',
+    );
+  }
+
+  private async generateBarcode(data: {
+    unitNumber: string;
+    bloodType: string;
+    quantityMl: number;
+    bankId: string;
+    expirationDate: string | Date;
+    blockchainTransactionHash?: string;
+    blockchainUnitId?: string;
+  }): Promise<string> {
+    const payload = JSON.stringify({
+      unitNumber: data.unitNumber,
+      bloodType: data.bloodType,
+      quantityMl: data.quantityMl,
+      bankId: data.bankId,
+      expirationDate: new Date(data.expirationDate).toISOString(),
+      blockchainTransactionHash: data.blockchainTransactionHash,
+      blockchainUnitId: data.blockchainUnitId,
+    });
+
+    return QRCode.toDataURL(payload);
+  }
+
+  private async sendRegistrationNotification(unit: BloodUnitEntity): Promise<void> {
+    try {
+      await this.notificationsService.send({
+        channel: NotificationChannel.EMAIL,
+        recipientId: unit.registeredBy,
+        template: 'blood-unit-registered',
+        data: {
+          unitNumber: unit.unitNumber,
+          bloodType: unit.bloodType,
+          quantityMl: unit.quantityMl,
+          bankId: unit.bankId,
+          expirationDate: unit.expirationDate,
+        },
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Failed to send registration notification for unit ${unit.unitNumber}: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+      );
+    }
+  }
+
   async registerBloodUnitsBulk(
     dto: BulkRegisterBloodUnitsDto,
     user?: AuthenticatedUserContext,
@@ -158,6 +262,7 @@ export class BloodUnitsService {
 
   async transferCustody(dto: TransferCustodyDto) {
     await this.assertUnitTransferable(dto.unitId);
+    await this.validateCustodyTransferActors(dto.fromAccount, dto.toAccount);
 
     const result = await this.sorobanService.transferCustody({
       unitId: dto.unitId,
@@ -184,35 +289,52 @@ export class BloodUnitsService {
     reason?: string,
     user?: AuthenticatedUserContext,
   ) {
-    const unit = await this.inventoryRepository.findOne({
-      where: { id: unitId },
-    });
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    if (!unit) {
-      throw new NotFoundException(`Blood unit ${unitId} not found`);
+    let unit: BloodUnit;
+    let transfer: TransferRecord;
+
+    try {
+      unit = await queryRunner.manager.findOne(BloodUnit, {
+        where: { id: unitId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!unit) {
+        throw new NotFoundException(`Blood unit ${unitId} not found`);
+      }
+
+      // Must be owner org
+      if (unit.organizationId !== (user as any)?.organizationId && user?.role !== 'admin') {
+        throw new BadRequestException('Only the owner organization can initiate a transfer');
+      }
+
+      if (unit.status !== BloodStatus.AVAILABLE) {
+        throw new BadRequestException(`Unit must be AVAILABLE to transfer (current: ${unit.status})`);
+      }
+
+      unit.status = BloodStatus.IN_TRANSFER;
+      await queryRunner.manager.save(unit);
+
+      transfer = queryRunner.manager.create(TransferRecord, {
+        bloodUnitId: unitId,
+        sourceOrgId: unit.organizationId,
+        destinationOrgId,
+        reason,
+        status: TransferStatus.PENDING,
+        initiatedByUserId: user?.id,
+      });
+      await queryRunner.manager.save(transfer);
+
+      await queryRunner.commitTransaction();
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
     }
-
-    // Must be owner org
-    if (unit.organizationId !== (user as any)?.organizationId && user?.role !== 'admin') {
-      throw new BadRequestException('Only the owner organization can initiate a transfer');
-    }
-
-    if (unit.status !== BloodStatus.AVAILABLE) {
-      throw new BadRequestException(`Unit must be AVAILABLE to transfer (current: ${unit.status})`);
-    }
-
-    unit.status = BloodStatus.IN_TRANSFER;
-    await this.inventoryRepository.save(unit);
-
-    const transfer = this.transferRepository.create({
-      bloodUnitId: unitId,
-      sourceOrgId: unit.organizationId,
-      destinationOrgId,
-      reason,
-      status: TransferStatus.PENDING,
-      initiatedByUserId: user?.id,
-    });
-    await this.transferRepository.save(transfer);
 
     this.eventEmitter.emit('blood-unit.transfer.initiated', {
       unitId,
@@ -228,264 +350,3 @@ export class BloodUnitsService {
       status: unit.status,
     };
   }
-
-  /**
-   * Phase 2 of inter-org transfer: Accept.
-   * Status transitions back to AVAILABLE (at new org).
-   * Closes #465
-   */
-  async acceptOrganizationTransfer(unitId: string, user?: AuthenticatedUserContext) {
-    const unit = await this.inventoryRepository.findOne({
-      where: { id: unitId },
-    });
-
-    if (!unit) {
-      throw new NotFoundException(`Blood unit ${unitId} not found`);
-    }
-
-    const transfer = await this.transferRepository.findOne({
-      where: {
-        bloodUnitId: unitId,
-        status: TransferStatus.PENDING,
-      },
-      order: { createdAt: 'DESC' },
-    });
-
-    if (!transfer) {
-      throw new BadRequestException('No pending transfer found for this unit');
-    }
-
-    // Must be destination org
-    if (transfer.destinationOrgId !== (user as any)?.organizationId && user?.role !== 'admin') {
-      throw new BadRequestException('Only the destination organization can accept the transfer');
-    }
-
-    const previousOrgId = unit.organizationId;
-    unit.organizationId = transfer.destinationOrgId;
-    unit.status = BloodStatus.AVAILABLE;
-    await this.inventoryRepository.save(unit);
-
-    transfer.status = TransferStatus.ACCEPTED;
-    transfer.acceptedByUserId = user?.id || null;
-    transfer.acceptedAt = new Date();
-    await this.transferRepository.save(transfer);
-
-    // Update Soroban - publish custody transfer to blockchain
-    try {
-      if (unit.blockchainUnitId) {
-        const [sourceOrg, destOrg] = await Promise.all([
-          this.orgRepository.findOne({ where: { id: previousOrgId } }),
-          this.orgRepository.findOne({ where: { id: unit.organizationId } }),
-        ]);
-
-        if (sourceOrg?.blockchainAddress && destOrg?.blockchainAddress) {
-          await this.sorobanService.transferCustody({
-            unitId: Number(unit.blockchainUnitId),
-            fromAccount: sourceOrg.blockchainAddress,
-            toAccount: destOrg.blockchainAddress,
-            condition: 'Inter-Organization Transfer',
-          });
-        }
-      }
-    } catch (error) {
-       this.logger.warn(`Failed to sync transfer acceptance to Soroban for unit ${unitId}: ${error.message}`);
-    }
-
-    this.eventEmitter.emit('blood-unit.transfer.accepted', {
-
-      unitId,
-      transferId: transfer.id,
-      sourceOrgId: previousOrgId,
-      destinationOrgId: unit.organizationId,
-      acceptedBy: user?.id,
-    });
-
-    return {
-      success: true,
-      unitId,
-      newOrganizationId: unit.organizationId,
-    };
-  }
-
-
-  async logTemperature(dto: LogTemperatureDto) {
-    const matchedUnit = await this.findByBlockchainUnitId(dto.unitId);
-
-    const result = await this.sorobanService.logTemperature({
-      unitId: dto.unitId,
-      temperature: dto.temperature,
-      timestamp: dto.timestamp || Math.floor(Date.now() / 1000),
-      bloodType: dto.bloodType,
-    });
-
-    if (
-      matchedUnit &&
-      (dto.temperature < this.minStorageTempC ||
-        dto.temperature > this.maxStorageTempC)
-    ) {
-      try {
-        await this.quarantineService.createCase(
-          {
-            bloodUnitId: matchedUnit.id,
-            triggerSource: QuarantineTriggerSource.TEMPERATURE_BREACH,
-            reasonCode: QuarantineReasonCode.STORAGE_ANOMALY,
-            reason: `Temperature ${dto.temperature}C breached threshold [${this.minStorageTempC}, ${this.maxStorageTempC}]`,
-            metadata: {
-              onChainUnitId: dto.unitId,
-              observedTemperature: dto.temperature,
-              threshold: {
-                min: this.minStorageTempC,
-                max: this.maxStorageTempC,
-              },
-            },
-          },
-          undefined,
-        );
-      } catch (error) {
-        this.logger.warn(
-          `Temperature breach quarantine trigger failed for unit ${matchedUnit.id}: ${
-            error instanceof Error ? error.message : 'unknown error'
-          }`,
-        );
-      }
-    }
-
-    return {
-      success: true,
-      transactionHash: result.transactionHash,
-      message: 'Temperature logged successfully',
-    };
-  }
-
-  async getUnitTrail(unitId: number) {
-    // Try to get from database first (cached)
-    const cachedTrail = await this.trailRepository.findOne({
-      where: { unitId },
-    });
-
-    if (cachedTrail) {
-      return {
-        unitId,
-        custodyTrail: cachedTrail.custodyTrail,
-        temperatureLogs: cachedTrail.temperatureLogs,
-        statusHistory: cachedTrail.statusHistory,
-        lastUpdated: cachedTrail.lastSyncedAt,
-        source: 'cache',
-      };
-    }
-
-    // If not in cache, fetch from blockchain
-    try {
-      const trail = await this.sorobanService.getUnitTrail(unitId);
-
-      return {
-        unitId,
-        ...trail,
-        lastUpdated: new Date(),
-        source: 'blockchain',
-      };
-    } catch (error) {
-      throw new NotFoundException(`Blood unit ${unitId} not found`);
-    }
-  }
-
-  private validateExpirationDate(expirationDate: string) {
-    const parsed = new Date(expirationDate);
-    if (Number.isNaN(parsed.getTime()) || parsed.getTime() <= Date.now()) {
-      throw new BadRequestException(
-        'Expiration date must be a valid future date',
-      );
-    }
-  }
-
-  private async validateBloodBankAuthorization(
-    bankId: string,
-    user?: AuthenticatedUserContext,
-  ) {
-    const isAuthorizedBank = await this.sorobanService.isBloodBank(bankId);
-    if (!isAuthorizedBank) {
-      throw new NotFoundException('Blood bank is not authorized on blockchain');
-    }
-
-    if (user?.role) {
-      this.permissionsService.assertIsBloodBankOrAdmin(user);
-    }
-  }
-
-  private async generateUniqueUnitNumber(bloodType: string): Promise<string> {
-    const maxAttempts = 5;
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const candidate = this.generateUnitNumber(bloodType);
-      const existing = await this.bloodUnitRepository.findOne({
-        where: { unitNumber: candidate },
-        select: ['id'],
-      });
-
-      if (!existing) {
-        return candidate;
-      }
-    }
-
-    throw new BadRequestException('Unable to generate a unique unit number');
-  }
-
-  private generateUnitNumber(bloodType: string): string {
-    const normalizedType = bloodType.replace('+', 'POS').replace('-', 'NEG');
-    const timestamp = Date.now();
-    const random = Math.random().toString(36).slice(2, 8).toUpperCase();
-    return `${normalizedType}-${timestamp}-${random}`;
-  }
-
-  private async generateBarcode(payload: Record<string, unknown>) {
-    return QRCode.toDataURL(JSON.stringify(payload), {
-      margin: 1,
-      width: 320,
-    });
-  }
-
-  private async sendRegistrationNotification(unit: BloodUnitEntity) {
-    try {
-      await this.notificationsService.send({
-        recipientId: unit.bankId,
-        channels: [NotificationChannel.IN_APP],
-        templateKey: 'blood_unit_registered',
-        variables: {
-          unitNumber: unit.unitNumber,
-          bloodType: unit.bloodType,
-          quantityMl: String(unit.quantityMl),
-          expirationDate: unit.expirationDate.toISOString(),
-        },
-      });
-    } catch (error) {
-      this.logger.warn(
-        `Notification skipped for blood unit ${unit.unitNumber}: ${
-          error instanceof Error ? error.message : 'unknown error'
-        }`,
-      );
-    }
-  }
-
-  private async findByBlockchainUnitId(
-    blockchainUnitId: number,
-  ): Promise<BloodUnitEntity | null> {
-    return this.bloodUnitRepository.findOne({
-      where: {
-        blockchainUnitId: blockchainUnitId as unknown as any,
-      },
-    });
-  }
-
-  private async assertUnitTransferable(blockchainUnitId: number): Promise<void> {
-    const unit = await this.findByBlockchainUnitId(blockchainUnitId);
-    if (!unit) {
-      return;
-    }
-
-    const normalizedStatus = String((unit as unknown as { status?: string }).status || '').toUpperCase();
-    if (normalizedStatus === BloodStatus.QUARANTINED) {
-      throw new BadRequestException(
-        `Blood unit ${unit.unitNumber} is quarantined and cannot be transferred`,
-      );
-    }
-  }
-}

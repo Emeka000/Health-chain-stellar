@@ -6,7 +6,14 @@ echo "🔨 Building all Lifebank contracts..."
 echo ""
 
 # Build in release mode for optimized WASM
-cargo build --release --target wasm32-unknown-unknown
+cargo build --release --target wasm32-unknown-unknown \
+    -p inventory-contract \
+    -p request-contract \
+    -p payment-contract \
+    -p temperature-contract \
+    -p delivery-contract \
+    -p reputation-contract \
+    -p identity-contract
 
 echo ""
 echo "✅ Build complete!"

@@ -1,116 +1,140 @@
-﻿# Reputation Contract
+# Reputation Contract
 
-The Reputation Contract computes and maintains reputation scores for entities (keyed by entity_id: u64) based on ratings, assignment completion, response times, penalties, fraud flags, and decay from inactivity.
+**Location:** `lifebank-soroban/contracts/reputation/src/lib.rs`  
+**Purpose:** Computes and maintains a composite reputation score (0–100) for each actor (rider, blood bank, hospital) in the HealthDonor network. Scores are derived from weighted ratings, completion rate, response time, consistency, activity decay, and fraud penalties.
 
-## Quick Start
+---
 
-Reputation is a composite score (0–100.00, stored ×100) comprising:
-- Weighted Rating (35%) — Recency-weighted average of 1–5 star ratings
-- Completion Rate (25%) — completed / assigned × 100
-- Response Time (20%) — Faster average → higher score (5 min perfect, 60 min zero)
-- Consistency Bonus (10%) — Low variance of ratings → bonus (+10 pts max)
-- Fraud Penalty (10%) — Deducted per confirmed fraud flag (max –50 pts)
-- Inactivity Decay — –1 pt per 30 days without activity (max –20 pts)
-- Violation Penalties — Time-decaying penalties for rule violations
+## Public Interface
 
-All values stored ×100 (e.g., 7823 = 78.23 points).
+### Initialization & Config
 
-## Entrypoints (20 functions)
+| Function | Parameters | Returns | Auth |
+|---|---|---|---|
+| `initialize` | `env, admin: Address` | `Result<(), ReputationError>` | `admin` |
+| `set_config` | `env, admin, config: ReputationConfig` | `Result<(), ReputationError>` | Admin |
 
-### Lifecycle
-- initialize(env, admin) → Result: Init with default configuration
-- init(env, admin) → (): Backward-compatible wrapper
-- is_initialized(env) → bool
-- get_admin(env) → Result<Address>
-- pause(env, admin) → Result: Pause mutations (admin only)
-- unpause(env, admin) → Result: Unpause (admin only)
-- is_paused(env) → bool
+### Score Updates
 
-### Configuration
-- get_rating_scale_config(env) → Result<RatingScaleConfig>
-- get_decay_config(env) → Result<DecayConfig>
-- get_minimum_interactions(env) → Result<u32>
-- get_badge_config(env) → Result<BadgeConfig>
+| Function | Parameters | Returns | Auth |
+|---|---|---|---|
+| `submit_rating` | `env, rater, entity, score: i64, timestamp: u64` | `Result<(), ReputationError>` | Any caller |
+| `record_completion` | `env, caller, entity, response_time_secs: u64` | `Result<(), ReputationError>` | Authorized caller |
+| `apply_violation` | `env, admin, entity, violation: ViolationType` | `Result<(), ReputationError>` | Admin |
+| `flag_fraud` | `env, admin, entity` | `Result<(), ReputationError>` | Admin |
+| `resolve_penalty` | `env, admin, entity, penalty_id: u32` | `Result<(), ReputationError>` | Admin |
+| `appeal_penalty` | `env, entity, penalty_id: u32` | `Result<(), ReputationError>` | Entity itself |
 
-### Scoring Updates (auto-recalculate)
-- submit_rating(env, entity_id: u64, score: i64, timestamp: u64) → Result<ReputationScore>: Submit 1–5 rating
-- record_assignment(env, entity_id: u64, completed: bool, response_secs: u64, timestamp: u64) → Result<ReputationScore>
-- flag_fraud(env, entity_id: u64, timestamp: u64) → Result<ReputationScore>
-- apply_penalty(env, entity_id: u64, violation: ViolationType) → Result<ReputationScore>: Admin only
-- appeal_penalty(env, entity_id: u64, penalty_id: u32) → Result: File appeal
-- resolve_penalty(env, entity_id: u64, penalty_id: u32, should_remove: bool) → Result<ReputationScore>: Admin only
+### Score Query
 
-### Core Algorithm
-- calculate_reputation(env, entity_id: u64) → Result<ReputationScore>: Compute and persist score
+| Function | Parameters | Returns | Auth |
+|---|---|---|---|
+| `get_score` | `env, entity` | `Result<i64, ReputationError>` | Public |
+| `get_profile` | `env, entity` | `Result<ReputationProfile, ReputationError>` | Public |
+| `get_leaderboard` | `env, limit: u32` | `Vec<(Address, i64)>` | Public |
 
-### Reads
-- get_score(env, entity_id: u64) → Option<ReputationScore>: Last persisted score
-- get_input(env, entity_id: u64) → Option<ReputationInput>: Raw input data
+---
 
-## Score Components (all ×100)
+## Storage Layout
 
-1. **Weighted Rating** (35%): Recency-weighted average 1–5
-   - Recent (< 90 days): 2× weight
-   - Older: 1× weight
-   - Normalized to 0–100.00
+| Key | Storage Tier | Description |
+|---|---|---|
+| `DataKey::Admin` | Instance | Admin address |
+| `DataKey::Config` | Instance | `ReputationConfig` |
+| `DataKey::Profile(Address)` | Persistent | Full `ReputationProfile` per entity |
+| `DataKey::Leaderboard` | Persistent | Sorted `Vec<(Address, i64)>` |
 
-2. **Completion Rate** (25%): completed / assigned × 100
+---
 
-3. **Response Time** (20%): 
-   - ≤ 5 min: 100.00
-   - ≥ 60 min: 0
-   - Linear between
+## Scoring Algorithm
 
-4. **Consistency Bonus** (10%, optional +):
-   - Low std-dev (≤ 0.50): +10.00 pts
-   - Medium (≤ 1.00): +5.00 pts
+Score is calculated as a weighted sum (all arithmetic is integer, scaled ×100 for two decimal places):
 
-5. **Fraud Penalty** (10%, –):
-   - fraud_flags × 15.00 pts (capped at –50.00)
+| Component | Weight |
+|---|---|
+| Weighted average rating (recency-adjusted) | 35% |
+| Completion rate | 25% |
+| Response time | 20% |
+| Consistency bonus | 10% |
 
-6. **Violation Penalties** (–):
-   - Minor: –5.00 pts (–2.50 after 30 days, expires 60 days)
-   - Medium: –15.00 pts (–7.50 after 30 days, expires 60 days)
-   - Serious: –40.00 pts (–20 after 30 days, expires 60 days)
+Additional adjustments:
+- **Activity decay**: −1 point per 30-day period of inactivity (cap: −20 points).
+- **Recency half-life**: ratings older than 90 days count at half weight.
+- **Fraud penalty**: −15 points per confirmed fraud flag (cap: −50 points).
+- **Violation penalties** (expire after 60 days):
+  - `Minor`: −5 points
+  - `Medium`: −15 points
+  - `Serious`: −40 points
+- **Consistency bonus**: +10 points if rating std-dev ≤ 0.5; +5 points if ≤ 1.0.
 
-7. **Inactivity Decay** (–):
-   - 1 pt per 30 days, capped at –20.00 pts
+Final score is clamped to [0, 100].
+
+---
+
+## Types
+
+### `ViolationType`
+```rust
+pub enum ViolationType { Minor = 0, Medium = 1, Serious = 2 }
+```
+
+### `RatingEvent`
+```rust
+pub struct RatingEvent {
+    pub score: i64,     // 1_00–5_00 (×100)
+    pub timestamp: u64, // Unix timestamp
+}
+```
+
+### `PenaltyRecord`
+```rust
+pub struct PenaltyRecord {
+    pub id: u32,
+    pub violation_type: ViolationType,
+    pub timestamp: u64,
+    pub is_resolved: bool,
+    pub is_appealed: bool,
+}
+```
+
+---
+
+## Constants
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `W_RATING` | 35 | Rating component weight |
+| `W_COMPLETION` | 25 | Completion rate weight |
+| `W_RESPONSE` | 20 | Response time weight |
+| `W_CONSISTENCY` | 10 | Consistency bonus weight |
+| `DECAY_PERIOD_SECS` | 2 592 000 (30 days) | Inactivity decay period |
+| `MAX_DECAY` | 20_00 | Cap on inactivity decay |
+| `HALF_LIFE_SECS` | 7 776 000 (90 days) | Rating recency half-life |
+| `FRAUD_FLAG_PENALTY` | 15_00 | Per confirmed fraud flag |
+| `MAX_FRAUD_PENALTY` | 50_00 | Cap on total fraud penalty |
+| `PENALTY_EXPIRY_SECS` | 5 184 000 (60 days) | Violation penalty expiry |
+
+---
+
+## Events
+
+| Topics | Data | When |
+|---|---|---|
+| `["rating", "submitted"]` | `{entity, score, timestamp}` | Rating recorded |
+| `["violation", "applied"]` | `{entity, violation_type, penalty_id}` | Violation penalty applied |
+| `["fraud", "flagged"]` | `{entity}` | Fraud flag confirmed |
+| `["score", "updated"]` | `{entity, new_score}` | Score recalculated |
+
+---
 
 ## Error Codes
 
-- 400: InvalidRating (not 1–5)
-- 401: InvalidInput
-- 402: EntityNotFound
-- 403: NotAuthorized
-- 404: PenaltyNotFound
-- 405: AlreadyInitialized
-- 406: NotInitialized
-- 407: ContractPaused
-
-## Data Types
-
-### ReputationScore
-score (i64), rating_component, completion_component, response_component, consistency_bonus, fraud_penalty, decay_applied, penalty_points (all ×100)
-
-### ReputationInput
-ratings (Vec<RatingEvent>), total_assigned (u32), total_completed (u32), total_response_secs (u64), response_count (u32), fraud_flags (u32), last_active_at (u64), penalties (Vec<PenaltyRecord>)
-
-### RatingEvent
-score (i64: 1–5 as 1_00–5_00), timestamp (u64)
-
-### PenaltyRecord
-id (u32), violation_type (ViolationType), timestamp (u64), is_resolved (bool), is_appealed (bool)
-
-### ViolationType
-Minor, Medium, Serious
-
-## Key Design
-
-- **Entity ID is u64** (not Address)
-- **Recency Weighting**: Ratings < 90 days get 2× weight
-- **Score Storage**: ×100 for integer arithmetic
-- **Auto-Recalculate**: Every write triggers full recalculation
-- **Time-Based Recovery**: Penalties lose 50% after 30 days, expire after 60 days
-- **Capped Fraud**: Multiple flags capped at –50 pts
-- **Inactivity Decay**: Prevents old scores dominating
-- **Pause**: Admin can pause mutations without affecting reads
+| Name | Meaning |
+|---|---|
+| `NotInitialized` | Contract not initialized |
+| `AlreadyInitialized` | `initialize` called twice |
+| `Unauthorized` | Caller not permitted |
+| `EntityNotFound` | No profile for this address |
+| `InvalidRating` | Rating outside configured min/max |
+| `PenaltyNotFound` | Penalty ID does not exist |
+| `PenaltyAlreadyResolved` | Penalty is already resolved |

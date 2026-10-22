@@ -7,6 +7,10 @@ import { HealthController } from './health.controller';
 import { SorobanRpcHealthIndicator } from './indicators/soroban-rpc.health-indicator';
 import { BullMQHealthIndicator } from './indicators/bullmq.health-indicator';
 import { RedisHealthIndicator } from './indicators/redis.health-indicator';
+import { FirebaseHealthIndicator } from './indicators/firebase.health-indicator';
+import { SmsHealthIndicator } from './indicators/sms.health-indicator';
+import { PushProvider } from '../notifications/providers/push.provider';
+import { SmsProvider } from '../notifications/providers/sms.provider';
 
 @Module({
   imports: [
@@ -20,6 +24,10 @@ import { RedisHealthIndicator } from './indicators/redis.health-indicator';
     SorobanRpcHealthIndicator,
     BullMQHealthIndicator,
     RedisHealthIndicator,
+    FirebaseHealthIndicator,
+    SmsHealthIndicator,
+    PushProvider,
+    SmsProvider,
   ],
 })
 export class HealthModule {}

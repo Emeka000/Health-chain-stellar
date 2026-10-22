@@ -42,15 +42,18 @@ export class CSVExporter {
       .map((row) =>
         row
           .map((cell) => {
+            // Neutralize formula-injection triggers (CWE-1236) before escaping
+            const sanitized = /^[=+\-@]/.test(cell) ? `'${cell}` : cell;
+
             // Escape cells containing commas, quotes, or newlines
             if (
-              cell.includes(',') ||
-              cell.includes('"') ||
-              cell.includes('\n')
+              sanitized.includes(',') ||
+              sanitized.includes('"') ||
+              sanitized.includes('\n')
             ) {
-              return `"${cell.replace(/"/g, '""')}"`;
+              return `"${sanitized.replace(/"/g, '""')}"`;
             }
-            return cell;
+            return sanitized;
           })
           .join(',')
       )

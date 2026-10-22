@@ -1,18 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThan } from 'typeorm';
+import { Repository } from 'typeorm';
 
-import { BloodRequestEntity, Urgency } from '../../blood-requests/entities/blood-request.entity';
-import { OrderEntity } from '../../orders/entities/order.entity';
-import { OrderStatus } from '../../orders/enums/order-status.enum';
-import { PolicyCenterService } from '../../policy-center/policy-center.service';
-import { AnomalyIncidentEntity } from '../entities/anomaly-incident.entity';
+import { BloodRequestEntity, Urgency } from '../blood-requests/entities/blood-request.entity';
+import { OrderEntity } from '../orders/entities/order.entity';
+import { OrderStatus } from '../orders/enums/order-status.enum';
+import { PolicyCenterService } from '../policy-center/policy-center.service';
+import { AnomalyIncidentEntity } from './entities/anomaly-incident.entity';
 import {
   AnomalyType,
   AnomalySeverity,
   AnomalyStatus,
-} from '../enums/anomaly-type.enum';
+} from './enums/anomaly-type.enum';
 
 @Injectable()
 export class AnomalyScoringService {
@@ -110,7 +110,7 @@ export class AnomalyScoringService {
     for (const row of rows) {
       const ratio = (Number(row.cancelled) / Number(row.total)) * 100;
       await this.upsertAnomaly({
-        type: AnomalyType.RIDER_ROUTE_DEVIATION,
+        type: AnomalyType.HIGH_RIDER_CANCELLATION_RATE,
         severity: ratio >= 60 ? AnomalySeverity.HIGH : AnomalySeverity.MEDIUM,
         riderId: row.riderId,
         description: `Rider ${row.riderId} has a ${ratio.toFixed(0)}% cancellation rate (${row.cancelled}/${row.total} orders).`,
@@ -180,6 +180,7 @@ export class AnomalyScoringService {
         description: `${row.count} orders for blood type ${row.bloodType} placed in the last ${rules.stockSwingWindowMinutes} minutes.`,
         metadata: { bloodType: row.bloodType, count: row.count, windowStart: since.toISOString() },
         policyVersionRef,
+        bloodType: row.bloodType,
       });
     }
   }
@@ -196,41 +197,23 @@ export class AnomalyScoringService {
     hospitalId?: string;
     bloodRequestId?: string;
     policyVersionRef?: string;
+    bloodType?: string;
   }): Promise<void> {
     // Avoid duplicate open incidents for the same subject on the same day
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const existing = await this.anomalyRepo.findOne({
-      where: {
-        type: data.type,
-        riderId: data.riderId ?? null,
-        hospitalId: data.hospitalId ?? null,
-        status: AnomalyStatus.OPEN,
-        createdAt: MoreThan(today),
-      },
-    });
-
-    if (existing) {
-      await this.anomalyRepo.update(existing.id, {
-        description: data.description,
-        metadata: data.metadata ?? null,
-        severity: data.severity,
-        policyVersionRef: data.policyVersionRef ?? null,
-      });
-      return;
-    }
-
-    await this.anomalyRepo.save(
-      this.anomalyRepo.create({
-        ...data,
-        metadata: data.metadata ?? null,
-        orderId: data.orderId ?? null,
-        riderId: data.riderId ?? null,
-        hospitalId: data.hospitalId ?? null,
-        bloodRequestId: data.bloodRequestId ?? null,
-        policyVersionRef: data.policyVersionRef ?? null,
-      }),
-    );
-  }
-}
+    const qb = this.anomalyRepo
+      .createQueryBuilder('a')
+      .where('a.type = :type', { type: data.type })
+      .andWhere('a.status = :status', { status: AnomalyStatus.OPEN })
+      .andWhere('a.created_at > :today', { today })
+      .andWhere(
+        data.riderId ? 'a.rider_id = :riderId' : 'a.rider_id IS NULL',
+        data.riderId ? { riderId: data.riderId } : {},
+      )
+      .andWhere(
+        data.hospitalId ? 'a.hospital_id = :hospitalId' : 'a.hospital_id IS NULL',
+        data.hospitalId ? { hospitalId: data.hospitalId } : {},
+      )
+      .

@@ -41,17 +41,30 @@ export class PolicyVersionEntity {
   @Column({ name: 'effective_to', type: 'timestamptz', nullable: true })
   effectiveTo: Date | null;
 
-  @Column({ name: 'created_by', nullable: true })
+  @Column({ name: 'created_by', type: 'varchar', nullable: true })
   createdBy: string | null;
 
-  @Column({ name: 'activated_by', nullable: true })
+  @Column({ name: 'activated_by', type: 'varchar', nullable: true })
   activatedBy: string | null;
 
   @Column({ name: 'activated_at', type: 'timestamptz', nullable: true })
   activatedAt: Date | null;
 
-  @Column({ name: 'rollback_from_version_id', nullable: true })
+  @Column({ name: 'rollback_from_version_id', type: 'uuid', nullable: true })
   rollbackFromVersionId: string | null;
+
+  /**
+   * SHA-256 hash of the fully-resolved rules JSON.
+   * Computed on activation and never mutated afterwards (Issue #618).
+   */
+  @Column({ name: 'rules_hash', type: 'varchar', length: 64, nullable: true })
+  rulesHash: string | null;
+
+  /**
+   * Whether this snapshot is immutable (set to true on activation, Issue #618).
+   */
+  @Column({ name: 'immutable', type: 'boolean', default: false })
+  immutable: boolean;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

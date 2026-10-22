@@ -58,15 +58,19 @@ const SignInPage: React.FC<SignInPageProps> = ({
         password: formData.password,
       });
 
-      if (result.success) {
-        success('Signed in successfully!');
-        
-        // Check for redirect parameter
-        const params = new URLSearchParams(window.location.search);
-        const redirect = params.get('redirect') || '/dashboard';
-        
-        router.push(redirect);
-      } else {
+if (result.success) {
+         success('Signed in successfully!');
+
+         // Check for redirect parameter with security validation
+         const params = new URLSearchParams(window.location.search);
+         const rawRedirect = params.get('redirect') || '/dashboard';
+         // Only allow same-origin relative URLs (prevent open redirect attacks)
+         const redirect = rawRedirect.startsWith('/') && !rawRedirect.startsWith('//')
+           ? rawRedirect
+           : '/dashboard';
+
+         router.push(redirect);
+       } else {
         error(result.error || 'Failed to sign in. Please check your credentials.');
         setIsLoading(false);
       }

@@ -9,10 +9,13 @@ import { Observable, catchError, tap, throwError } from 'rxjs';
 
 import { ActivityType } from '../enums/activity-type.enum';
 import { UserActivityService } from '../user-activity.service';
+import { getClientIp } from '../../common/utils/client-ip.util';
 
 @Injectable()
 export class ActivityLoggingInterceptor implements NestInterceptor {
-  constructor(private readonly userActivityService: UserActivityService) {}
+  constructor(
+    private readonly userActivityService: UserActivityService,
+  ) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     if (context.getType() !== 'http') {
@@ -27,6 +30,7 @@ export class ActivityLoggingInterceptor implements NestInterceptor {
       user?: { id?: string };
       headers?: Record<string, string | string[]>;
       ip?: string;
+      socket?: { remoteAddress?: string };
     }>();
 
     const path =
@@ -113,14 +117,10 @@ export class ActivityLoggingInterceptor implements NestInterceptor {
     headers?: Record<string, string | string[]>;
     ip?: string;
   }): { ipAddress: string | null; userAgent: string | null } {
-    const forwardedFor = request.headers?.['x-forwarded-for'];
     const userAgent = request.headers?.['user-agent'];
-    const resolvedIp = Array.isArray(forwardedFor)
-      ? forwardedFor[0]
-      : (forwardedFor?.split(',')[0]?.trim() ?? request.ip);
 
     return {
-      ipAddress: resolvedIp ?? null,
+      ipAddress: getClientIp(request),
       userAgent: Array.isArray(userAgent) ? userAgent[0] : (userAgent ?? null),
     };
   }

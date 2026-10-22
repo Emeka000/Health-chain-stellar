@@ -9,6 +9,7 @@ import { UserActivityModule } from '../user-activity/user-activity.module';
 import { FileMetadataModule } from '../file-metadata/file-metadata.module';
 
 import { ImportBatchEntity } from './entities/import-batch.entity';
+import { ImportCommittedHashEntity } from './entities/import-committed-hash.entity';
 import { ImportStagingRowEntity } from './entities/import-staging-row.entity';
 import { ImportController } from './import.controller';
 import { ImportService } from './import.service';
@@ -20,6 +21,7 @@ import { ImportValidationService } from './import-validation.service';
     TypeOrmModule.forFeature([
       ImportBatchEntity,
       ImportStagingRowEntity,
+      ImportCommittedHashEntity,
       OrganizationEntity,
       RiderEntity,
       InventoryEntity,
@@ -30,4 +32,4 @@ import { ImportValidationService } from './import-validation.service';
   controllers: [ImportController],
   providers: [ImportService, ImportValidationService],
 })
-export class BatchImportModule {}
+export class BatchImportModule { }

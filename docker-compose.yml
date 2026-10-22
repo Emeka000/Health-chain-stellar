@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: healthchain
+      POSTGRES_DB: health_chain
     ports:
       - "5432:5432"
     volumes:
@@ -51,7 +51,7 @@ services:
       - REDIS_PORT=6379
       - BULL_PREFIX=bull
     ports:
-      - "3001:3000"
+      - "3002:3000"
     depends_on:
       - redis
     profiles:

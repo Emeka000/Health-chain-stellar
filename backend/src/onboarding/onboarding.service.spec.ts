@@ -2,14 +2,15 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 
-import { OrganizationRepository } from '../../organizations/organizations.repository';
-import { OrganizationType } from '../../organizations/enums/organization-type.enum';
-import { ReadinessService } from '../../readiness/readiness.service';
-import { SorobanService } from '../../soroban/soroban.service';
-import { ActivateOnboardingDto } from '../dto/onboarding.dto';
-import { PartnerOnboardingEntity } from '../entities/partner-onboarding.entity';
-import { OnboardingStatus, OnboardingStep } from '../enums/onboarding.enum';
-import { OnboardingService } from '../onboarding.service';
+import { OrganizationRepository } from '../organizations/organizations.repository';
+import { OrganizationType } from '../organizations/enums/organization-type.enum';
+import { ReadinessService } from '../readiness/readiness.service';
+import { SorobanService } from '../blockchain/services/soroban.service';
+import { DataSource } from 'typeorm';
+import { ActivateOnboardingDto } from './dto/onboarding.dto';
+import { PartnerOnboardingEntity } from './entities/partner-onboarding.entity';
+import { OnboardingStatus, OnboardingStep } from './enums/onboarding.enum';
+import { OnboardingService } from './onboarding.service';
 
 const FULL_DATA = {
   [OnboardingStep.PROFILE]: { name: 'Org', legalName: 'Org Ltd', email: 'a@b.com', phone: '+1234567890' },
@@ -43,17 +44,32 @@ describe('OnboardingService', () => {
   let service: OnboardingService;
   let repo: ReturnType<typeof mockRepo>;
   let orgRepo: ReturnType<typeof mockOrgRepo>;
+  let dataSource: any;
 
   beforeEach(async () => {
     repo = mockRepo();
     orgRepo = mockOrgRepo();
+    dataSource = {
+      createQueryRunner: jest.fn().mockReturnValue({
+        connect: jest.fn(),
+        startTransaction: jest.fn(),
+        commitTransaction: jest.fn(),
+        rollbackTransaction: jest.fn(),
+        release: jest.fn(),
+        manager: {
+          save: jest.fn(async (e) => e),
+        },
+      }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         OnboardingService,
         { provide: getRepositoryToken(PartnerOnboardingEntity), useValue: repo },
         { provide: OrganizationRepository, useValue: orgRepo },
-        { provide: SorobanService, useValue: mockSoroban() },
+        { provide: SorobanService, useValue: { submitTransaction: jest.fn(async () => 'job-1') } },
         { provide: ReadinessService, useValue: mockReadiness() },
+        { provide: DataSource, useValue: dataSource },
       ],
     }).compile();
     service = module.get(OnboardingService);
@@ -106,14 +122,14 @@ describe('OnboardingService', () => {
     await expect(service.review('ob-1', 'admin-1', { decision: 'approved' })).rejects.toThrow(BadRequestException);
   });
 
-  it('activate creates org and sets ACTIVATED status', async () => {
+  it('activate creates org and sets ACTIVATING status', async () => {
     repo.findOne.mockResolvedValue({ id: 'ob-1', status: OnboardingStatus.APPROVED, orgType: OrganizationType.HOSPITAL, data: FULL_DATA });
-    repo.save.mockImplementation(async (e) => e);
     const dto: ActivateOnboardingDto = { walletAddress: 'GXXX', licenseNumber: 'LIC-1' };
     const result = await service.activate('ob-1', 'admin-1', dto);
-    expect(orgRepo.save).toHaveBeenCalled();
-    expect(result.status).toBe(OnboardingStatus.ACTIVATED);
-    expect(result.contractTxHash).toBe('tx-1');
+    
+    expect(result.status).toBe(OnboardingStatus.ACTIVATING);
+    expect(result.activationTxId).toBe('job-1');
+    expect(dataSource.createQueryRunner().commitTransaction).toHaveBeenCalled();
   });
 
   it('activate throws if not approved', async () => {
@@ -129,8 +145,9 @@ describe('OnboardingService', () => {
         OnboardingService,
         { provide: getRepositoryToken(PartnerOnboardingEntity), useValue: repo },
         { provide: OrganizationRepository, useValue: orgRepo },
-        { provide: SorobanService, useValue: mockSoroban() },
+        { provide: SorobanService, useValue: { submitTransaction: jest.fn() } },
         { provide: ReadinessService, useValue: { isReady: jest.fn(async () => false) } },
+        { provide: DataSource, useValue: dataSource },
       ],
     }).compile();
     const svc = notReadyMod.get(OnboardingService);
@@ -138,8 +155,8 @@ describe('OnboardingService', () => {
       .rejects.toThrow(BadRequestException);
   });
 
-  it('activate proceeds even if on-chain call fails', async () => {
-    const soroban = { verifyOrganization: jest.fn(async () => { throw new Error('rpc'); }) };
+  it('activate rolls back if blockchain submission fails', async () => {
+    const soroban = { submitTransaction: jest.fn(async () => { throw new Error('queue fail'); }) };
     const mod = await Test.createTestingModule({
       providers: [
         OnboardingService,
@@ -147,13 +164,15 @@ describe('OnboardingService', () => {
         { provide: OrganizationRepository, useValue: orgRepo },
         { provide: SorobanService, useValue: soroban },
         { provide: ReadinessService, useValue: mockReadiness() },
+        { provide: DataSource, useValue: dataSource },
       ],
     }).compile();
     const svc = mod.get(OnboardingService);
     repo.findOne.mockResolvedValue({ id: 'ob-1', status: OnboardingStatus.APPROVED, orgType: OrganizationType.HOSPITAL, data: FULL_DATA });
-    repo.save.mockImplementation(async (e) => e);
-    const result = await svc.activate('ob-1', 'admin-1', { walletAddress: 'GXXX', licenseNumber: 'LIC-1' });
-    expect(result.status).toBe(OnboardingStatus.ACTIVATED);
-    expect(result.contractTxHash).toBeNull();
+    
+    await expect(svc.activate('ob-1', 'admin-1', { walletAddress: 'GXXX', licenseNumber: 'LIC-1' }))
+      .rejects.toThrow('queue fail');
+    
+    expect(dataSource.createQueryRunner().rollbackTransaction).toHaveBeenCalled();
   });
 });

@@ -43,5 +43,8 @@ export class CreateOrderDto {
     @IsOptional()
     @IsString()
     partnerId?: string; // for waivers
-}
 
+    @IsOptional()
+    @IsString()
+    channel?: string; // intake channel (e.g. ussd, web)
+}

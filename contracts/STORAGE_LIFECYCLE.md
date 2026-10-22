@@ -56,7 +56,10 @@ data is pruned.
 ### Temporary storage (auto-expiring)
 
 - `Reservation` records in the `lifebank-soroban/contracts/inventory` contract
-  already use `env.storage().temporary()` — no action needed.
+  use `env.storage().temporary()`. `set_reservation` explicitly calls
+  `extend_ttl` sized to `duration_seconds` (converted to ledgers, rounded up,
+  plus a ~10-minute safety buffer) so that every entry survives its full logical
+  duration regardless of the network's default TTL.
 
 ## Rent Bump Policy
 

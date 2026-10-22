@@ -1,6 +1,11 @@
 import { Entity, Column, Index } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
-import { MismatchType, MismatchSeverity, MismatchResolution } from '../enums/reconciliation.enum';
+import {
+  ExceptionCategory,
+  MismatchType,
+  MismatchSeverity,
+  MismatchResolution,
+} from '../enums/reconciliation.enum';
 
 @Entity('reconciliation_mismatches')
 @Index(['runId'])
@@ -39,4 +44,21 @@ export class ReconciliationMismatchEntity extends BaseEntity {
 
   @Column({ name: 'resolution_note', type: 'text', nullable: true })
   resolutionNote: string | null;
+
+  /** Classified exception category for guided remediation */
+  @Column({
+    name: 'exception_category',
+    type: 'enum',
+    enum: ExceptionCategory,
+    nullable: true,
+  })
+  exceptionCategory: ExceptionCategory | null;
+
+  /** Deterministic ranking score for ambiguous candidate ordering (lower = better match) */
+  @Column({ name: 'match_score', type: 'float', nullable: true })
+  matchScore: number | null;
+
+  /** Remediation action hint for operators */
+  @Column({ name: 'remediation_hint', type: 'text', nullable: true })
+  remediationHint: string | null;
 }

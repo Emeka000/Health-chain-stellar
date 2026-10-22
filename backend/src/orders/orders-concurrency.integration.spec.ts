@@ -76,10 +76,10 @@ describe('Orders Inventory Concurrency Integration', () => {
 
   it('allows only one order when stock has one unit', async () => {
     await inventoryService.create({
-      bloodBankId: 'BB-001',
+      hospitalId: 'BB-001',
       bloodType: 'O+',
-      availableUnits: 1,
-    });
+      quantity: 1,
+    }, 'BB-001');
 
     const payload = {
       hospitalId: 'HOSP-001',

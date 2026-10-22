@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -27,6 +28,7 @@ import { BloodStatus } from './enums/blood-status.enum';
 interface AuthenticatedUserContext {
   id: string;
   role: string;
+  organizationId?: string | null;
 }
 
 export const ALLOWED_TRANSITIONS: Record<BloodStatus, BloodStatus[]> = {
@@ -46,16 +48,30 @@ export const ALLOWED_TRANSITIONS: Record<BloodStatus, BloodStatus[]> = {
     BloodStatus.EXPIRED,
   ],
   [BloodStatus.IN_TRANSIT]: [BloodStatus.DELIVERED, BloodStatus.DISCARDED],
-  [BloodStatus.IN_TRANSFER]: [BloodStatus.AVAILABLE, BloodStatus.DISCARDED],
+  [BloodStatus.IN_TRANSFER]: [],
   [BloodStatus.DELIVERED]: [],
   [BloodStatus.EXPIRED]: [BloodStatus.DISCARDED],
-  [BloodStatus.QUARANTINED]: [BloodStatus.AVAILABLE, BloodStatus.DISCARDED],
+  [BloodStatus.QUARANTINED]: [],
   [BloodStatus.DISCARDED]: [],
   [BloodStatus.PROCESSING]: [
     BloodStatus.AVAILABLE,
     BloodStatus.QUARANTINED,
     BloodStatus.DISCARDED,
   ],
+};
+
+/**
+ * Statuses that may only be exited through a dedicated workflow rather than
+ * the generic status endpoint. QUARANTINED units must be released/discarded
+ * via QuarantineService.finalizeCase (which records reviewer approval), and
+ * IN_TRANSFER units must be resolved via the inter-org transfer accept/cancel
+ * flow so the TransferRecord cannot be left PENDING.
+ */
+export const WORKFLOW_MANAGED_STATUSES: Partial<Record<BloodStatus, string>> = {
+  [BloodStatus.QUARANTINED]:
+    'Quarantined units must be released or discarded through QuarantineService.finalizeCase',
+  [BloodStatus.IN_TRANSFER]:
+    'Units in transfer must be resolved through the transfer accept/cancel flow',
 };
 
 
@@ -85,6 +101,8 @@ export class BloodStatusService {
     if (!unit) {
       throw new NotFoundException(`Blood unit ${unitId} not found`);
     }
+
+    this.assertOwnsUnit(unit, user);
 
     this.validateTransition(unit.status, dto.status);
 
@@ -167,6 +185,8 @@ export class BloodStatusService {
     if (!unit) {
       throw new NotFoundException(`Blood unit ${unitId} not found`);
     }
+
+    this.assertOwnsUnit(unit, user);
 
     if (unit.status !== BloodStatus.AVAILABLE) {
       throw new ConflictException(
@@ -267,27 +287,59 @@ export class BloodStatusService {
         );
       } catch (error) {
         this.logger.error(
-          `Failed to release reservation for unit ${unit.id}: ${
-            error instanceof Error ? error.message : 'unknown error'
+          `Failed to release expired reservation for unit ${unit.id}: ${
+            error instanceof Error ? error.message : 'Unknown error'
           }`,
         );
       }
     }
   }
 
+  private assertOwnsUnit(
+    unit: BloodUnit,
+    user?: AuthenticatedUserContext,
+  ): void {
+    if (!user) {
+      return;
+    }
+
+    if (user.role === 'admin' || user.role === 'super_admin') {
+      return;
+    }
+
+    if (
+      user.organizationId &&
+      unit.organizationId &&
+      unit.organizationId !== user.organizationId
+    ) {
+      throw new ForbiddenException(
+        `You do not have permission to modify blood unit ${unit.id}`,
+      );
+    }
+  }
+
   isValidTransition(from: BloodStatus, to: BloodStatus): boolean {
-    return ALLOWED_TRANSITIONS[from]?.includes(to) ?? false;
+    if (from === to) {
+      return false;
+    }
+
+    const allowed = ALLOWED_TRANSITIONS[from];
+    if (!allowed) {
+      return false;
+    }
+
+    return allowed.includes(to);
   }
 
   private validateTransition(from: BloodStatus, to: BloodStatus): void {
-    if (from === to) {
-      throw new BadRequestException(`Blood unit is already in ${to} status`);
+    const workflowMessage = WORKFLOW_MANAGED_STATUSES[from];
+    if (workflowMessage) {
+      throw new BadRequestException(workflowMessage);
     }
 
     if (!this.isValidTransition(from, to)) {
-      const allowed = ALLOWED_TRANSITIONS[from]?.join(', ') || 'none';
       throw new BadRequestException(
-        `Invalid status transition from ${from} to ${to}. Allowed transitions: ${allowed}`,
+        `Invalid status transition from ${from} to ${to}`,
       );
     }
   }
@@ -299,49 +351,29 @@ export class BloodStatusService {
     changedBy: string | null,
   ): Promise<void> {
     try {
-      const blockchainUnitId = Number(unit.blockchainUnitId);
-      const canMirrorOnChain = Number.isFinite(blockchainUnitId);
+      const txHash = await this.sorobanService.recordStatusChange({
+        unitId: unit.id,
+        previousStatus,
+        newStatus,
+        changedBy,
+      });
 
-      if (canMirrorOnChain && newStatus === BloodStatus.QUARANTINED) {
-        await this.sorobanService.quarantineBloodUnit({
-          unitId: blockchainUnitId,
-          reason: 'OTHER',
-        });
-      }
-
-      if (
-        canMirrorOnChain &&
-        previousStatus === BloodStatus.QUARANTINED &&
-        (newStatus === BloodStatus.AVAILABLE || newStatus === BloodStatus.DISCARDED)
-      ) {
-        await this.sorobanService.finalizeQuarantine({
-          unitId: blockchainUnitId,
-          disposition:
-            newStatus === BloodStatus.AVAILABLE ? 'RELEASE' : 'DISCARD',
-          reason: 'OTHER',
-        });
-      }
-
-      const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       await this.blockchainEventRepository.save(
         this.blockchainEventRepository.create({
-          eventType: 'BLOOD_UNIT_STATUS_CHANGED',
-          transactionHash: `status-${unit.id}-${uniqueSuffix}`,
-          eventData: {
+          eventType: 'blood_status_changed',
+          transactionHash: txHash,
+          payload: {
             unitId: unit.id,
-            unitCode: unit.unitCode,
             previousStatus,
             newStatus,
             changedBy,
           },
-          blockchainTimestamp: new Date(),
-          processed: false,
         }),
       );
     } catch (error) {
-      this.logger.warn(
-        `Blockchain sync failed for unit ${unit.id}: ${
-          error instanceof Error ? error.message : 'unknown error'
+      this.logger.error(
+        `Failed to sync status change to blockchain for unit ${unit.id}: ${
+          error instanceof Error ? error.message : 'Unknown error'
         }`,
       );
     }
@@ -354,20 +386,20 @@ export class BloodStatusService {
   ): Promise<void> {
     try {
       await this.notificationsService.send({
-        recipientId: unit.organizationId,
-        channels: [NotificationChannel.IN_APP],
-        templateKey: 'blood_unit_status_changed',
-        variables: {
-          unitCode: unit.unitCode,
-          bloodType: unit.bloodType,
+        channel: NotificationChannel.IN_APP,
+        recipientId: unit.organizationId ?? unit.id,
+        title: 'Blood unit status changed',
+        message: `Blood unit ${unit.id} changed from ${previousStatus} to ${newStatus}`,
+        metadata: {
+          unitId: unit.id,
           previousStatus,
           newStatus,
         },
       });
     } catch (error) {
-      this.logger.warn(
-        `Status change notification failed for unit ${unit.id}: ${
-          error instanceof Error ? error.message : 'unknown error'
+      this.logger.error(
+        `Failed to send status change notification for unit ${unit.id}: ${
+          error instanceof Error ? error.message : 'Unknown error'
         }`,
       );
     }

@@ -1,12 +1,20 @@
 import { Injectable } from '@nestjs/common';
 import { RequestUrgency } from '../../blood-requests/entities/blood-request.entity';
 import { EscalationTier } from '../enums/escalation-tier.enum';
+import { NotificationChannel } from '../../notifications/enums/notification-channel.enum';
 
 export interface EscalationInput {
   urgency: RequestUrgency;
   inventoryUnits: number;
   requiredUnits: number;
   timeRemainingSeconds: number;
+}
+
+export interface EscalationPolicyLevel {
+  level: number;
+  targetRole: 'HOSPITAL_COORDINATOR' | 'REGIONAL_OPS_MANAGER' | 'NATIONAL_COMMAND';
+  timeoutSeconds: number;
+  actions: NotificationChannel[];
 }
 
 @Injectable()
@@ -56,5 +64,56 @@ export class EscalationPolicyService {
       [EscalationTier.NONE]: 0,
     };
     return now + slaMinutes[tier] * 60_000;
+  }
+
+  buildPolicyChain(urgency: RequestUrgency, tier: EscalationTier): EscalationPolicyLevel[] {
+    const isHighSeverity =
+      urgency === RequestUrgency.CRITICAL ||
+      tier === EscalationTier.TIER_3 ||
+      tier === EscalationTier.TIER_2;
+
+    if (isHighSeverity) {
+      return [
+        {
+          level: 1,
+          targetRole: 'HOSPITAL_COORDINATOR',
+          timeoutSeconds: 5 * 60,
+          actions: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+        },
+        {
+          level: 2,
+          targetRole: 'REGIONAL_OPS_MANAGER',
+          timeoutSeconds: 7 * 60,
+          actions: [NotificationChannel.PUSH, NotificationChannel.SMS],
+        },
+        {
+          level: 3,
+          targetRole: 'NATIONAL_COMMAND',
+          timeoutSeconds: 10 * 60,
+          actions: [NotificationChannel.SMS, NotificationChannel.IN_APP],
+        },
+      ];
+    }
+
+    return [
+      {
+        level: 1,
+        targetRole: 'HOSPITAL_COORDINATOR',
+        timeoutSeconds: 10 * 60,
+        actions: [NotificationChannel.IN_APP],
+      },
+      {
+        level: 2,
+        targetRole: 'REGIONAL_OPS_MANAGER',
+        timeoutSeconds: 15 * 60,
+        actions: [NotificationChannel.PUSH],
+      },
+    ];
+  }
+
+  suppressionWindowMs(urgency: RequestUrgency): number {
+    if (urgency === RequestUrgency.CRITICAL) return 5 * 60_000;
+    if (urgency === RequestUrgency.URGENT) return 10 * 60_000;
+    return 15 * 60_000;
   }
 }

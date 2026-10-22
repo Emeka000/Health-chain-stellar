@@ -4,21 +4,29 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrderEntity } from '../orders/entities/order.entity';
+import { RegistryModule } from '../registry/registry.module';
 import { BlockchainEvent } from '../soroban/entities/blockchain-event.entity';
 import { BloodUnitTrail } from '../soroban/entities/blood-unit-trail.entity';
 import { SorobanModule } from '../soroban/soroban.module';
 import { DonorEligibilityModule } from '../donor-eligibility/donor-eligibility.module';
 import { PolicyCenterModule } from '../policy-center/policy-center.module';
+import { ApprovalModule } from '../approvals/approval.module';
+import { FileMetadataModule } from '../file-metadata/file-metadata.module';
+import { AuthModule } from '../auth/auth.module';
+import { OrganizationEntity } from '../organizations/entities/organization.entity';
+
 
 import { BloodInventoryQueryService } from './blood-inventory-query.service';
 import { BloodStatusService } from './blood-status.service';
 import { BloodUnitsController } from './blood-units.controller';
 import { BloodUnitsService } from './blood-units.service';
 import { QrVerificationService } from './qr-verification.service';
+import { AntiReplayQrService } from './anti-replay-qr.service';
 import { QuarantineService } from './services/quarantine.service';
 import { BloodUnit, BloodUnitEntity } from './entities/blood-unit.entity';
 import { BloodStatusHistory } from './entities/blood-status-history.entity';
 import { QrVerificationLogEntity } from './entities/qr-verification-log.entity';
+import { QrNonceRegistryEntity } from './entities/qr-nonce-registry.entity';
 import { UnitDispositionRecord } from './entities/unit-disposition.entity';
 import { QuarantineCase } from './entities/quarantine-case.entity';
 import { DispositionController } from './controllers/disposition.controller';
@@ -38,16 +46,22 @@ import { BloodUnitBatchService } from './batch/blood-unit-batch.service';
       BloodStatusHistory,
       BlockchainEvent,
       QrVerificationLogEntity,
+      QrNonceRegistryEntity,
       OrderEntity,
       UnitDispositionRecord,
       QuarantineCase,
       TransferRecord,
+      OrganizationEntity,
     ]),
 
     SorobanModule,
     NotificationsModule,
     DonorEligibilityModule,
     PolicyCenterModule,
+    AuthModule,
+    RegistryModule,
+    ApprovalModule,
+    FileMetadataModule,
   ],
   controllers: [BloodUnitsController, DispositionController, QuarantineController],
   providers: [
@@ -55,6 +69,7 @@ import { BloodUnitBatchService } from './batch/blood-unit-batch.service';
     BloodStatusService,
     BloodInventoryQueryService,
     QrVerificationService,
+    AntiReplayQrService,
     DispositionService,
     QuarantineService,
     BloodUnitBatchService,
@@ -65,6 +80,7 @@ import { BloodUnitBatchService } from './batch/blood-unit-batch.service';
     BloodInventoryQueryService,
     DispositionService,
     QuarantineService,
+    AntiReplayQrService,
   ],
 })
 export class BloodUnitsModule {}

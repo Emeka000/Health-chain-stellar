@@ -1,4 +1,4 @@
-import { Column, Entity } from 'typeorm';
+import { Column, Entity, Index } from 'typeorm';
 
 import { BaseEntity } from '../../common/entities/base.entity';
 
@@ -7,6 +7,7 @@ const TEMP_MIN_CELSIUS = 2;
 const TEMP_MAX_CELSIUS = 8;
 
 @Entity('delivery_proofs')
+@Index('uq_delivery_proofs_order_delivery', ['orderId', 'deliveryId'], { unique: true })
 export class DeliveryProofEntity extends BaseEntity {
   @Column({ name: 'delivery_id', type: 'bigint' })
   deliveryId: number;
@@ -66,6 +67,38 @@ export class DeliveryProofEntity extends BaseEntity {
 
   @Column({ name: 'blockchain_tx_hash', type: 'varchar', length: 128, nullable: true })
   blockchainTxHash: string | null;
+
+  @Column({ name: 'signer_key_id', type: 'varchar', length: 64, nullable: true })
+  signerKeyId: string | null;
+
+  @Column({ name: 'signer_public_key', type: 'varchar', length: 56, nullable: true })
+  signerPublicKey: string | null;
+
+  @Column({ name: 'signer_role', type: 'varchar', length: 32, nullable: true })
+  signerRole: string | null;
+
+  @Column({ name: 'signed_at', type: 'timestamptz', nullable: true })
+  signedAt: Date | null;
+
+  @Column({ name: 'proof_signature', type: 'text', nullable: true })
+  proofSignature: string | null;
+
+  /**
+   * Digest of the full signed payload (all evidential fields). Unique so a
+   * legitimately signed payload cannot be replayed with altered evidence.
+   */
+  @Index('uq_delivery_proofs_payload_digest', { unique: true })
+  @Column({ name: 'proof_payload_digest', type: 'varchar', length: 64, nullable: true })
+  proofPayloadDigest: string | null;
+
+  @Column({ name: 'trusted_timestamp_at', type: 'timestamptz', nullable: true })
+  trustedTimestampAt: Date | null;
+
+  @Column({ name: 'timestamp_anchor_hash', type: 'varchar', length: 64, nullable: true })
+  timestampAnchorHash: string | null;
+
+  @Column({ name: 'evidence_digest_references', type: 'jsonb', default: [] })
+  evidenceDigestReferences: string[];
 
 
   // ─── Validation helpers ───────────────────────────────────────────────────

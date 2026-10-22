@@ -140,18 +140,19 @@ describe('OrderNotificationListener', () => {
   });
 
   describe('handleOrderDelivered', () => {
-    it('should send notification when order is delivered', async () => {
-      const event = new OrderDeliveredEvent('order-123');
+    it('should send notification to the hospital when order is delivered', async () => {
+      const event = new OrderDeliveredEvent('order-123', 'hospital-456');
 
       await listener.handleOrderDelivered(event);
 
-      expect(notificationsService.send).toHaveBeenCalled();
-      expect(notificationsService.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          channels: [NotificationChannel.SMS, NotificationChannel.IN_APP],
-          templateKey: 'order.delivered',
-        }),
-      );
+      expect(notificationsService.send).toHaveBeenCalledWith({
+        recipientId: 'hospital-456',
+        channels: [NotificationChannel.SMS, NotificationChannel.IN_APP],
+        templateKey: 'order.delivered',
+        variables: {
+          orderId: 'order-123',
+        },
+      });
     });
   });
 });

@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
+
 import { BloodComponent } from '../../blood-units/enums/blood-component.enum';
+
 import type {
   BloodTypeStr,
   CompatibilityResult,
@@ -20,26 +22,38 @@ type CompatMatrix = Record<BloodTypeStr, BloodTypeStr[]>;
 
 // Standard (non-emergency) compatible donors per recipient, by component group
 const RED_CELL_MATRIX: CompatMatrix = {
-  'O-':  ['O-'],
-  'O+':  ['O-', 'O+'],
-  'A-':  ['O-', 'A-'],
-  'A+':  ['O-', 'O+', 'A-', 'A+'],
-  'B-':  ['O-', 'B-'],
-  'B+':  ['O-', 'O+', 'B-', 'B+'],
+  'O-': ['O-'],
+  'O+': ['O-', 'O+'],
+  'A-': ['O-', 'A-'],
+  'A+': ['O-', 'O+', 'A-', 'A+'],
+  'B-': ['O-', 'B-'],
+  'B+': ['O-', 'O+', 'B-', 'B+'],
   'AB-': ['O-', 'A-', 'B-', 'AB-'],
   'AB+': ['O-', 'O+', 'A-', 'A+', 'B-', 'B+', 'AB-', 'AB+'],
 };
 
 // Plasma: ABO-reverse — AB is universal plasma donor
 const PLASMA_MATRIX: CompatMatrix = {
-  'O-':  ['O-', 'O+', 'A-', 'A+', 'B-', 'B+', 'AB-', 'AB+'],
-  'O+':  ['O+', 'A+', 'B+', 'AB+'],
-  'A-':  ['A-', 'A+', 'AB-', 'AB+'],
-  'A+':  ['A+', 'AB+'],
-  'B-':  ['B-', 'B+', 'AB-', 'AB+'],
-  'B+':  ['B+', 'AB+'],
+  'O-': ['O-', 'O+', 'A-', 'A+', 'B-', 'B+', 'AB-', 'AB+'],
+  'O+': ['O+', 'A+', 'B+', 'AB+'],
+  'A-': ['A-', 'A+', 'AB-', 'AB+'],
+  'A+': ['A+', 'AB+'],
+  'B-': ['B-', 'B+', 'AB-', 'AB+'],
+  'B+': ['B+', 'AB+'],
   'AB-': ['AB-', 'AB+'],
   'AB+': ['AB+'],
+};
+
+// Platelets: ABO-preferred but Rh-flexible — Rh+ donors acceptable for Rh- recipients
+const PLATELET_MATRIX: CompatMatrix = {
+  'O-': ['O-', 'O+'],
+  'O+': ['O-', 'O+'],
+  'A-': ['O-', 'O+', 'A-', 'A+'],
+  'A+': ['O-', 'O+', 'A-', 'A+'],
+  'B-': ['O-', 'O+', 'B-', 'B+'],
+  'B+': ['O-', 'O+', 'B-', 'B+'],
+  'AB-': ['O-', 'O+', 'A-', 'A+', 'B-', 'B+', 'AB-', 'AB+'],
+  'AB+': ['O-', 'O+', 'A-', 'A+', 'B-', 'B+', 'AB-', 'AB+'],
 };
 
 // Emergency-only substitutions for red cells (O- universal donor)
@@ -81,7 +95,12 @@ export class BloodCompatibilityEngine {
         compatible: true,
         matchType: 'compatible',
         emergencySubstitution: false,
-        explanation: this.buildExplanation(donorType, recipientType, component, false),
+        explanation: this.buildExplanation(
+          donorType,
+          recipientType,
+          component,
+          false,
+        ),
       };
     }
 
@@ -93,7 +112,12 @@ export class BloodCompatibilityEngine {
           compatible: true,
           matchType: 'emergency',
           emergencySubstitution: true,
-          explanation: this.buildExplanation(donorType, recipientType, component, true),
+          explanation: this.buildExplanation(
+            donorType,
+            recipientType,
+            component,
+            true,
+          ),
         };
       }
     }
@@ -102,7 +126,11 @@ export class BloodCompatibilityEngine {
       compatible: false,
       matchType: 'incompatible',
       emergencySubstitution: false,
-      explanation: this.buildIncompatibleExplanation(donorType, recipientType, component),
+      explanation: this.buildIncompatibleExplanation(
+        donorType,
+        recipientType,
+        component,
+      ),
     };
   }
 
@@ -111,7 +139,11 @@ export class BloodCompatibilityEngine {
     recipientType: BloodTypeStr,
     component: BloodComponent,
     allowEmergencySubstitution = false,
-  ): Array<{ donorType: BloodTypeStr; matchType: string; explanation: string }> {
+  ): Array<{
+    donorType: BloodTypeStr;
+    matchType: string;
+    explanation: string;
+  }> {
     const matrix = this.matrixFor(component);
     const standard = (matrix[recipientType] ?? []) as BloodTypeStr[];
     const results = standard.map((d) => ({
@@ -138,8 +170,14 @@ export class BloodCompatibilityEngine {
 
   /** Full preview used by the admin tool */
   preview(req: PreviewRequest): CompatibilityResult {
-    const isEmergency = req.urgency === 'critical' && req.allowEmergencySubstitution !== false;
-    return this.check(req.donorType, req.recipientType, req.component, isEmergency);
+    const isEmergency =
+      req.urgency === 'critical' && req.allowEmergencySubstitution !== false;
+    return this.check(
+      req.donorType,
+      req.recipientType,
+      req.component,
+      isEmergency,
+    );
   }
 
   /** Return the full compatibility matrix for a component (for snapshot tests) */
@@ -149,8 +187,8 @@ export class BloodCompatibilityEngine {
       case BloodComponent.FRESH_FROZEN_PLASMA:
       case BloodComponent.CRYOPRECIPITATE:
         return PLASMA_MATRIX;
-      // Platelets follow red-cell ABO rules but Rh is flexible in standard use
       case BloodComponent.PLATELETS:
+        return PLATELET_MATRIX;
       case BloodComponent.WHOLE_BLOOD:
       case BloodComponent.RED_CELLS:
       default:
@@ -178,7 +216,10 @@ export class BloodCompatibilityEngine {
     const prefix = emergency ? '[Emergency substitution] ' : '';
     const componentLabel = component.replace(/_/g, ' ').toLowerCase();
 
-    if (component === BloodComponent.PLASMA || component === BloodComponent.FRESH_FROZEN_PLASMA) {
+    if (
+      component === BloodComponent.PLASMA ||
+      component === BloodComponent.FRESH_FROZEN_PLASMA
+    ) {
       return `${prefix}${donor} plasma is ABO-compatible for ${recipient} recipient (plasma uses reverse ABO rules; AB is universal plasma donor).`;
     }
 

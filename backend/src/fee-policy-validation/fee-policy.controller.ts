@@ -19,6 +19,8 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 
+import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
+import { Permission } from '../auth/enums/permission.enum';
 import {
   CreateFeePolicyDto,
   FeeBreakdownDto,
@@ -36,6 +38,7 @@ export class FeePolicyController {
   // ─── CRUD ──────────────────────────────────────────────────────────────────
 
   @Post()
+  @RequirePermissions(Permission.MANAGE_FEE_POLICIES)
   @ApiOperation({ summary: 'Create a new fee policy' })
   @ApiResponse({ status: 201, type: FeePolicyResponseDto })
   @ApiResponse({ status: 400, description: 'Invalid fee bounds' })
@@ -44,6 +47,7 @@ export class FeePolicyController {
   }
 
   @Get()
+  @RequirePermissions(Permission.VIEW_FEE_POLICIES)
   @ApiOperation({ summary: 'List all fee policies' })
   @ApiResponse({ status: 200, type: [FeePolicyResponseDto] })
   findAll(): Promise<FeePolicyResponseDto[]> {
@@ -51,6 +55,7 @@ export class FeePolicyController {
   }
 
   @Get(':id')
+  @RequirePermissions(Permission.VIEW_FEE_POLICIES)
   @ApiOperation({ summary: 'Get a specific fee policy' })
   @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
   @ApiResponse({ status: 200, type: FeePolicyResponseDto })
@@ -62,6 +67,7 @@ export class FeePolicyController {
   }
 
   @Patch(':id')
+  @RequirePermissions(Permission.MANAGE_FEE_POLICIES)
   @ApiOperation({ summary: 'Update a fee policy' })
   @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
   @ApiBody({ type: UpdateFeePolicyDto })
@@ -75,6 +81,7 @@ export class FeePolicyController {
   }
 
   @Delete(':id')
+  @RequirePermissions(Permission.MANAGE_FEE_POLICIES)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete a fee policy' })
   @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
@@ -86,6 +93,7 @@ export class FeePolicyController {
   // ─── Lifecycle ─────────────────────────────────────────────────────────────
 
   @Put(':id/activate')
+  @RequirePermissions(Permission.MANAGE_FEE_POLICIES)
   @ApiOperation({ summary: 'Activate a fee policy' })
   @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
   @ApiResponse({ status: 200, type: FeePolicyResponseDto })
@@ -96,6 +104,7 @@ export class FeePolicyController {
   }
 
   @Put(':id/deactivate')
+  @RequirePermissions(Permission.MANAGE_FEE_POLICIES)
   @ApiOperation({ summary: 'Deactivate a fee policy' })
   @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
   @ApiResponse({ status: 200, type: FeePolicyResponseDto })
@@ -108,6 +117,7 @@ export class FeePolicyController {
   // ─── Simulation ────────────────────────────────────────────────────────────
 
   @Post('quote')
+  @RequirePermissions(Permission.VIEW_FEE_POLICIES)
   @ApiOperation({
     summary: 'Simulate a payment against an active policy',
     description:

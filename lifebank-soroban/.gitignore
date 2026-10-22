@@ -5,4 +5,8 @@ target
 .soroban
 .stellar
 
+# dotenv environment variable files
+.env
+.env.*
+
 contracts/*/test_snapshots

@@ -5,12 +5,15 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { decode } from 'jsonwebtoken';
 
 import { JwtKeyService } from './jwt-key.service';
+import { MFA_TOKEN_AUDIENCE } from './mfa/mfa.constants';
+import { SessionStatusService } from './session-status.service';
 
 export interface JwtPayload {
   sub: string;
   email: string;
   role: string;
   sid?: string;
+  organizationId?: string | null;
   jti?: string;
   kid?: string;
   iat?: number;
@@ -22,11 +25,15 @@ export interface AuthenticatedUser {
   email: string;
   role: string;
   sid?: string;
+  organizationId?: string | null;
 }
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(private readonly jwtKeyService: JwtKeyService) {
+  constructor(
+    private readonly jwtKeyService: JwtKeyService,
+    private readonly sessionStatusService: SessionStatusService,
+  ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
@@ -47,12 +54,25 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: JwtPayload): Promise<AuthenticatedUser> {
+  async validate(
+    payload: JwtPayload & { purpose?: string; aud?: string | string[] },
+  ): Promise<AuthenticatedUser> {
+    // MFA challenge tokens are not access tokens
+    const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+    if (payload.purpose === 'mfa' || aud.includes(MFA_TOKEN_AUDIENCE)) {
+      throw new UnauthorizedException('Invalid access token');
+    }
+
+    if (!(await this.sessionStatusService.isSessionActive(payload.sid))) {
+      throw new UnauthorizedException('Session has been revoked');
+    }
+
     return {
       id: payload.sub,
       email: payload.email,
       role: payload.role,
       sid: payload.sid,
+      organizationId: payload.organizationId ?? null,
     };
   }
 }

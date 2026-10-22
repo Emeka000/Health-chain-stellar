@@ -1,8 +1,13 @@
 /**
  * Contract Fixtures Index
  *
- * All pact-style contracts between critical module boundaries
- * Serves as the source of truth for API boundary contracts
+ * All pact-style contracts between critical module boundaries.
+ * Serves as the source of truth for API boundary contracts.
+ *
+ * Each fixture carries:
+ *  - schemaVersion: explicit version tag for drift detection
+ *  - generatedAt: timestamp for provenance tracking
+ *  - provenance: source definition reference
  */
 
 export {
@@ -38,6 +43,8 @@ import { BloodRequestsInventoryContract } from './blood-requests-inventory.fixtu
 import { BloodRequestsSorobanContract } from './blood-requests-soroban.fixture';
 import { DispatchRidersContract } from './dispatch-riders.fixture';
 import { AuthContract } from './auth.fixture';
+import { DonationContract } from './donation.fixture';
+import { DonationAttributionContract } from './donation-attribution.fixture';
 
 /**
  * Get contract by name
@@ -48,6 +55,18 @@ export function getContractByName(name: string) {
     BloodRequestsSorobanContract,
     DispatchRidersContract,
     AuthContract,
+    DonationContract,
+    DonationAttributionContract,
   ];
   return contracts.find((c) => c.name === name);
 }
+
+// Re-export for convenience
+export {
+  BloodRequestsInventoryContract,
+  BloodRequestsSorobanContract,
+  DispatchRidersContract,
+  AuthContract,
+  DonationContract,
+  DonationAttributionContract,
+};

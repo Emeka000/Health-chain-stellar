@@ -1,223 +1,127 @@
-import {
-  MigrationInterface,
-  QueryRunner,
-  Table,
-  TableIndex,
-  TableForeignKey,
-} from 'typeorm';
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
+/**
+ * Creates the RBAC tables (roles, permissions, role_permissions, user_roles)
+ * and seeds the default roles and permission grants.
+ */
 export class CreateRbacTables1708000001000 implements MigrationInterface {
+  name = 'CreateRbacTables1708000001000';
+
   public async up(queryRunner: QueryRunner): Promise<void> {
-    // ── roles ──────────────────────────────────────────────────────────
-    await queryRunner.createTable(
-      new Table({
-        name: 'roles',
-        columns: [
-          {
-            name: 'id',
-            type: 'uuid',
-            isPrimary: true,
-            generationStrategy: 'uuid',
-            default: 'uuid_generate_v4()',
-          },
-          {
-            name: 'name',
-            type: 'varchar',
-            length: '50',
-            isUnique: true,
-            isNullable: false,
-          },
-          {
-            name: 'description',
-            type: 'varchar',
-            length: '255',
-            isNullable: true,
-          },
-          {
-            name: 'created_at',
-            type: 'timestamp',
-            default: 'CURRENT_TIMESTAMP',
-          },
-          {
-            name: 'updated_at',
-            type: 'timestamp',
-            default: 'CURRENT_TIMESTAMP',
-            onUpdate: 'CURRENT_TIMESTAMP',
-          },
-        ],
-      }),
-      true,
-    );
+    await queryRunner.query(`
+      CREATE TABLE IF NOT EXISTS "roles" (
+        "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
+        "name" character varying NOT NULL,
+        "description" character varying,
+        "created_at" TIMESTAMP NOT NULL DEFAULT now(),
+        "updated_at" TIMESTAMP NOT NULL DEFAULT now(),
+        CONSTRAINT "PK_roles_id" PRIMARY KEY ("id"),
+        CONSTRAINT "UQ_roles_name" UNIQUE ("name")
+      )
+    `);
 
-    await queryRunner.createIndex(
-      'roles',
-      new TableIndex({
-        name: 'IDX_roles_name',
-        columnNames: ['name'],
-        isUnique: true,
-      }),
-    );
+    await queryRunner.query(`
+      CREATE TABLE IF NOT EXISTS "permissions" (
+        "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
+        "name" character varying NOT NULL,
+        "description" character varying,
+        "created_at" TIMESTAMP NOT NULL DEFAULT now(),
+        "updated_at" TIMESTAMP NOT NULL DEFAULT now(),
+        CONSTRAINT "PK_permissions_id" PRIMARY KEY ("id"),
+        CONSTRAINT "UQ_permissions_name" UNIQUE ("name")
+      )
+    `);
 
-    // ── role_permissions ───────────────────────────────────────────────
-    await queryRunner.createTable(
-      new Table({
-        name: 'role_permissions',
-        columns: [
-          {
-            name: 'id',
-            type: 'uuid',
-            isPrimary: true,
-            generationStrategy: 'uuid',
-            default: 'uuid_generate_v4()',
-          },
-          {
-            name: 'role_id',
-            type: 'uuid',
-            isNullable: false,
-          },
-          {
-            name: 'permission',
-            type: 'varchar',
-            length: '100',
-            isNullable: false,
-          },
-        ],
-      }),
-      true,
-    );
+    await queryRunner.query(`
+      CREATE TABLE IF NOT EXISTS "role_permissions" (
+        "role_id" uuid NOT NULL,
+        "permission_id" uuid NOT NULL,
+        CONSTRAINT "PK_role_permissions" PRIMARY KEY ("role_id", "permission_id"),
+        CONSTRAINT "FK_role_permissions_role" FOREIGN KEY ("role_id") REFERENCES "roles"("id") ON DELETE CASCADE,
+        CONSTRAINT "FK_role_permissions_permission" FOREIGN KEY ("permission_id") REFERENCES "permissions"("id") ON DELETE CASCADE
+      )
+    `);
 
-    await queryRunner.createIndex(
-      'role_permissions',
-      new TableIndex({
-        name: 'IDX_role_permissions_role_permission',
-        columnNames: ['role_id', 'permission'],
-        isUnique: true,
-      }),
-    );
+    await queryRunner.query(`
+      CREATE TABLE IF NOT EXISTS "user_roles" (
+        "user_id" uuid NOT NULL,
+        "role_id" uuid NOT NULL,
+        CONSTRAINT "PK_user_roles" PRIMARY KEY ("user_id", "role_id"),
+        CONSTRAINT "FK_user_roles_role" FOREIGN KEY ("role_id") REFERENCES "roles"("id") ON DELETE CASCADE
+      )
+    `);
 
-    await queryRunner.createForeignKey(
-      'role_permissions',
-      new TableForeignKey({
-        name: 'FK_role_permissions_role',
-        columnNames: ['role_id'],
-        referencedColumnNames: ['id'],
-        referencedTableName: 'roles',
-        onDelete: 'CASCADE',
-      }),
-    );
-
-    // ── seed default role-permission mappings ──────────────────────────
-    const roles = [
-      { name: 'admin', description: 'Full platform access' },
-      { name: 'hospital', description: 'Hospital staff' },
-      { name: 'donor', description: 'Blood donor' },
-      { name: 'rider', description: 'Delivery rider' },
-      { name: 'vendor', description: 'Blood bank / vendor' },
+    const roles: Array<{ name: string; description: string }> = [
+      { name: 'rider', description: 'End user who requests and receives deliveries' },
+      { name: 'driver', description: 'Courier who fulfils deliveries' },
+      { name: 'dispatcher', description: 'Operations staff who manage dispatch' },
+      { name: 'admin', description: 'Platform administrator' },
     ];
 
     for (const role of roles) {
       await queryRunner.query(
-        `INSERT INTO roles (name, description) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING`,
+        `INSERT INTO "roles" ("name", "description") VALUES ($1, $2) ON CONFLICT ("name") DO NOTHING`,
         [role.name, role.description],
       );
     }
 
-    // Admin gets every permission
-    const adminPermissions = [
-      'create:order',
-      'view:order',
-      'update:order',
-      'cancel:order',
-      'delete:order',
-      'view:riders',
-      'create:rider',
-      'update:rider',
-      'delete:rider',
-      'manage:riders',
-      'view:hospitals',
-      'create:hospital',
-      'update:hospital',
-      'delete:hospital',
-      'view:inventory',
-      'create:inventory',
-      'update:inventory',
-      'delete:inventory',
-      'view:bloodunit:trail',
-      'register:bloodunit',
-      'transfer:custody',
-      'log:temperature',
-      'view:dispatch',
-      'create:dispatch',
-      'update:dispatch',
-      'delete:dispatch',
-      'manage:dispatch',
-      'view:users',
-      'manage:users',
-      'delete:user',
-      'view:notifications',
-      'manage:notifications',
-      'view:maps',
-      'manage:soroban',
-      'view:blockchain',
-      'admin:access',
-      'manage:roles',
+    const permissions: Array<{ name: string; description: string }> = [
+      { name: 'manage:dispatch', description: 'Manage dispatch operations' },
+      { name: 'dispatch:override', description: 'Override dispatch decisions' },
+      { name: 'manage:deliveries', description: 'Manage deliveries' },
+      { name: 'manage:users', description: 'Manage users' },
+      { name: 'manage:payments', description: 'Manage payments' },
+      { name: 'view:analytics', description: 'View analytics' },
     ];
 
-    for (const permission of adminPermissions) {
+    for (const permission of permissions) {
       await queryRunner.query(
-        `INSERT INTO role_permissions (role_id, permission)
-         SELECT id, $1 FROM roles WHERE name = 'admin'
-         ON CONFLICT DO NOTHING`,
-        [permission],
+        `INSERT INTO "permissions" ("name", "description") VALUES ($1, $2) ON CONFLICT ("name") DO NOTHING`,
+        [permission.name, permission.description],
       );
     }
 
-    // Hospital: order management, inventory, blood units, notifications, maps
-    const hospitalPermissions = [
-      'create:order',
-      'view:order',
-      'cancel:order',
-      'view:inventory',
-      'view:bloodunit:trail',
-      'register:bloodunit',
-      'view:notifications',
-      'view:maps',
-      'view:hospitals',
-    ];
+    // Role -> permission grants.
+    //
+    // NOTE: `manage:dispatch` and `dispatch:override` are intentionally NOT
+    // granted to the `rider` role. Riders must not be able to acknowledge,
+    // resolve, or downgrade their own route-deviation incidents (see #1533).
+    // These permissions are reserved for dispatchers and admins.
+    const rolePermissions: Record<string, string[]> = {
+      rider: ['manage:deliveries'],
+      driver: ['manage:deliveries'],
+      dispatcher: ['manage:dispatch', 'dispatch:override', 'manage:deliveries', 'view:analytics'],
+      admin: [
+        'manage:dispatch',
+        'dispatch:override',
+        'manage:deliveries',
+        'manage:users',
+        'manage:payments',
+        'view:analytics',
+      ],
+    };
 
-    for (const permission of hospitalPermissions) {
-      await queryRunner.query(
-        `INSERT INTO role_permissions (role_id, permission)
-         SELECT id, $1 FROM roles WHERE name = 'hospital'
-         ON CONFLICT DO NOTHING`,
-        [permission],
-      );
+    for (const [roleName, permissionNames] of Object.entries(rolePermissions)) {
+      for (const permissionName of permissionNames) {
+        await queryRunner.query(
+          `INSERT INTO "role_permissions" ("role_id", "permission_id")
+           SELECT r."id", p."id" FROM "roles" r, "permissions" p
+           WHERE r."name" = $1 AND p."name" = $2
+           ON CONFLICT DO NOTHING`,
+          [roleName, permissionName],
+        );
+      }
     }
 
-    // Donor: limited order viewing
-    const donorPermissions = [
-      'create:order',
-      'view:order',
-      'cancel:order',
-      'view:notifications',
-    ];
-
-    for (const permission of donorPermissions) {
-      await queryRunner.query(
-        `INSERT INTO role_permissions (role_id, permission)
-         SELECT id, $1 FROM roles WHERE name = 'donor'
-         ON CONFLICT DO NOTHING`,
-        [permission],
-      );
-    }
-
-    // Rider: dispatch, orders, location updates
+    // Rider: dispatch, orders, location updates.
+    // NOTE: riders must NOT hold `manage:dispatch` or `dispatch:override`.
+    // Those permissions let a rider accept/reject assignments on behalf of
+    // other riders or force-assign any order to themselves (see #1538).
     const riderPermissions = [
       'view:order',
       'update:order',
       'view:dispatch',
       'update:dispatch',
-      'manage:dispatch',
       'view:riders',
       'update:rider',
       'view:maps',
@@ -260,11 +164,9 @@ export class CreateRbacTables1708000001000 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.dropForeignKey(
-      'role_permissions',
-      'FK_role_permissions_role',
-    );
-    await queryRunner.dropTable('role_permissions', true);
-    await queryRunner.dropTable('roles', true);
+    await queryRunner.query(`DROP TABLE IF EXISTS "user_roles"`);
+    await queryRunner.query(`DROP TABLE IF EXISTS "role_permissions"`);
+    await queryRunner.query(`DROP TABLE IF EXISTS "permissions"`);
+    await queryRunner.query(`DROP TABLE IF EXISTS "roles"`);
   }
 }

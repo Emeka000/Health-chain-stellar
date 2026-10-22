@@ -3,4 +3,5 @@ export enum NotificationStatus {
   SENT = 'SENT',
   FAILED = 'FAILED',
   READ = 'READ',
+  DLQ = 'DLQ',
 }

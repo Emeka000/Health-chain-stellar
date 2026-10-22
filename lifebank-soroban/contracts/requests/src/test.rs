@@ -4,9 +4,25 @@ use crate::{
     RequestStatus, Urgency,
 };
 use soroban_sdk::{
+    contract, contractimpl,
     testutils::{Address as _, Events as _, Ledger as _},
     Address, Env, String,
 };
+
+/// Minimal inventory mock so cross-contract release calls don't panic.
+#[contract]
+struct MockInventory;
+
+#[contractimpl]
+impl MockInventory {
+    pub fn release_reservation(_env: Env, _caller: Address, _reservation_id: u64) {}
+    pub fn release_reservation_by_contract(
+        _env: Env,
+        _authorized_contract: Address,
+        _reservation_id: u64,
+    ) {
+    }
+}
 
 fn create_uninitialized_contract<'a>() -> (Env, RequestContractClient<'a>, Address) {
     let env = Env::default();
@@ -18,10 +34,11 @@ fn create_uninitialized_contract<'a>() -> (Env, RequestContractClient<'a>, Addre
     (env, client, contract_id)
 }
 
-fn create_initialized_contract<'a>() -> (Env, RequestContractClient<'a>, Address, Address, Address) {
+fn create_initialized_contract<'a>() -> (Env, RequestContractClient<'a>, Address, Address, Address)
+{
     let (env, client, contract_id) = create_uninitialized_contract();
     let admin = Address::generate(&env);
-    let inventory_contract = Address::generate(&env);
+    let inventory_contract = env.register(MockInventory, ());
     client.initialize(&admin, &inventory_contract);
     (env, client, contract_id, admin, inventory_contract)
 }
@@ -49,10 +66,8 @@ fn test_initialize_sets_admin_inventory_counter_and_metadata() {
     );
 
     let stored_admin = env.as_contract(&contract_id, || storage::get_admin(&env));
-    let stored_inventory =
-        env.as_contract(&contract_id, || storage::get_inventory_contract(&env));
-    let stored_counter =
-        env.as_contract(&contract_id, || storage::get_request_counter(&env));
+    let stored_inventory = env.as_contract(&contract_id, || storage::get_inventory_contract(&env));
+    let stored_counter = env.as_contract(&contract_id, || storage::get_request_counter(&env));
 
     assert_eq!(stored_admin, admin);
     assert_eq!(stored_inventory, inventory_contract);
@@ -214,3 +229,309 @@ fn test_create_request_rejects_zero_quantity() {
     );
 }
 
+#[test]
+fn test_partial_fulfillment_transitions_and_accounting() {
+    let (env, client, _contract_id, admin, _inventory_contract) = create_initialized_contract();
+    let hospital = authorize_hospital(&env, &client);
+    env.ledger().set_timestamp(3_000);
+
+    let request_id = client.create_request(
+        &hospital,
+        &BloodType::OPositive,
+        &BloodComponent::WholeBlood,
+        &500u32,
+        &Urgency::Urgent,
+        &3_600u64,
+    );
+
+    client.update_request_status(
+        &admin,
+        &request_id,
+        &RequestStatus::Approved,
+        &String::from_str(&env, "Approved for dispatch"),
+    );
+
+    client.partial_fulfill_request(
+        &admin,
+        &request_id,
+        &200u32,
+        &String::from_str(&env, "First leg delivered"),
+    );
+    let partial = client.get_request(&request_id);
+    assert_eq!(partial.status, RequestStatus::InProgress);
+    assert_eq!(partial.fulfilled_quantity_ml, 200);
+
+    client.partial_fulfill_request(
+        &admin,
+        &request_id,
+        &300u32,
+        &String::from_str(&env, "Final leg delivered"),
+    );
+    let fulfilled = client.get_request(&request_id);
+    assert_eq!(fulfilled.status, RequestStatus::Fulfilled);
+    assert_eq!(fulfilled.fulfilled_quantity_ml, 500);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #302)")]
+fn test_partial_fulfillment_restricted_to_admin() {
+    let (env, client, _contract_id, admin, _inventory_contract) = create_initialized_contract();
+    let hospital = authorize_hospital(&env, &client);
+    env.ledger().set_timestamp(4_000);
+    let request_id = client.create_request(
+        &hospital,
+        &BloodType::APositive,
+        &BloodComponent::RedCells,
+        &300u32,
+        &Urgency::Routine,
+        &4_500u64,
+    );
+    client.update_request_status(
+        &admin,
+        &request_id,
+        &RequestStatus::Approved,
+        &String::from_str(&env, "Approved"),
+    );
+
+    client.partial_fulfill_request(
+        &hospital,
+        &request_id,
+        &100u32,
+        &String::from_str(&env, "Unauthorized attempt"),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #313)")]
+fn test_cancel_requires_reason() {
+    let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
+    let hospital = authorize_hospital(&env, &client);
+    env.ledger().set_timestamp(5_000);
+    let request_id = client.create_request(
+        &hospital,
+        &BloodType::BPositive,
+        &BloodComponent::Plasma,
+        &250u32,
+        &Urgency::Routine,
+        &5_500u64,
+    );
+    client.cancel_request(&hospital, &request_id, &String::from_str(&env, ""));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #313)")]
+fn test_reject_requires_reason() {
+    let (env, client, _contract_id, admin, _inventory_contract) = create_initialized_contract();
+    let hospital = authorize_hospital(&env, &client);
+    env.ledger().set_timestamp(6_000);
+    let request_id = client.create_request(
+        &hospital,
+        &BloodType::ABPositive,
+        &BloodComponent::Platelets,
+        &100u32,
+        &Urgency::Urgent,
+        &6_500u64,
+    );
+    client.update_request_status(
+        &admin,
+        &request_id,
+        &RequestStatus::Rejected,
+        &String::from_str(&env, ""),
+    );
+}
+
+#[test]
+fn test_request_history_captures_transition_rationale() {
+    let (env, client, _contract_id, admin, _inventory_contract) = create_initialized_contract();
+    let hospital = authorize_hospital(&env, &client);
+    env.ledger().set_timestamp(7_000);
+    let request_id = client.create_request(
+        &hospital,
+        &BloodType::ONegative,
+        &BloodComponent::WholeBlood,
+        &400u32,
+        &Urgency::Critical,
+        &7_300u64,
+    );
+    client.update_request_status(
+        &admin,
+        &request_id,
+        &RequestStatus::Approved,
+        &String::from_str(&env, "Stock confirmed"),
+    );
+    client.partial_fulfill_request(
+        &admin,
+        &request_id,
+        &150u32,
+        &String::from_str(&env, "Initial transport completed"),
+    );
+    client.partial_fulfill_request(
+        &admin,
+        &request_id,
+        &250u32,
+        &String::from_str(&env, "Final transport completed"),
+    );
+
+    let history = client.get_request_history(&request_id);
+    assert_eq!(history.len(), 4);
+    let created = history.get(0).unwrap();
+    assert_eq!(created.new_status, RequestStatus::Pending);
+    assert_eq!(created.reason, String::from_str(&env, "Request created"));
+
+    let approved = history.get(1).unwrap();
+    assert_eq!(approved.new_status, RequestStatus::Approved);
+    assert_eq!(approved.reason, String::from_str(&env, "Stock confirmed"));
+
+    let partial = history.get(2).unwrap();
+    assert_eq!(partial.new_status, RequestStatus::InProgress);
+    assert_eq!(partial.fulfilled_delta_ml, 150);
+    assert_eq!(
+        partial.reason,
+        String::from_str(&env, "Initial transport completed")
+    );
+
+    let fulfilled = history.get(3).unwrap();
+    assert_eq!(fulfilled.new_status, RequestStatus::Fulfilled);
+    assert_eq!(fulfilled.fulfilled_delta_ml, 250);
+    assert_eq!(
+        fulfilled.reason,
+        String::from_str(&env, "Final transport completed")
+    );
+}
+
+#[test]
+fn test_authorize_hospital_emits_event() {
+    let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
+    let hospital = Address::generate(&env);
+
+    client.authorize_hospital(&hospital);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    assert_eq!(last.0, client.address);
+}
+
+#[test]
+fn test_revoke_hospital_emits_event() {
+    let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
+    let hospital = Address::generate(&env);
+    client.authorize_hospital(&hospital);
+
+    client.revoke_hospital(&hospital);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    assert_eq!(last.0, client.address);
+}
+
+#[test]
+fn test_authorize_blood_bank_emits_event() {
+    let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
+    let blood_bank = Address::generate(&env);
+
+    client.authorize_blood_bank(&blood_bank);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    assert_eq!(last.0, client.address);
+}
+
+#[test]
+fn test_revoke_blood_bank_emits_event() {
+    let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
+    let blood_bank = Address::generate(&env);
+    client.authorize_blood_bank(&blood_bank);
+
+    client.revoke_blood_bank(&blood_bank);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    assert_eq!(last.0, client.address);
+}
+
+#[test]
+fn test_authorize_rider_emits_event() {
+    let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
+    let rider = Address::generate(&env);
+
+    client.authorize_rider(&rider);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    assert_eq!(last.0, client.address);
+}
+
+#[test]
+fn test_revoke_rider_emits_event() {
+    let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
+    let rider = Address::generate(&env);
+    client.authorize_rider(&rider);
+
+    client.revoke_rider(&rider);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    assert_eq!(last.0, client.address);
+}
+
+#[test]
+fn test_assign_rider_emits_event() {
+    let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
+    let hospital = authorize_hospital(&env, &client);
+    let rider = Address::generate(&env);
+    client.authorize_rider(&rider);
+    env.ledger().set_timestamp(9_000);
+    let request_id = client.create_request(
+        &hospital,
+        &BloodType::APositive,
+        &BloodComponent::RedCells,
+        &300u32,
+        &Urgency::Urgent,
+        &9_500u64,
+    );
+
+    client.assign_rider(&rider, &request_id);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    assert_eq!(last.0, client.address);
+}
+
+#[test]
+fn test_cancel_request_with_reservation_id() {
+    let (env, client, _contract_id, admin, _inventory_contract) = create_initialized_contract();
+    let hospital = authorize_hospital(&env, &client);
+    env.ledger().set_timestamp(7_000);
+    let request_id = client.create_request(
+        &hospital,
+        &BloodType::OPositive,
+        &BloodComponent::RedCells,
+        &500u32,
+        &Urgency::Urgent,
+        &8_000u64,
+    );
+
+    client.update_request_status(
+        &admin,
+        &request_id,
+        &RequestStatus::Approved,
+        &String::from_str(&env, "Approved"),
+    );
+
+    let reservation_id = 42u64;
+    client.set_reservation_id(&admin, &request_id, &reservation_id);
+
+    client.cancel_request(
+        &hospital,
+        &request_id,
+        &String::from_str(&env, "Request cancelled"),
+    );
+
+    let request = client.get_request(&request_id);
+    assert_eq!(request.status, RequestStatus::Cancelled);
+    assert_eq!(request.reservation_id, None);
+
+    let history = client.get_request_history(&request_id);
+    let cancel_entry = history.get(3).unwrap();
+    assert!(cancel_entry.released_reservation);
+}

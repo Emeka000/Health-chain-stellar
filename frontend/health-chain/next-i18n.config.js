@@ -6,7 +6,7 @@ module.exports = {
     locales: ['en', 'fr'],
     localePath: path.resolve('./public/locales'),
   },
-  ns: ['common', 'forms', 'orders', 'dispatch', 'verification', 'errors'],
+  ns: ['common', 'forms', 'orders', 'dispatch', 'verification', 'errors', 'medical', 'emergency'],
   defaultNS: 'common',
   nsSeparator: ':',
   keySeparator: '.',

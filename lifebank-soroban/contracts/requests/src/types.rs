@@ -1,4 +1,12 @@
-use soroban_sdk::{contracttype, Address, String, Vec};
+use soroban_sdk::{contractevent, contracttype, Address, String, Vec};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[contracttype]
+pub enum Role {
+    Hospital,
+    BloodBank,
+    Rider,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
@@ -9,7 +17,12 @@ pub enum DataKey {
     Initialized,
     Metadata,
     AuthorizedHospital(Address),
+    AuthorizedBloodBank(Address),
+    AuthorizedRider(Address),
     Request(u64),
+    HospitalRequestIds(Address), // Maps hospital to Vec<u64> of request IDs
+    PaymentsContract,            // Trusted payments contract allowed to cancel requests
+    RequestRider(u64),           // Rider dispatched to pick up a request
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -67,8 +80,23 @@ impl Urgency {
 pub enum RequestStatus {
     Pending,
     Approved,
+    InProgress,
     Fulfilled,
     Cancelled,
+    Rejected,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct RequestHistoryEntry {
+    pub previous_status: RequestStatus,
+    pub is_initial_transition: bool,
+    pub new_status: RequestStatus,
+    pub actor: Address,
+    pub reason: String,
+    pub fulfilled_delta_ml: u32,
+    pub released_reservation: bool,
+    pub timestamp: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -87,14 +115,19 @@ pub struct BloodRequest {
     pub fulfilled_quantity_ml: u32,
     /// Reservation ID on the inventory contract, set when units are reserved.
     pub reservation_id: Option<u64>,
+    /// Organization (blood bank) that fulfilled this request, if any.
+    pub fulfilled_by: Option<Address>,
+    /// Request lifecycle transitions with rationale and accounting details.
+    pub history: Vec<RequestHistoryEntry>,
 }
 
+#[contractevent(topics = ["request_created"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[contracttype]
 pub struct RequestCreatedEvent {
+    #[topic]
+    pub blood_type: BloodType,
     pub request_id: u64,
     pub hospital: Address,
-    pub blood_type: BloodType,
     pub quantity_ml: u32,
     pub urgency: u32,
     pub timestamp: u64,

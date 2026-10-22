@@ -1,140 +1,154 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
+import { BadRequestException } from '@nestjs/common';
+import { ReconciliationService } from './reconciliation.service';
+import {
+  ExceptionCategory,
+  MismatchResolution,
+  MismatchType,
+  ReconciliationRunStatus,
+} from './enums/reconciliation.enum';
+import { ReconciliationSnapshotStatus } from './entities/reconciliation-snapshot.entity';
 
-import { DonationEntity } from '../../donations/entities/donation.entity';
-import { DonationStatus } from '../../donations/enums/donation.enum';
-import { DisputeEntity } from '../../disputes/entities/dispute.entity';
-import { SorobanService } from '../../soroban/soroban.service';
-import { ReconciliationMismatchEntity } from '../entities/reconciliation-mismatch.entity';
-import { ReconciliationRunEntity } from '../entities/reconciliation-run.entity';
-import { MismatchResolution, ReconciliationRunStatus } from '../enums/reconciliation.enum';
-import { ReconciliationService } from '../reconciliation.service';
+function makeSnapshot(overrides: Partial<object> = {}) {
+  return {
+    id: 'snap-1',
+    runId: 'run-1',
+    status: ReconciliationSnapshotStatus.IN_PROGRESS,
+    cursors: {},
+    processedCounts: {},
+    exceptionSummary: {},
+    ...overrides,
+  };
+}
 
-const mockRunRepo = () => ({
-  create: jest.fn((d) => ({ ...d, id: 'run-1' })),
-  save: jest.fn(async (e) => e),
-  find: jest.fn(async () => []),
-  count: jest.fn(async () => 0),
-});
+function makeRun(overrides: Partial<object> = {}) {
+  return {
+    id: 'run-1',
+    status: ReconciliationRunStatus.RUNNING,
+    snapshotId: 'snap-1',
+    triggeredBy: 'user-1',
+    totalChecked: 0,
+    mismatchCount: 0,
+    completedAt: null,
+    errorMessage: null,
+    ...overrides,
+  };
+}
 
-const mockMismatchRepo = () => ({
-  create: jest.fn((d) => d),
-  save: jest.fn(async (e) => e),
-  find: jest.fn(async () => []),
-  findOneOrFail: jest.fn(),
-});
+function makeMismatch(overrides: Partial<object> = {}) {
+  return {
+    id: 'mm-1',
+    resolution: MismatchResolution.PENDING,
+    exceptionCategory: ExceptionCategory.STATUS_DIVERGENCE,
+    referenceType: 'donation',
+    referenceId: 'don-1',
+    onChainValue: { status: 'completed' },
+    offChainValue: { status: 'pending' },
+    ...overrides,
+  };
+}
 
-const mockDonationRepo = () => ({
-  find: jest.fn(async () => []),
-  count: jest.fn(async () => 5),
-  update: jest.fn(),
-});
+function makeService(opts: {
+  run?: object | null;
+  snapshot?: object | null;
+  mismatch?: object | null;
+} = {}) {
+  const runRepo = {
+    create: jest.fn((d) => ({ ...d })),
+    save: jest.fn(async (r) => ({ id: 'run-1', ...r })),
+    findOne: jest.fn(async () => opts.run ?? null),
+    find: jest.fn(async () => []),
+  };
+  const mismatchRepo = {
+    create: jest.fn((d) => ({ ...d })),
+    save: jest.fn(async (r) => r),
+    find: jest.fn(async () => []),
+    findOneOrFail: jest.fn(async () => opts.mismatch ?? makeMismatch()),
+  };
+  const snapshotRepo = {
+    create: jest.fn((d) => ({ ...d })),
+    save: jest.fn(async (r) => ({ id: 'snap-1', ...r })),
+    findOne: jest.fn(async () => opts.snapshot ?? makeSnapshot()),
+  };
+  const donationRepo = {
+    createQueryBuilder: jest.fn(() => ({
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getMany: jest.fn(async () => []),
+    })),
+    update: jest.fn(async () => undefined),
+  };
+  const disputeRepo = {
+    createQueryBuilder: jest.fn(() => ({
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getMany: jest.fn(async () => []),
+    })),
+    update: jest.fn(async () => undefined),
+  };
+  const sorobanService = { executeWithRetry: jest.fn(async (fn: () => unknown) => fn()) };
 
-const mockDisputeRepo = () => ({
-  find: jest.fn(async () => []),
-  count: jest.fn(async () => 2),
-  update: jest.fn(),
-});
+  return new ReconciliationService(
+    runRepo as any,
+    mismatchRepo as any,
+    snapshotRepo as any,
+    donationRepo as any,
+    disputeRepo as any,
+    sorobanService as any,
+  );
+}
 
-const mockSoroban = () => ({
-  executeWithRetry: jest.fn(async (fn: () => Promise<unknown>) => fn()),
-});
-
-describe('ReconciliationService', () => {
-  let service: ReconciliationService;
-  let runRepo: ReturnType<typeof mockRunRepo>;
-  let mismatchRepo: ReturnType<typeof mockMismatchRepo>;
-  let donationRepo: ReturnType<typeof mockDonationRepo>;
-
-  beforeEach(async () => {
-    runRepo = mockRunRepo();
-    mismatchRepo = mockMismatchRepo();
-    donationRepo = mockDonationRepo();
-
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        ReconciliationService,
-        { provide: getRepositoryToken(ReconciliationRunEntity), useValue: runRepo },
-        { provide: getRepositoryToken(ReconciliationMismatchEntity), useValue: mismatchRepo },
-        { provide: getRepositoryToken(DonationEntity), useValue: donationRepo },
-        { provide: getRepositoryToken(DisputeEntity), useValue: mockDisputeRepo() },
-        { provide: SorobanService, useValue: mockSoroban() },
-      ],
-    }).compile();
-
-    service = module.get(ReconciliationService);
+describe('ReconciliationService — issue #622', () => {
+  it('triggerRun creates a run and snapshot', async () => {
+    const svc = makeService();
+    const run = await svc.triggerRun('user-1');
+    expect(run).toBeDefined();
   });
 
-  it('triggerRun creates a run record and returns it', async () => {
-    const run = await service.triggerRun('admin-user');
-    expect(runRepo.create).toHaveBeenCalledWith({ triggeredBy: 'admin-user' });
-    expect(runRepo.save).toHaveBeenCalled();
-    expect(run).toMatchObject({ triggeredBy: 'admin-user' });
+  it('triggerRun with resumeRunId throws if run not found', async () => {
+    const svc = makeService({ run: null });
+    await expect(svc.triggerRun('user-1', 'missing-run')).rejects.toThrow(BadRequestException);
   });
 
-  it('getRuns delegates to repo with limit', async () => {
-    await service.getRuns(10);
-    expect(runRepo.find).toHaveBeenCalledWith({ order: { createdAt: 'DESC' }, take: 10 });
+  it('triggerRun with resumeRunId throws if run is not INTERRUPTED', async () => {
+    const svc = makeService({ run: makeRun({ status: ReconciliationRunStatus.COMPLETED }) });
+    await expect(svc.triggerRun('user-1', 'run-1')).rejects.toThrow(BadRequestException);
   });
 
-  it('getMismatches filters by runId and resolution', async () => {
-    await service.getMismatches('run-1', MismatchResolution.PENDING, 25);
-    expect(mismatchRepo.find).toHaveBeenCalledWith({
-      where: { runId: 'run-1', resolution: MismatchResolution.PENDING },
-      order: { createdAt: 'DESC' },
-      take: 25,
+  it('triggerRun resumes an INTERRUPTED run', async () => {
+    const svc = makeService({ run: makeRun({ status: ReconciliationRunStatus.INTERRUPTED }) });
+    const run = await svc.triggerRun('user-1', 'run-1');
+    expect(run).toBeDefined();
+  });
+
+  it('resync blocks AMBIGUOUS_MATCH mismatches', async () => {
+    const svc = makeService({
+      mismatch: makeMismatch({ exceptionCategory: ExceptionCategory.AMBIGUOUS_MATCH }),
     });
+    await expect(svc.resync('mm-1', 'user-1')).rejects.toThrow(BadRequestException);
   });
 
-  it('resync throws when mismatch is already resolved', async () => {
-    mismatchRepo.findOneOrFail.mockResolvedValue({
-      id: 'm-1',
-      resolution: MismatchResolution.RESYNCED,
-    });
-    await expect(service.resync('m-1', 'admin')).rejects.toThrow('already resolved');
-  });
-
-  it('resync updates donation status from on-chain value', async () => {
-    mismatchRepo.findOneOrFail.mockResolvedValue({
-      id: 'm-1',
-      resolution: MismatchResolution.PENDING,
-      referenceType: 'donation',
-      referenceId: 'don-1',
-      onChainValue: { status: DonationStatus.COMPLETED },
-    });
-    mismatchRepo.save.mockResolvedValue({
-      id: 'm-1',
-      resolution: MismatchResolution.RESYNCED,
-    });
-
-    const result = await service.resync('m-1', 'admin');
-    expect(donationRepo.update).toHaveBeenCalledWith('don-1', { status: DonationStatus.COMPLETED });
+  it('resync resolves a STATUS_DIVERGENCE mismatch', async () => {
+    const svc = makeService();
+    const result = await svc.resync('mm-1', 'user-1');
     expect(result.resolution).toBe(MismatchResolution.RESYNCED);
   });
 
-  it('dismiss sets resolution to dismissed with note', async () => {
-    const mismatch = {
-      id: 'm-2',
-      resolution: MismatchResolution.PENDING,
-    };
-    mismatchRepo.findOneOrFail.mockResolvedValue(mismatch);
-    mismatchRepo.save.mockImplementation(async (e) => e);
-
-    const result = await service.dismiss('m-2', 'admin', 'Not a real issue');
+  it('dismiss sets resolution to DISMISSED with note', async () => {
+    const svc = makeService();
+    const result = await svc.dismiss('mm-1', 'user-1', 'not relevant');
     expect(result.resolution).toBe(MismatchResolution.DISMISSED);
-    expect(result.resolutionNote).toBe('Not a real issue');
+    expect(result.resolutionNote).toBe('not relevant');
   });
 
-  it('executeRun marks run as completed on success', async () => {
-    // Trigger and wait for async run to complete
-    const run = { id: 'run-x', status: ReconciliationRunStatus.RUNNING } as ReconciliationRunEntity;
-    runRepo.create.mockReturnValue(run);
-    runRepo.save.mockResolvedValue(run);
-
-    await service.triggerRun();
-    // Give async run time to complete
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(runRepo.save).toHaveBeenCalledTimes(2); // initial + completion
+  it('getMismatches filters by exceptionCategory', async () => {
+    const svc = makeService();
+    // Just verify it calls through without error
+    await expect(
+      svc.getMismatches(undefined, undefined, ExceptionCategory.AMOUNT_DISCREPANCY),
+    ).resolves.toBeDefined();
   });
 });

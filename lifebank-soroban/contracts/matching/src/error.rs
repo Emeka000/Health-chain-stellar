@@ -6,17 +6,20 @@ use soroban_sdk::contracterror;
 pub enum MatchingError {
     // General (600-609)
     AlreadyInitialized = 600,
-    NotInitialized     = 601,
-    Unauthorized       = 602,
+    NotInitialized = 601,
+    Unauthorized = 602,
 
     // Request errors (610-619)
-    RequestNotFound    = 610,
-    InvalidRequest     = 611,
+    RequestNotFound = 610,
+    InvalidRequest = 611,
 
     // Inventory errors (620-629)
     InventoryCallFailed = 620,
-    NoUnitsAvailable    = 621,
+    NoUnitsAvailable = 621,
 
     // Circuit breaker (630)
     ContractPaused = 630,
+
+    // Batch limits (631)
+    BatchTooLarge = 631,
 }

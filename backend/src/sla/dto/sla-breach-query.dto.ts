@@ -1,4 +1,5 @@
-import { IsEnum, IsOptional, IsString, IsDateString } from 'class-validator';
+import { IsEnum, IsOptional, IsString, IsDateString, IsInt, Min } from 'class-validator';
+import { Type } from 'class-transformer';
 import { SlaStage } from '../enums/sla-stage.enum';
 
 export class SlaBreachQueryDto {
@@ -29,4 +30,24 @@ export class SlaBreachQueryDto {
   @IsOptional()
   @IsDateString()
   endDate?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  pageSize?: number;
+}
+
+export class SlaBreachResponseDto {
+  data: any[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 }

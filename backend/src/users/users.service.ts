@@ -4,9 +4,11 @@ import {
   BadRequestException,
   Inject,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
+import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
 
-import { Repository } from 'typeorm';
+import { randomBytes } from 'crypto';
+
+import { Repository, DataSource } from 'typeorm';
 
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import {
@@ -20,6 +22,7 @@ import {
   LogActivityParams,
 } from './services/profile-activity.service';
 import { StorageService } from './services/storage.service';
+import { PaginationQueryDto, PaginationUtil } from '../common/pagination';
 
 @Injectable()
 export class UsersService {
@@ -33,8 +36,9 @@ export class UsersService {
     private readonly profileActivityService: ProfileActivityService,
   ) {}
 
-  async findAll() {
-    const users = await this.userRepository.find({
+  async findAll(pagination?: PaginationQueryDto) {
+    const { page = 1, pageSize = 25 } = pagination ?? {};
+    const [users, total] = await this.userRepository.findAndCount({
       select: [
         'id',
         'email',
@@ -44,11 +48,14 @@ export class UsersService {
         'role',
         'createdAt',
       ],
+      skip: PaginationUtil.calculateSkip(page, pageSize),
+      take: pageSize,
     });
 
     return {
       message: 'Users retrieved successfully',
       data: users,
+      pagination: PaginationUtil.createMetadata(page, pageSize, total),
     };
   }
 
@@ -197,6 +204,12 @@ export class UsersService {
       throw new BadRequestException('No file uploaded');
     }
 
+    // Uploads are handled in memory (memoryStorage); without a buffer there is
+    // nothing to validate and no temp file to clean up.
+    if (!file.buffer || file.buffer.length === 0) {
+      throw new BadRequestException('Uploaded file is empty or unreadable');
+    }
+
     // Validate image
     await this.imageValidationService.validateImage(
       file.buffer,
@@ -211,10 +224,14 @@ export class UsersService {
       200,
     );
 
+    // Never trust the client-supplied filename/extension: derive the stored
+    // name and extension from the validated MIME type instead.
+    const storedFilename = this.buildAvatarFilename(file.mimetype);
+
     // Upload to storage
     const uploadResult = await this.storageService.uploadFile(
       resizedBuffer,
-      file.originalname,
+      storedFilename,
       file.mimetype,
       'avatars',
     );
@@ -225,13 +242,14 @@ export class UsersService {
       throw new NotFoundException(`User with ID ${userId} not found`);
     }
 
-    // Delete old avatar if exists
-    if (user.avatarUrl) {
-      const oldKey = user.avatarUrl.replace('/uploads/', '');
-      await this.storageService.deleteFile(oldKey);
+    // Delete old avatar if exists. Only the server-recorded storage key is
+    // trusted — never derive a key from avatarUrl.
+    if (this.isAvatarKey(user.avatarKey)) {
+      await this.storageService.deleteFile(user.avatarKey);
     }
 
     user.avatarUrl = uploadResult.url;
+    user.avatarKey = uploadResult.key;
 
     await this.dataSource.transaction(async (manager) => {
       await manager.save(UserEntity, user);
@@ -271,17 +289,19 @@ export class UsersService {
       throw new NotFoundException(`User with ID ${userId} not found`);
     }
 
-    if (!user.avatarUrl) {
+    if (!user.avatarUrl && !user.avatarKey) {
       throw new BadRequestException('No avatar to delete');
     }
 
-    // Delete from storage
-    const key = user.avatarUrl.replace('/uploads/', '');
-    await this.storageService.deleteFile(key);
+    // Delete from storage using the server-recorded key only.
+    if (this.isAvatarKey(user.avatarKey)) {
+      await this.storageService.deleteFile(user.avatarKey);
+    }
 
     // Update user and log activity atomically — if the DB write fails
     // the activity record is also rolled back, keeping them consistent.
     user.avatarUrl = null;
+    user.avatarKey = null;
     await this.dataSource.transaction(async (manager) => {
       await manager.save(UserEntity, user);
 
@@ -317,6 +337,32 @@ export class UsersService {
       limit,
       offset,
     };
+  }
+
+  /** Avatar keys are always issued by uploadFile(..., 'avatars'). */
+  private isAvatarKey(key: string | null | undefined): key is string {
+    return typeof key === 'string' && key.startsWith('avatars/');
+  }
+
+  /**
+   * Build a server-generated avatar filename whose extension is derived from
+   * the (already validated) MIME type, never from the client-supplied name.
+   */
+  private buildAvatarFilename(mimetype: string): string {
+    const extensionByMimeType: Record<string, string> = {
+      'image/png': '.png',
+      'image/jpeg': '.jpg',
+      'image/jpg': '.jpg',
+      'image/webp': '.webp',
+      'image/gif': '.gif',
+    };
+
+    const extension = extensionByMimeType[mimetype?.toLowerCase()];
+    if (!extension) {
+      throw new BadRequestException('Unsupported image type');
+    }
+
+    return `avatar-${randomBytes(16).toString('hex')}${extension}`;
   }
 
   private calculateProfileCompletion(user: UserEntity): number {

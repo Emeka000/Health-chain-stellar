@@ -247,13 +247,34 @@ export class OrganizationsService {
 
   async search(dto: SearchOrganizationsDto): Promise<{
     message: string;
-    data: Array<OrganizationEntity & { distanceKm?: number }>;
+    data: Array<
+      Pick<
+        OrganizationEntity,
+        | 'id'
+        | 'name'
+        | 'description'
+        | 'type'
+        | 'city'
+        | 'state'
+        | 'country'
+        | 'website'
+        | 'latitude'
+        | 'longitude'
+        | 'rating'
+        | 'status'
+        | 'isActive'
+      > & { distanceKm?: number }
+    >;
     total: number;
     page: number;
     pageSize: number;
   }> {
     const { page = 1, pageSize = 25 } = dto;
     const qb = this.orgRepo.createActiveQueryBuilder('org');
+
+    qb.where('org.status = :status', {
+      status: OrganizationVerificationStatus.APPROVED,
+    }).andWhere('org.isActive = :isActive', { isActive: true });
 
     if (dto.query) {
       qb.andWhere(
@@ -264,11 +285,6 @@ export class OrganizationsService {
     if (dto.type) {
       qb.andWhere('org.type = :type', { type: dto.type });
     }
-    if (dto.verificationStatus) {
-      qb.andWhere('org.verificationStatus = :vs', {
-        vs: dto.verificationStatus,
-      });
-    }
     if (dto.city) {
       qb.andWhere('org.city ILIKE :city', { city: `%${dto.city}%` });
     }
@@ -278,23 +294,39 @@ export class OrganizationsService {
 
     const orgs = await qb.getMany();
 
-    // Geolocation filtering and distance annotation
     const hasGeo =
       dto.latitude !== undefined &&
       dto.longitude !== undefined;
 
-    let results: Array<OrganizationEntity & { distanceKm?: number }> = orgs.map(
-      (org) => {
-        if (!hasGeo) return org;
-        const distanceKm = this.haversineKm(
+    let results = orgs.map((org) => {
+      const publicOrg = {
+        id: org.id,
+        name: org.name,
+        description: org.description,
+        type: org.type,
+        city: org.city,
+        state: org.state,
+        country: org.country,
+        website: org.website,
+        latitude: org.latitude,
+        longitude: org.longitude,
+        rating: org.rating,
+        status: org.status,
+        isActive: org.isActive,
+      };
+
+      if (!hasGeo) return publicOrg;
+
+      return {
+        ...publicOrg,
+        distanceKm: this.haversineKm(
           dto.latitude!,
           dto.longitude!,
           Number(org.latitude),
           Number(org.longitude),
-        );
-        return Object.assign(org, { distanceKm });
-      },
-    );
+        ),
+      };
+    });
 
     if (hasGeo && dto.radiusKm !== undefined) {
       results = results.filter(
@@ -302,7 +334,6 @@ export class OrganizationsService {
       );
     }
 
-    // Sorting
     if (dto.sortBy === 'distance' && hasGeo) {
       results.sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity));
     } else if (dto.sortBy === 'rating') {

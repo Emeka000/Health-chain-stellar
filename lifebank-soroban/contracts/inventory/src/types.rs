@@ -1,5 +1,5 @@
 use crate::error::ContractError;
-use soroban_sdk::{contracttype, Address, Map, String, Symbol, Vec};
+use soroban_sdk::{contractevent, contracttype, Address, Map, String, Symbol, Vec};
 
 /// Blood type enumeration supporting all major blood groups
 ///
@@ -46,7 +46,7 @@ pub enum BloodStatus {
     InTransit,
     /// Successfully delivered to recipient/hospital
     Delivered,
-    /// Expired and no longer usable (typically after 42 days for whole blood)
+    /// Expired and no longer usable (typically 35 days for whole blood)
     Expired,
     /// Compromised due to 3 consecutive temperature violations - unsafe for use
     Compromised,
@@ -87,7 +87,7 @@ pub struct BloodUnit {
     pub donation_timestamp: u64,
 
     /// Unix timestamp (seconds) when unit expires
-    /// Typically 42 days from donation for whole blood
+    /// 35 days from donation for whole blood
     /// 5 days for platelets, 1 year for frozen plasma
     pub expiration_timestamp: u64,
 
@@ -247,6 +247,22 @@ impl BloodUnit {
     }
 }
 
+/// Role-based access control for blood unit status transitions
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Role {
+    /// Contract administrator - can perform any operation
+    Admin,
+    /// Blood bank operator - manages blood inventory and unit ownership
+    BloodBank,
+    /// Delivery rider - can mark units as InTransit
+    Rider,
+    /// Hospital staff - can mark units as Delivered
+    Hospital,
+    /// No role assigned (default for unknown addresses) - cannot transition any unit
+    Unprivileged,
+}
+
 /// Storage key types for efficient querying
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -269,8 +285,31 @@ pub enum DataKey {
     /// Index: Donor ID -> Vec<u64> (blood unit IDs)
     DonorIndex(Address),
 
+    /// Paginated index metadata: stores current page number for an index
+    /// Issue #1142 fix: Add pagination metadata for indexes to prevent unbounded growth
+    BankIndexMeta(Address),
+    DonorIndexMeta(Address),
+    BloodTypeIndexMeta(BloodType),
+    StatusIndexMeta(BloodStatus),
+
+    /// One page of index data: (index_key, page_number) -> Vec<u64>
+    /// Issue #1142 fix: Store index pages separately with fixed size limit
+    BankIndexPage(Address, u32),
+    DonorIndexPage(Address, u32),
+    BloodTypeIndexPage(BloodType, u32),
+    StatusIndexPage(BloodStatus, u32),
+
+    /// Position of a blood unit inside its status index: blood_unit_id -> (page, slot)
+    StatusIndexSlot(u64),
+
+    /// Authorized blood bank address
+    AuthorizedBank(Address),
+
     /// Admin address
     Admin,
+
+    /// Role assignment: address -> Role
+    Role(Address),
 
     /// Status change history for a blood unit — stores current page number
     StatusHistory(u64),
@@ -290,8 +329,26 @@ pub enum DataKey {
     /// Reservation counter
     ReservationCounter,
 
+    /// Rider assigned by the owning bank to move a unit (blood_unit_id -> Address)
+    UnitRider(u64),
+
+    /// Hospital assigned by the owning bank as the destination of a unit (blood_unit_id -> Address)
+    UnitHospital(u64),
+
     /// Circuit breaker: contract is paused
     Paused,
+
+    /// Deduplication index: serial number (donation bag ID) -> blood unit ID
+    Serial(String),
+
+    /// Address of the authoritative HealthChainContract (BloodUnitRegistry)
+    /// for cross-contract state synchronisation.
+    RegistryContractId,
+
+    /// Address of the trusted requests contract that is allowed to call
+    /// `release_reservation_by_contract`. Only this address is permitted;
+    /// any other address is rejected regardless of `require_auth`.
+    RequestsContractId,
 }
 
 /// Reservation record for blood units locked for a specific requester
@@ -300,12 +357,13 @@ pub enum DataKey {
 pub struct Reservation {
     pub unit_ids: Vec<u64>,
     pub requester: Address,
+    pub reserved_by: Address,
     pub created_timestamp: u64,
     pub expiration_timestamp: u64,
     pub request_id: u64,
 }
 
-#[contracttype]
+#[contractevent(topics = ["blood_registered"])]
 #[derive(Clone, Debug)]
 pub struct BloodRegisteredEvent {
     /// Unique ID of the registered blood unit
@@ -328,7 +386,7 @@ pub struct BloodRegisteredEvent {
 }
 
 /// Event emitted when blood unit status changes
-#[contracttype]
+#[contractevent(topics = ["status_changed"])]
 #[derive(Clone, Debug)]
 pub struct StatusChangeEvent {
     /// Unique ID of the blood unit
@@ -352,7 +410,7 @@ pub struct StatusChangeEvent {
 
 /// On-chain audit event for every blood unit status transition.
 /// Emitted as `blood_unit_status_changed` — immutable once published.
-#[contracttype]
+#[contractevent(topics = ["bld_unit_chg"])]
 #[derive(Clone, Debug)]
 pub struct AuditEvent {
     /// Blood unit that transitioned
@@ -474,7 +532,7 @@ mod tests {
     /// Property-style: every pair of statuses is valid iff it appears in the allowlist.
     #[test]
     fn test_transition_matrix_exhaustive_against_allowlist() {
-        use super::{is_valid_transition, ALLOWED_BLOOD_STATUS_TRANSITIONS, BloodStatus};
+        use super::{is_valid_transition, BloodStatus, ALLOWED_BLOOD_STATUS_TRANSITIONS};
         let mut allowed_set = [false; 7 * 7];
         let idx = |s: BloodStatus| match s {
             BloodStatus::Available => 0,

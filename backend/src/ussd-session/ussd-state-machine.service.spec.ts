@@ -15,13 +15,21 @@ describe('UssdStateMachine', () => {
   const createOrder = jest.fn().mockResolvedValue(undefined);
 
   function makeSession(overrides: Partial<UssdSession> = {}): UssdSession {
+    const history = overrides.history ? [...overrides.history] : [];
     return {
       sessionId: 'sess-001',
       phoneNumber: '+2348012345678',
       step: UssdStep.LOGIN_PHONE,
-      history: [],
+      sessionNonce: 'nonce-1',
+      sequenceNumber: overrides.sequenceNumber ?? history.length,
+      history,
+      lastRequestFingerprint: null,
+      lastRequestDepth: null,
+      lastResponse: null,
+      lastProcessedAt: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      expiresAt: Date.now() + 120_000,
       ...overrides,
     };
   }
@@ -73,12 +81,73 @@ describe('UssdStateMachine', () => {
       const result = await machine.process(
         'sess-001',
         '+234',
-        '+2340*#',
+        '#',
         createOrder,
       );
       expect(result.type).toBe('END');
       expect(result.message).toContain('cancelled');
-      expect(sessionStore.delete).toHaveBeenCalled();
+      expect(sessionStore.set).toHaveBeenCalledWith(
+        expect.objectContaining({ step: UssdStep.CANCELLED }),
+      );
+    });
+  });
+
+  describe('duplicate / replay protection', () => {
+    it('returns the same response for a duplicate callback', async () => {
+      const session = makeSession();
+      sessionStore.get.mockResolvedValue(session);
+
+      const first = await machine.process(
+        'sess-001',
+        '+234',
+        '+2348012345678',
+        createOrder,
+      );
+
+      sessionStore.get.mockResolvedValue({
+        ...session,
+        step: UssdStep.LOGIN_PIN,
+        sequenceNumber: 1,
+        lastRequestFingerprint: session.lastRequestFingerprint,
+        lastRequestDepth: 1,
+        lastResponse: first,
+        lastProcessedAt: Date.now(),
+        history: [UssdStep.LOGIN_PHONE],
+      });
+
+      const duplicate = await machine.process(
+        'sess-001',
+        '+234',
+        '+2348012345678',
+        createOrder,
+      );
+
+      expect(duplicate).toEqual(first);
+      expect(createOrder).not.toHaveBeenCalled();
+    });
+
+    it('rejects an out-of-order sequence', async () => {
+      sessionStore.get.mockResolvedValue(
+        makeSession({
+          step: UssdStep.SELECT_QUANTITY,
+          sequenceNumber: 3,
+          history: [
+            UssdStep.LOGIN_PHONE,
+            UssdStep.LOGIN_PIN,
+            UssdStep.SELECT_BLOOD_TYPE,
+          ],
+        }),
+      );
+
+      const result = await machine.process(
+        'sess-001',
+        '+234',
+        'p*pin',
+        createOrder,
+      );
+
+      expect(result.type).toBe('END');
+      expect(result.message).toContain('out of sync');
     });
   });
 
@@ -223,6 +292,7 @@ describe('UssdStateMachine', () => {
       const session = makeSession({
         step: UssdStep.SELECT_BLOOD_TYPE,
         userId: 'user-1',
+        history: [UssdStep.LOGIN_PHONE, UssdStep.LOGIN_PIN],
       });
       sessionStore.get.mockResolvedValue(session);
 
@@ -273,6 +343,11 @@ describe('UssdStateMachine', () => {
         step: UssdStep.SELECT_QUANTITY,
         userId: 'user-1',
         selectedBloodType: 'A+',
+        history: [
+          UssdStep.LOGIN_PHONE,
+          UssdStep.LOGIN_PIN,
+          UssdStep.SELECT_BLOOD_TYPE,
+        ],
       });
       sessionStore.get.mockResolvedValue(session);
 
@@ -295,7 +370,12 @@ describe('UssdStateMachine', () => {
         userId: 'user-1',
         selectedBloodType: 'A+',
         selectedQuantity: 2,
-        history: [],
+        history: [
+          UssdStep.LOGIN_PHONE,
+          UssdStep.LOGIN_PIN,
+          UssdStep.SELECT_BLOOD_TYPE,
+          UssdStep.SELECT_QUANTITY,
+        ],
       });
       sessionStore.get.mockResolvedValue(session);
 
@@ -322,7 +402,13 @@ describe('UssdStateMachine', () => {
         selectedQuantity: 2,
         selectedBloodBankId: 'bb-001',
         selectedBloodBankName: 'Central Blood Bank',
-        history: [],
+        history: [
+          UssdStep.LOGIN_PHONE,
+          UssdStep.LOGIN_PIN,
+          UssdStep.SELECT_BLOOD_TYPE,
+          UssdStep.SELECT_QUANTITY,
+          UssdStep.SELECT_BLOOD_BANK,
+        ],
       });
 
     it('places order and ends session on input "1"', async () => {
@@ -338,7 +424,9 @@ describe('UssdStateMachine', () => {
       expect(createOrder).toHaveBeenCalledTimes(1);
       expect(result.type).toBe('END');
       expect(result.message).toContain('Order placed');
-      expect(sessionStore.delete).toHaveBeenCalled();
+      expect(sessionStore.set).toHaveBeenCalledWith(
+        expect.objectContaining({ step: UssdStep.ORDER_PLACED }),
+      );
     });
 
     it('returns to SELECT_BLOOD_TYPE on input "2" (change)', async () => {
@@ -403,6 +491,26 @@ describe('UssdStateMachine', () => {
         createOrder,
       );
       expect(result.message.length).toBeLessThanOrEqual(182);
+    });
+  });
+
+  describe('expiry handling', () => {
+    it('ends expired sessions safely', async () => {
+      sessionStore.get.mockResolvedValue(
+        makeSession({
+          expiresAt: Date.now() - 1,
+        }),
+      );
+
+      const result = await machine.process(
+        'sess-001',
+        '+234',
+        '',
+        createOrder,
+      );
+
+      expect(result.type).toBe('END');
+      expect(result.message).toContain('expired');
     });
   });
 });

@@ -59,22 +59,45 @@ describe('InventoryStockRepository', () => {
   describe('findById', () => {
     it('returns the entity when found', async () => {
       mockTypeormRepo.findOne.mockResolvedValue(makeStock());
-      const result = await repo.findById('stock-1');
+      const result = await repo.findById('stock-1', 'bank-1');
       expect(result?.id).toBe('stock-1');
+      expect(mockTypeormRepo.findOne).toHaveBeenCalledWith({
+        where: { id: 'stock-1', bloodBankId: 'bank-1' },
+      });
     });
 
     it('returns null when not found', async () => {
       mockTypeormRepo.findOne.mockResolvedValue(null);
-      expect(await repo.findById('missing')).toBeNull();
+      expect(await repo.findById('missing', 'bank-1')).toBeNull();
     });
   });
 
   describe('findByBankAndType', () => {
-    it('queries by bloodBankId and bloodType', async () => {
+    it('queries by bloodBankId, bloodType, and component', async () => {
+      mockTypeormRepo.findOne.mockResolvedValue(makeStock());
+      await repo.findByBankAndType('bank-1', 'O+', 'PLASMA' as any);
+      expect(mockTypeormRepo.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            bloodBankId: 'bank-1',
+            bloodType: 'O+',
+            component: 'PLASMA',
+          }),
+        }),
+      );
+    });
+
+    it('defaults component to WHOLE_BLOOD when omitted', async () => {
       mockTypeormRepo.findOne.mockResolvedValue(makeStock());
       await repo.findByBankAndType('bank-1', 'O+');
       expect(mockTypeormRepo.findOne).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expect.objectContaining({ bloodBankId: 'bank-1', bloodType: 'O+' }) }),
+        expect.objectContaining({
+          where: expect.objectContaining({
+            bloodBankId: 'bank-1',
+            bloodType: 'O+',
+            component: 'WHOLE_BLOOD',
+          }),
+        }),
       );
     });
   });

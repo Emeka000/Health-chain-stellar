@@ -1,7 +1,15 @@
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  scryptSync,
+} from 'crypto';
 
 import {
   BadRequestException,
+  ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -10,17 +18,24 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 
+import Redis from 'ioredis';
 import * as QRCode from 'qrcode';
 import { Repository } from 'typeorm';
 
+import { REDIS_CLIENT } from '../../redis/redis.constants';
 import { UserEntity } from '../../users/entities/user.entity';
 import { TwoFactorAuthEntity } from '../../users/entities/two-factor-auth.entity';
 import { JwtKeyService } from '../jwt-key.service';
-import { JwtPayload } from '../jwt.strategy';
+import { MFA_TOKEN_AUDIENCE } from './mfa.constants';
 import { buildOtpAuthUri, generateTotpSecret, verifyTotp } from './totp.util';
 
 const CIPHER_ALGO = 'aes-256-gcm';
 const IV_LEN = 12;
+
+const MFA_TTL_SECONDS = 5 * 60;
+const MAX_CHALLENGE_ATTEMPTS = 5;
+// verifyTotp accepts ±1 step of 30s, so a code stays valid for up to 90s
+const USED_CODE_TTL_SECONDS = 90;
 
 @Injectable()
 export class MfaService {
@@ -35,9 +50,10 @@ export class MfaService {
     private readonly userRepo: Repository<UserEntity>,
     @InjectRepository(TwoFactorAuthEntity)
     private readonly tfaRepo: Repository<TwoFactorAuthEntity>,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {
     // Derive a 32-byte AES key from JWT_SECRET so no extra env var is needed.
-    const masterSecret = this.configService.get<string>('JWT_SECRET', 'default-secret');
+    const masterSecret = this.configService.getOrThrow<string>('JWT_SECRET');
     // Use a fixed salt derived from the master secret itself for determinism
     const salt = scryptSync('mfa-key-salt', masterSecret, 16) as Uint8Array;
     this.encryptionKey = scryptSync(masterSecret, salt, 32) as Uint8Array;
@@ -83,6 +99,12 @@ export class MfaService {
 
     // Upsert the TwoFactorAuthEntity
     let tfa = await this.tfaRepo.findOne({ where: { userId } });
+    if (tfa?.isEnabled) {
+      // Re-running setup would silently disable MFA without TOTP proof
+      throw new ConflictException(
+        'MFA is already enabled. Disable it with a valid TOTP code first.',
+      );
+    }
     if (!tfa) {
       tfa = this.tfaRepo.create({ userId, isEnabled: false });
     }
@@ -115,7 +137,7 @@ export class MfaService {
     tfa.isEnabled = true;
     await this.tfaRepo.save(tfa);
 
-    return { mfaToken: this.issueMfaToken(userId) };
+    return { mfaToken: await this.issueMfaToken(userId) };
   }
 
   /**
@@ -133,7 +155,75 @@ export class MfaService {
       throw new UnauthorizedException('Invalid or expired TOTP code');
     }
 
-    return { mfaToken: this.issueMfaToken(userId) };
+    return { mfaToken: await this.issueMfaToken(userId) };
+  }
+
+  /**
+   * Issue a short-lived, single-use challenge proving the password step
+   * succeeded. Called by AuthService.login() when MFA is enabled.
+   */
+  async createLoginChallenge(userId: string): Promise<string> {
+    const challenge = randomBytes(32).toString('hex');
+    await this.redis.set(
+      this.challengeKey(challenge),
+      userId,
+      'EX',
+      MFA_TTL_SECONDS,
+    );
+    return challenge;
+  }
+
+  /**
+   * Complete the MFA login step: requires the password-verified challenge
+   * from login() plus a valid, not-yet-used TOTP code.
+   */
+  async validateLoginChallenge(
+    userId: string,
+    challenge: string,
+    token: string,
+  ): Promise<{ mfaToken: string }> {
+    const challengeKey = this.challengeKey(challenge);
+    const attemptsKey = `${challengeKey}:attempts`;
+
+    const challengeUserId = await this.redis.get(challengeKey);
+    if (!challengeUserId || challengeUserId !== userId) {
+      throw new UnauthorizedException('Invalid or expired MFA challenge');
+    }
+
+    const tfa = await this.tfaRepo.findOne({ where: { userId } });
+    if (!tfa?.isEnabled || !tfa.secret) {
+      throw new BadRequestException('MFA is not enabled for this account');
+    }
+
+    const plainSecret = this.decryptSecret(tfa.secret);
+    if (!verifyTotp(plainSecret, token)) {
+      const attempts = await this.redis.incr(attemptsKey);
+      await this.redis.expire(attemptsKey, MFA_TTL_SECONDS);
+      if (attempts >= MAX_CHALLENGE_ATTEMPTS) {
+        await this.redis.del(challengeKey, attemptsKey);
+      }
+      throw new UnauthorizedException('Invalid or expired TOTP code');
+    }
+
+    const codeUnused = await this.redis.set(
+      `auth:mfa-used-code:${userId}:${token}`,
+      '1',
+      'EX',
+      USED_CODE_TTL_SECONDS,
+      'NX',
+    );
+    if (!codeUnused) {
+      throw new UnauthorizedException('TOTP code has already been used');
+    }
+
+    // Single use: only the caller that deletes the challenge may proceed
+    const consumed = await this.redis.del(challengeKey);
+    if (consumed !== 1) {
+      throw new UnauthorizedException('Invalid or expired MFA challenge');
+    }
+    await this.redis.del(attemptsKey);
+
+    return { mfaToken: await this.issueMfaToken(userId) };
   }
 
   /**
@@ -166,33 +256,64 @@ export class MfaService {
   }
 
   /**
-   * Verify an MFA token (used by the login flow to exchange for a full JWT).
-   * Returns the userId encoded in the token.
+   * Verify and consume an MFA token (used by the login flow to exchange for a
+   * full JWT). Each token can be exchanged once. Returns the userId.
    */
-  verifyMfaToken(mfaToken: string): string {
+  async verifyMfaToken(mfaToken: string): Promise<string> {
+    let payload: { sub: string; purpose: string; jti?: string };
     try {
-      const payload = this.jwtService.verify<{ sub: string; purpose: string }>(
-        mfaToken,
-        {
-          secret: this.configService.get<string>('JWT_SECRET', 'default-secret'),
-        },
-      );
-      if (payload.purpose !== 'mfa') {
-        throw new UnauthorizedException('Invalid MFA token');
-      }
-      return payload.sub;
+      payload = this.jwtService.verify<{
+        sub: string;
+        purpose: string;
+        jti?: string;
+      }>(mfaToken, {
+        secret: this.configService.getOrThrow<string>('JWT_SECRET'),
+        audience: MFA_TOKEN_AUDIENCE,
+      });
     } catch {
       throw new UnauthorizedException('Invalid or expired MFA token');
     }
+
+    if (payload.purpose !== 'mfa' || !payload.jti) {
+      throw new UnauthorizedException('Invalid MFA token');
+    }
+
+    const consumed = await this.redis.del(this.mfaTokenKey(payload.jti));
+    if (consumed !== 1) {
+      throw new UnauthorizedException('MFA token has already been used');
+    }
+    return payload.sub;
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
-  private issueMfaToken(userId: string): string {
+  private async issueMfaToken(userId: string): Promise<string> {
     const { kid, secret } = this.jwtKeyService.getActiveKey();
-    return this.jwtService.sign(
-      { sub: userId, purpose: 'mfa' },
-      { secret, keyid: kid, expiresIn: '5m' },
+    const jti = randomBytes(16).toString('hex');
+    await this.redis.set(
+      this.mfaTokenKey(jti),
+      userId,
+      'EX',
+      MFA_TTL_SECONDS,
     );
+    // Distinct audience so JwtStrategy never accepts this as an access token
+    return this.jwtService.sign(
+      { sub: userId, purpose: 'mfa', jti },
+      {
+        secret,
+        keyid: kid,
+        expiresIn: MFA_TTL_SECONDS,
+        audience: MFA_TOKEN_AUDIENCE,
+      },
+    );
+  }
+
+  private challengeKey(challenge: string): string {
+    const hash = createHash('sha256').update(challenge).digest('hex');
+    return `auth:mfa-challenge:${hash}`;
+  }
+
+  private mfaTokenKey(jti: string): string {
+    return `auth:mfa-token:${jti}`;
   }
 }

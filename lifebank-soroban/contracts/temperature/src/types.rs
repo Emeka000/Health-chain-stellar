@@ -1,21 +1,11 @@
-use soroban_sdk::contracttype;
+use soroban_sdk::{contracttype, Address};
 
 #[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq, Copy)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct TemperatureReading {
     pub temperature_celsius_x100: i32,
     pub timestamp: u64,
     pub is_violation: bool,
-}
-
-impl Default for TemperatureReading {
-    fn default() -> Self {
-        TemperatureReading {
-            temperature_celsius_x100: 0,
-            timestamp: 0,
-            is_violation: false,
-        }
-    }
 }
 
 #[contracttype]
@@ -51,19 +41,53 @@ pub struct ExcursionSummary {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingThresholdChange {
+    pub unit_id: u64,
+    pub new_min_celsius_x100: i32,
+    pub new_max_celsius_x100: i32,
+    pub effective_at: u64,
+    pub proposed_by: Address,
+}
+
+#[contracttype]
 #[derive(Clone, Eq, PartialEq)]
 pub enum DataKey {
     Admin,
     Threshold(u64),
     TempPage(u64, u32),
     TempPageLen(u64, u32),
+    /// Cursor tracking the last active (non-full) temperature page for a
+    /// unit, so `log_reading` can insert in O(1) instead of scanning from
+    /// page 0 on every call.
+    CurrentPage(u64),
     /// Tracks consecutive violation streak for a blood unit
     ConsecutiveViolationStreak(u64),
     /// Tracks if unit has been compromised (3+ consecutive violations)
     IsCompromised(u64),
+    /// Pending threshold change with time-lock (governance)
+    PendingThresholdChange(u64),
     Paused,
     /// Address of the coordinator contract for cross-contract dispute escalation
     CoordinatorContract,
-    /// Whitelisted IoT oracle addresses allowed to report excursions
-    OracleWhitelist(soroban_sdk::Address),
+    /// Per-oracle approval flag stored in persistent() storage.
+    ///
+    /// Key: `OracleApproved(oracle_address)` → `bool`
+    ///
+    /// Using individual persistent keys instead of a Vec in instance() storage
+    /// means the whitelist scales to an unlimited number of IoT sensor addresses
+    /// (one per blood transport vehicle, cold-storage unit, or field sensor)
+    /// without impacting instance storage size or contract invocation cost.
+    /// Membership checks are O(1) regardless of whitelist size.
+    OracleApproved(soroban_sdk::Address),
+    /// Oracle assigned to log readings for a specific blood unit.
+    ///
+    /// Key: `AssignedOracle(unit_id)` → `Address`
+    ///
+    /// Set when a unit is registered for monitoring. `log_reading` rejects
+    /// readings from any oracle other than the assigned one (the admin may
+    /// still log). This prevents a single compromised sensor key from
+    /// fabricating excursions or resetting violation streaks for units it
+    /// does not own.
+    AssignedOracle(u64),
 }

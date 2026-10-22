@@ -12,6 +12,16 @@ export interface WorkingHoursConfig {
   daysOfWeek?: number[];
 }
 
+/**
+ * Allowed rider status transitions, keyed by the current status.
+ * Used by RidersService.updateStatus to validate status changes.
+ */
+export const ALLOWED_STATUS_TRANSITIONS: Record<RiderStatus, RiderStatus[]> = {
+  [RiderStatus.OFFLINE]: [RiderStatus.ONLINE],
+  [RiderStatus.ONLINE]: [RiderStatus.OFFLINE, RiderStatus.BUSY],
+  [RiderStatus.BUSY]: [RiderStatus.ONLINE, RiderStatus.OFFLINE],
+};
+
 @Entity('riders')
 export class RiderEntity extends BaseEntity {
   @OneToOne(() => UserEntity)

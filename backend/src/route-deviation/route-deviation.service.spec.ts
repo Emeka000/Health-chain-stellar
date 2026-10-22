@@ -143,6 +143,34 @@ describe('RouteDeviationService', () => {
       expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
 
+    it('suppresses a brief GPS spike that returns inside the corridor', async () => {
+      const route = makePlannedRoute({
+        polyline: 'mfnFkxhV',
+        corridorRadiusM: 10,
+        maxDeviationSeconds: 0,
+      });
+      plannedRouteRepo.findOne.mockResolvedValue(route);
+
+      (service as any).telemetryBuffers.set('rider-1', [
+        {
+          latitude: 6.52455,
+          longitude: 3.3792,
+          distanceM: 16,
+          recordedAt: new Date(),
+        },
+      ]);
+
+      await service.ingestLocationUpdate({
+        riderId: 'rider-1',
+        orderId: 'order-1',
+        latitude: 6.5244,
+        longitude: 3.3792,
+      });
+
+      expect(incidentRepo.save).not.toHaveBeenCalled();
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
+    });
+
     it('does not create incident when rider is on corridor', async () => {
       // Use a simple polyline with two identical points so distance = 0
       const route = makePlannedRoute({ polyline: 'mfnFkxhV' }); // single point at 6.5244,3.3792
@@ -198,6 +226,11 @@ describe('RouteDeviationService', () => {
       await service.ingestLocationUpdate(dto);
 
       expect(incidentRepo.save).toHaveBeenCalled();
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      const created = incidentRepo.create.mock.calls[0][0] as {
+        metadata: { confidenceScore: number };
+      };
+      expect(created.metadata.confidenceScore).toBeGreaterThan(0);
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         'route.deviation.detected',
         expect.any(RouteDeviationDetectedEvent),

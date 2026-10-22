@@ -25,4 +25,17 @@ describe('throttleGetTracker', () => {
       ),
     ).resolves.toBe('ip:::1');
   });
+
+  it('does not use a spoofed forwarded-for header over the resolved IP', async () => {
+    await expect(
+      throttleGetTracker(
+        {
+          ip: '::1',
+          headers: { 'x-forwarded-for': '203.0.113.99' },
+          socket: { remoteAddress: '::1' },
+        },
+        ctx,
+      ),
+    ).resolves.toBe('ip:::1');
+  });
 });

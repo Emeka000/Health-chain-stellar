@@ -2,11 +2,18 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 
 import { Repository } from 'typeorm';
 
+import { PolicyCenterService } from '../../policy-center/policy-center.service';
+import type { OperationalPolicyRules } from '../../policy-center/policy-config.types';
+import { ApprovalService } from '../../approvals/approval.service';
+import { ApprovalActionType } from '../../approvals/enums/approval.enum';
+import { FileMetadataService } from '../../file-metadata/file-metadata.service';
 import { BloodStatusService } from '../blood-status.service';
 import {
   CreateQuarantineCaseDto,
@@ -28,6 +35,25 @@ interface AuthenticatedUserContext {
   role: string;
 }
 
+type QuarantinePolicyTrigger = keyof OperationalPolicyRules['quarantine']['triggerMatrix'];
+type QuarantineTriggerConfig = {
+  enabled?: boolean;
+  autoQuarantine?: boolean;
+  approvalRequired?: boolean;
+};
+type QuarantineDispositionRules = {
+  defaultDisposition?: QuarantineDisposition;
+  requiredApprovals?: number;
+  autoApproveThresholdHours?: number;
+};
+
+const TRIGGER_POLICY_KEYS: Record<QuarantineTriggerSource, QuarantinePolicyTrigger> = {
+  [QuarantineTriggerSource.DONOR_SCREENING]: 'contaminationSuspected',
+  [QuarantineTriggerSource.TEMPERATURE_BREACH]: 'temperatureBreach',
+  [QuarantineTriggerSource.MANUAL_OPERATOR_ACTION]: 'manualOperatorAction',
+  [QuarantineTriggerSource.ANOMALY_DETECTION]: 'anomalyDetection',
+};
+
 @Injectable()
 export class QuarantineService {
   constructor(
@@ -36,6 +62,9 @@ export class QuarantineService {
     @InjectRepository(BloodUnit)
     private readonly bloodUnitRepository: Repository<BloodUnit>,
     private readonly bloodStatusService: BloodStatusService,
+    private readonly policyCenterService: PolicyCenterService,
+    private readonly approvalService: ApprovalService,
+    private readonly fileMetadataService: FileMetadataService,
   ) {}
 
   async createCase(
@@ -62,6 +91,17 @@ export class QuarantineService {
       );
     }
 
+    // Validate evidence requirements based on policy
+    await this.validateEvidenceRequirements(dto);
+
+    // Check if trigger is enabled in policy
+    const policy = this.policyCenterService.getDefaultRules();
+    const triggerConfig = this.getTriggerConfig(dto.triggerSource, policy);
+
+    if (!triggerConfig?.enabled) {
+      throw new BadRequestException(`Quarantine trigger ${dto.triggerSource} is not enabled in policy`);
+    }
+
     if (unit.status !== BloodStatus.QUARANTINED) {
       await this.bloodStatusService.updateStatus(
         dto.bloodUnitId,
@@ -81,12 +121,19 @@ export class QuarantineService {
       notes: dto.notes ?? null,
       policyReference: dto.policyReference ?? null,
       metadata: dto.metadata ?? null,
-      reviewState: QuarantineReviewState.PENDING,
+      evidence: dto.evidence,
+      reviewState: this.determineInitialReviewState(dto, policy),
       createdBy: user?.id ?? null,
       active: true,
     });
 
     const saved = await this.quarantineRepository.save(entity);
+
+    // Create approval request if required
+    if (this.requiresApproval(dto, policy)) {
+      await this.createDispositionApprovalRequest(saved, user);
+    }
+
     return { success: true, case: saved };
   }
 
@@ -172,6 +219,23 @@ export class QuarantineService {
       throw new ConflictException(`Quarantine case ${caseId} is already closed`);
     }
 
+    // Check if approval is required and obtained
+    const policy = this.policyCenterService.getDefaultRules();
+    const triggerConfig = this.getTriggerConfig(existing.triggerSource, policy);
+
+    if (!triggerConfig) {
+      throw new BadRequestException(
+        `Quarantine trigger ${existing.triggerSource} is not configured in policy`,
+      );
+    }
+
+    if (triggerConfig?.approvalRequired) {
+      const isApproved = await this.approvalService.isApproved(existing.id, ApprovalActionType.ESCROW_RELEASE);
+      if (!isApproved) {
+        throw new ForbiddenException(`Approval required for quarantine disposition`);
+      }
+    }
+
     const nextStatus =
       dto.disposition === QuarantineDisposition.RELEASE
         ? BloodStatus.AVAILABLE
@@ -255,5 +319,138 @@ export class QuarantineService {
       throw new NotFoundException(`Quarantine case ${caseId} not found`);
     }
     return existing;
+  }
+
+  private async validateEvidenceRequirements(dto: CreateQuarantineCaseDto) {
+    const policy = this.policyCenterService.getDefaultRules();
+    const evidenceReqs = policy.quarantine.evidenceRequirements;
+
+    if (dto.evidence.length < evidenceReqs.minimumEvidenceCount) {
+      throw new BadRequestException(
+        `Minimum ${evidenceReqs.minimumEvidenceCount} evidence items required, got ${dto.evidence.length}`,
+      );
+    }
+
+    // Validate each evidence item
+    for (const evidence of dto.evidence) {
+      if (!evidenceReqs.allowedEvidenceTypes.includes(evidence.type)) {
+        throw new BadRequestException(
+          `Evidence type '${evidence.type}' not allowed. Allowed types: ${evidenceReqs.allowedEvidenceTypes.join(', ')}`,
+        );
+      }
+
+      // Check if file exists
+      try {
+        await this.fileMetadataService.register({
+          ownerType: 'quarantine_evidence',
+          ownerId: dto.bloodUnitId,
+          storagePath: evidence.fileId, // Assuming fileId is the storage path
+          originalFilename: evidence.description || 'evidence',
+        });
+      } catch (error) {
+        throw new BadRequestException(`Evidence file ${evidence.fileId} not found or invalid`);
+      }
+    }
+  }
+
+  private getTriggerConfig(
+    triggerSource: QuarantineTriggerSource,
+    policy: OperationalPolicyRules,
+  ): QuarantineTriggerConfig | undefined {
+    return policy.quarantine.triggerMatrix[
+      TRIGGER_POLICY_KEYS[triggerSource]
+    ] as QuarantineTriggerConfig | undefined;
+  }
+
+  private getDispositionRules(
+    triggerSource: QuarantineTriggerSource,
+    policy: OperationalPolicyRules,
+  ): QuarantineDispositionRules | undefined {
+    return policy.quarantine.dispositionRules[
+      TRIGGER_POLICY_KEYS[triggerSource]
+    ] as QuarantineDispositionRules | undefined;
+  }
+
+  private determineInitialReviewState(
+    dto: CreateQuarantineCaseDto,
+    policy: OperationalPolicyRules,
+  ): QuarantineReviewState {
+    const triggerConfig = this.getTriggerConfig(dto.triggerSource, policy);
+
+    if (triggerConfig?.autoQuarantine) {
+      return QuarantineReviewState.UNDER_REVIEW;
+    }
+
+    return QuarantineReviewState.PENDING;
+  }
+
+  private requiresApproval(
+    dto: CreateQuarantineCaseDto,
+    policy: OperationalPolicyRules,
+  ): boolean {
+    const triggerConfig = this.getTriggerConfig(dto.triggerSource, policy);
+    return triggerConfig?.approvalRequired ?? false;
+  }
+
+  private async createDispositionApprovalRequest(
+    quarantineCase: QuarantineCase,
+    user?: AuthenticatedUserContext,
+  ) {
+    const policy = this.policyCenterService.getDefaultRules();
+    const dispositionRules = this.getDispositionRules(
+      quarantineCase.triggerSource,
+      policy,
+    );
+
+    await this.approvalService.createRequest({
+      targetId: quarantineCase.id,
+      actionType: ApprovalActionType.ESCROW_RELEASE, // Using existing approval type, could add specific quarantine type
+      requesterId: user?.id ?? 'system',
+      requiredApprovals: dispositionRules?.requiredApprovals ?? 1,
+      metadata: {
+        quarantineCaseId: quarantineCase.id,
+        bloodUnitId: quarantineCase.bloodUnitId,
+        triggerSource: quarantineCase.triggerSource,
+        reasonCode: quarantineCase.reasonCode,
+        recommendedDisposition: dispositionRules?.defaultDisposition ?? 'RELEASE',
+      },
+      expiresInHours: 72, // 3 days
+      finalPayload: {
+        action: 'finalize_quarantine',
+        caseId: quarantineCase.id,
+        disposition: dispositionRules?.defaultDisposition ?? 'RELEASE',
+      },
+    });
+  }
+
+  async getRecommendedDisposition(caseId: string): Promise<{
+    recommendedDisposition: QuarantineDisposition;
+    confidence: number;
+    reasoning: string[];
+  }> {
+    const quarantineCase = await this.getCase(caseId);
+    const policy = this.policyCenterService.getDefaultRules();
+    const dispositionRules = this.getDispositionRules(
+      quarantineCase.triggerSource,
+      policy,
+    );
+
+    const recommended = dispositionRules?.defaultDisposition ?? 'RELEASE';
+    const reasoning = [
+      `Policy default for ${quarantineCase.triggerSource}: ${recommended}`,
+      `Evidence provided: ${quarantineCase.evidence?.length ?? 0} items`,
+    ];
+
+    // Add time-based logic
+    const hoursSinceCreation = (Date.now() - quarantineCase.createdAt.getTime()) / (1000 * 60 * 60);
+    if (dispositionRules?.autoApproveThresholdHours && hoursSinceCreation >= dispositionRules.autoApproveThresholdHours) {
+      reasoning.push(`Auto-approval threshold reached (${hoursSinceCreation.toFixed(1)} hours >= ${dispositionRules.autoApproveThresholdHours} hours)`);
+    }
+
+    return {
+      recommendedDisposition: recommended as QuarantineDisposition,
+      confidence: 0.8, // Could be improved with ML models
+      reasoning,
+    };
   }
 }

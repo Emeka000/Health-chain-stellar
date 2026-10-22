@@ -7,7 +7,7 @@ HealthDonor Protocol uses **URI-based versioning** to manage API evolution while
 ## Current Version
 
 - **Current API Version**: v1
-- **Base URL**: `http://localhost:3000/api/v1`
+- **Base URL**: `http://localhost:3001/api/v1`
 - **Environment Variable**: `API_PREFIX` (default: `api/v1`)
 
 ## Versioning Approach
@@ -30,82 +30,27 @@ All API endpoints include the version in the URI path:
 
 ## Available Endpoints (v1)
 
-### Authentication
-- `POST /api/v1/auth/register` - User registration
-- `POST /api/v1/auth/login` - User login
-- `POST /api/v1/auth/refresh` - Refresh JWT token
-- `DELETE /api/v1/auth/logout` - User logout
+For the complete, always-up-to-date list of available endpoints, request/response shapes, and auth requirements, use the interactive Swagger UI (configured in `src/main.ts`):
 
-### Blood Requests
-- `GET /api/v1/blood-requests` - List blood requests
-- `POST /api/v1/blood-requests` - Create blood request
-- `GET /api/v1/blood-requests/:id` - Get blood request details
-- `PATCH /api/v1/blood-requests/:id` - Update blood request
+```
+http://localhost:3001/api/v1/api
+```
 
-### Inventory
-- `GET /api/v1/inventory` - List inventory items
-- `POST /api/v1/inventory` - Create inventory item
-- `GET /api/v1/inventory/:id` - Get inventory item
-- `PATCH /api/v1/inventory/:id` - Update inventory item
-
-### Orders
-- `GET /api/v1/orders` - List orders
-- `POST /api/v1/orders` - Create order
-- `GET /api/v1/orders/:id` - Get order details
-- `PATCH /api/v1/orders/:id` - Update order
-
-### Dispatch
-- `GET /api/v1/dispatch/assignments` - List dispatch assignments
-- `POST /api/v1/dispatch/assignments` - Create assignment
-- `PATCH /api/v1/dispatch/assignments/:id` - Update assignment
-
-### Riders
-- `GET /api/v1/riders` - List riders
-- `POST /api/v1/riders` - Create rider
-- `GET /api/v1/riders/:id` - Get rider details
-- `PATCH /api/v1/riders/:id` - Update rider
-
-### Users
-- `GET /api/v1/users` - List users
-- `GET /api/v1/users/:id` - Get user details
-- `PATCH /api/v1/users/:id` - Update user
-
-### Organizations
-- `GET /api/v1/organizations` - List organizations
-- `POST /api/v1/organizations` - Create organization
-- `GET /api/v1/organizations/:id` - Get organization details
-
-### Hospitals
-- `GET /api/v1/hospitals` - List hospitals
-- `POST /api/v1/hospitals` - Create hospital
-- `GET /api/v1/hospitals/:id` - Get hospital details
-
-### Blockchain
-- `GET /api/v1/blockchain/status` - Get blockchain status
-- `POST /api/v1/blockchain/submit` - Submit transaction
-- `GET /api/v1/blockchain/transaction/:id` - Get transaction details
-
-### Notifications
-- `GET /api/v1/notifications` - List notifications
-- `POST /api/v1/notifications` - Create notification
-- `PATCH /api/v1/notifications/:id/read` - Mark notification as read
-
-### Maps
-- `GET /api/v1/maps/nearby` - Find nearby locations
-- `POST /api/v1/maps/route` - Calculate route
-
-### Blood Units
-- `GET /api/v1/blood-units` - List blood units
-- `POST /api/v1/blood-units` - Create blood unit
-- `GET /api/v1/blood-units/:id` - Get blood unit details
-
-### Activity Logs
-- `GET /api/v1/activity-logs` - List activity logs
+This file intentionally does not maintain a hand-written endpoint list — Swagger reflects the actual routes registered by the code, so it can't drift out of date the way a manual list can.
 
 ## Backward Compatibility
 
 ### Current Status
-All existing routes are available under the v1 prefix. No breaking changes have been introduced.
+All existing routes are available under the v1 prefix. Endpoint compatibility classes are now enforced with contract checks:
+
+- `additive`: only backward-compatible field additions allowed
+- `strict`: frozen response shape unless approved override exists
+- `deprecated`: endpoint emits deprecation/sunset metadata and successor link
+
+Legacy response adapters are supported on selected endpoints using:
+
+- Header: `X-API-Client-Shape: legacy`
+- Query: `?compat=legacy`
 
 ### Migration Path for Future Versions
 
@@ -154,7 +99,7 @@ app.setGlobalPrefix(apiPrefix);
 ### JavaScript/TypeScript
 
 ```typescript
-const API_BASE = 'http://localhost:3000/api/v1';
+const API_BASE = 'http://localhost:3001/api/v1';
 
 // Fetch blood requests
 const response = await fetch(`${API_BASE}/blood-requests`);
@@ -164,7 +109,7 @@ const data = await response.json();
 ### cURL
 
 ```bash
-curl -X GET http://localhost:3000/api/v1/blood-requests \
+curl -X GET http://localhost:3001/api/v1/blood-requests \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -178,8 +123,19 @@ curl -X GET http://localhost:3000/api/v1/blood-requests \
 Full API documentation is available via Swagger/OpenAPI:
 
 ```
-http://localhost:3000/api/v1/api
+http://localhost:3001/api/v1/api
 ```
+
+### Contract Enforcement
+
+- Schema breaking changes are validated in `src/__contracts__/schema-diff.spec.ts`
+- OpenAPI response drift checks are validated in `src/__contracts__/openapi-diff.contract.spec.ts`
+- Endpoint compatibility and deprecation headers are validated in `src/__contracts__/api-compatibility.contract.spec.ts`
+
+### Migration Notes
+
+- Blood matching endpoint migration examples:
+  - `docs/API_MIGRATION_NOTES_BLOOD_MATCHING.md`
 
 ## Version Upgrade Guide
 
@@ -229,10 +185,10 @@ Ensure you're using the correct version prefix:
 
 ```bash
 # ❌ Wrong - missing /api/v1
-curl http://localhost:3000/blood-requests
+curl http://localhost:3001/blood-requests
 
 # ✅ Correct
-curl http://localhost:3000/api/v1/blood-requests
+curl http://localhost:3001/api/v1/blood-requests
 ```
 
 ### Version Mismatch

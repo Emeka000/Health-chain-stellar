@@ -102,9 +102,13 @@ describe('BloodUnitsService', () => {
     expect(sorobanService.registerBloodUnit).toHaveBeenCalledWith(
       expect.objectContaining({
         bankId: dto.bankId,
+        serialNumber: result.unitNumber,
         bloodType: dto.bloodType,
         quantityMl: dto.quantityMl,
       }),
+    );
+    expect(sorobanService.registerBloodUnit).toHaveBeenCalledWith(
+      expect.not.objectContaining({ expirationTimestamp: expect.anything() }),
     );
     expect(bloodUnitRepository.save).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -133,6 +137,7 @@ describe('BloodUnitsService', () => {
     await expect(
       service.registerBloodUnit(dto, { id: 'user-1', role: 'blood_bank' }),
     ).rejects.toThrow(ForbiddenException);
+    expect(sorobanService.registerBloodUnit).not.toHaveBeenCalled();
   });
 
   it('rejects non-blood-bank roles even for authorized banks', async () => {
@@ -142,6 +147,7 @@ describe('BloodUnitsService', () => {
     await expect(
       service.registerBloodUnit(dto, { id: 'hospital-user', role: 'hospital' }),
     ).rejects.toThrow(ForbiddenException);
+    expect(sorobanService.registerBloodUnit).not.toHaveBeenCalled();
   });
 
   it('handles bulk registration with mixed success/failure results', async () => {

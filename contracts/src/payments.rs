@@ -1,7 +1,17 @@
 use soroban_sdk::{contracttype, Address, Bytes, String, Symbol, Vec};
 
 pub const DEFAULT_DISPUTE_TIMEOUT_SECS: u64 = 72 * 60 * 60;
+pub const MAX_DISPUTE_TIMEOUT_SECS: u64 = 30 * 24 * 60 * 60;
 pub const HIGH_VALUE_THRESHOLD: i128 = 10_000;
+
+/// Maximum total fees expressed in basis points (1 bp = 0.01%).
+///
+/// Caps the sum of service_fee + network_fee + performance_bonus + fixed_fee at
+/// 50% of the gross amount (5000 bp). This closes the fee-structuring attack
+/// described in issue #1400: without this cap an attacker could inflate fees so
+/// that the stored net `payment.amount` falls under `HIGH_VALUE_THRESHOLD` while
+/// the real locked amount is far above it, bypassing the M-of-N multisig guard.
+pub const MAX_FEE_BPS: i128 = 5_000; // 50 %
 
 /// **Dispute evidence (beyond `Symbol` limits).**
 ///
@@ -127,10 +137,16 @@ pub struct Payment {
 /// Escrow account holding locked funds
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Bookkeeping record only — `locked_amount` is not backed by any token
+/// transfer. This contract never calls a token contract, so no funds are
+/// ever actually pulled from the payer or paid to the payee; every
+/// status/amount here is cosmetic state until real token custody is wired
+/// in. See the on-chain entrypoints in `lib.rs` (create_payment,
+/// propose_release, resolve_dispute, process_expired_disputes).
 pub struct EscrowAccount {
     /// Associated payment ID
     pub payment_id: u64,
-    /// Amount locked in escrow
+    /// Amount recorded as locked in escrow bookkeeping (no real fund custody — see struct docs)
     pub locked_amount: i128,
     /// Conditions for releasing funds
     pub release_conditions: ReleaseConditions,
@@ -346,9 +362,13 @@ impl PendingApproval {
 }
 
 impl FeeStructure {
-    /// Calculates total fees
-    pub fn total(&self) -> i128 {
-        self.service_fee + self.network_fee + self.performance_bonus + self.fixed_fee
+    /// Calculates total fees, returning Err if any intermediate sum overflows i128.
+    pub fn total(&self) -> Result<i128, PaymentError> {
+        self.service_fee
+            .checked_add(self.network_fee)
+            .and_then(|v| v.checked_add(self.performance_bonus))
+            .and_then(|v| v.checked_add(self.fixed_fee))
+            .ok_or(PaymentError::Overflow)
     }
 
     /// Validates fee structure
@@ -365,11 +385,43 @@ impl FeeStructure {
 
     /// Calculates net amount after deducting fees
     pub fn calculate_net_amount(&self, gross_amount: i128) -> Result<i128, PaymentError> {
-        let total_fees = self.total();
+        self.validate()?;
+        let total_fees = self.total()?;
         if total_fees > gross_amount {
             return Err(PaymentError::FeesExceedAmount);
         }
         Ok(gross_amount - total_fees)
+    }
+
+    /// Validates that total fees do not exceed `MAX_FEE_BPS` of the gross amount.
+    ///
+    /// Fee-structuring attack (issue #1400): an attacker can supply a large fee
+    /// payload so that the stored net `payment.amount` falls just under
+    /// `HIGH_VALUE_THRESHOLD`, causing `propose_release` to skip the M-of-N
+    /// multisig check even though the escrowed gross amount is far above the
+    /// threshold.  This method must be called at payment-creation time to close
+    /// that attack surface before the escrow record is written.
+    ///
+    /// `gross_amount` must be the raw amount supplied by the payer (before any
+    /// fee deduction).
+    pub fn validate_fee_cap(&self, gross_amount: i128) -> Result<(), PaymentError> {
+        if gross_amount <= 0 {
+            return Err(PaymentError::InvalidAmount);
+        }
+        let total_fees = self.total()?;
+        // total_fees / gross_amount <= MAX_FEE_BPS / 10_000
+        // ⟺  total_fees * 10_000 <= MAX_FEE_BPS * gross_amount
+        // Use only integer arithmetic to avoid floating-point inaccuracy.
+        let lhs = total_fees
+            .checked_mul(10_000)
+            .ok_or(PaymentError::Overflow)?;
+        let rhs = crate::payments::MAX_FEE_BPS
+            .checked_mul(gross_amount)
+            .ok_or(PaymentError::Overflow)?;
+        if lhs > rhs {
+            return Err(PaymentError::FeesExceedCap);
+        }
+        Ok(())
     }
 }
 
@@ -386,4 +438,11 @@ pub enum PaymentError {
     EscrowNotReleasable,
     InvalidMultiSigConfig,
     DuplicateApproval,
+    Overflow,
+    /// Total fees exceed the MAX_FEE_BPS cap as a fraction of the gross amount.
+    ///
+    /// Raised by `FeeStructure::validate_fee_cap` to prevent fee-structuring
+    /// attacks that would reduce the stored net `payment.amount` below
+    /// `HIGH_VALUE_THRESHOLD` while locking a far larger gross amount in escrow.
+    FeesExceedCap,
 }

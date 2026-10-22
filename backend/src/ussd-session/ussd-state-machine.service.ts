@@ -1,6 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { createHash } from 'crypto';
 
-import { UssdSessionStore } from './ussd-session.store';
+import { UssdAuthService } from './ussd-auth.service';
+import {
+  UssdSessionStore,
+  USSD_SESSION_TTL_SECONDS,
+} from './ussd-session.store';
 import {
   UssdSession,
   UssdStep,
@@ -20,12 +25,16 @@ export const VALID_QUANTITIES = [1, 2, 3, 4, 5, 10];
 const CANCEL_INPUT = '#';
 const BACK_INPUT = '0';
 const MAX_RESPONSE_LENGTH = 182; // Africa's Talking character limit
+const SESSION_TTL_MS = USSD_SESSION_TTL_SECONDS * 1000;
 
 @Injectable()
 export class UssdStateMachine {
   private readonly logger = new Logger(UssdStateMachine.name);
 
-  constructor(private readonly sessionStore: UssdSessionStore) {}
+  constructor(
+    private readonly sessionStore: UssdSessionStore,
+    private readonly ussdAuthService: UssdAuthService,
+  ) {}
 
   async process(
     sessionId: string,
@@ -34,22 +43,96 @@ export class UssdStateMachine {
     createOrder: (session: UssdSession) => Promise<void>,
   ): Promise<UssdResponse> {
     // Normalise input – Africa's Talking sends full accumulated input separated by *
-    const inputs = textInput ? textInput.split('*') : [];
+    const inputs = textInput ? textInput.split('*').filter((part) => part.length > 0) : [];
     const currentInput = inputs[inputs.length - 1] ?? '';
+    const requestDepth = inputs.length;
 
     let session = await this.sessionStore.get(sessionId);
 
     if (!session) {
       session = await this.sessionStore.createInitial(sessionId, phoneNumber);
+    } else if (session.phoneNumber !== phoneNumber) {
+      this.logger.warn(
+        `Session ${sessionId} phone number mismatch: expected ${session.phoneNumber}, got ${phoneNumber}. Terminating session.`,
+      );
+      await this.sessionStore.delete(sessionId);
+      return this.end('Session mismatch detected. Please start again.');
+    }
+
+    if (session.expiresAt <= Date.now()) {
+      await this.sessionStore.delete(sessionId);
+      return this.end('Session expired. Please start again.');
+    }
+
+    const requestFingerprint = this.buildRequestFingerprint(
+      session.sessionNonce,
+      sessionId,
+      phoneNumber,
+      textInput,
+    );
+
+    if (
+      session.lastRequestFingerprint === requestFingerprint &&
+      session.lastResponse
+    ) {
+      return session.lastResponse;
+    }
+
+    if (session.step === UssdStep.CANCELLED) {
+      return this.end('Session cancelled. Goodbye.');
+    }
+
+    if (session.step === UssdStep.ORDER_PLACED) {
+      return this.end('Request already submitted. Thank you.');
+    }
+
+    if (requestDepth > 0) {
+      const expectedDepth = session.history.length + 1;
+      if (requestDepth < expectedDepth) {
+        return this.end('Session out of sync. Please start again.');
+      }
+      if (requestDepth > expectedDepth) {
+        return this.end('Session sequence invalid. Please start again.');
+      }
     }
 
     // Handle cancel
     if (currentInput === CANCEL_INPUT) {
-      await this.sessionStore.delete(sessionId);
-      return this.end('Session cancelled. Goodbye.');
+      session.step = UssdStep.CANCELLED;
+      const response = this.end('Session cancelled. Goodbye.');
+      await this.persistTurn(session, requestFingerprint, requestDepth, response);
+      return response;
     }
 
-    return this.transition(session, currentInput, createOrder);
+    const response = await this.transition(session, currentInput, createOrder);
+    await this.persistTurn(session, requestFingerprint, requestDepth, response);
+    return response;
+  }
+
+  private buildRequestFingerprint(
+    sessionNonce: string,
+    sessionId: string,
+    phoneNumber: string,
+    textInput: string,
+  ): string {
+    return createHash('sha256')
+      .update(`${sessionNonce}:${sessionId}:${phoneNumber}:${textInput}`)
+      .digest('hex');
+  }
+
+  private async persistTurn(
+    session: UssdSession,
+    requestFingerprint: string,
+    requestDepth: number,
+    response: UssdResponse,
+  ): Promise<void> {
+    session.lastRequestFingerprint = requestFingerprint;
+    session.lastRequestDepth = requestDepth;
+    session.lastResponse = response;
+    session.lastProcessedAt = Date.now();
+    session.sequenceNumber = Math.max(session.sequenceNumber, requestDepth);
+    session.expiresAt = Date.now() + SESSION_TTL_MS;
+    await this.sessionStore.set(session);
   }
 
   private async transition(
@@ -77,6 +160,10 @@ export class UssdStateMachine {
         return this.handleSelectBloodBank(session, input);
       case UssdStep.CONFIRM_ORDER:
         return this.handleConfirmOrder(session, input, createOrder);
+      case UssdStep.ORDER_PLACED:
+        return this.end('Request already submitted. Thank you.');
+      case UssdStep.CANCELLED:
+        return this.end('Session cancelled. Goodbye.');
       default:
         await this.sessionStore.delete(session.sessionId);
         return this.end('An error occurred. Please try again.');
@@ -98,7 +185,7 @@ export class UssdStateMachine {
         'Invalid phone number.\nEnter your registered phone number:',
       );
     }
-    session.userId = phone; // placeholder – real impl would look up user by phone
+    session.pendingLoginPhone = phone;
     session.history.push(session.step);
     session.step = UssdStep.LOGIN_PIN;
     await this.sessionStore.set(session);
@@ -115,11 +202,31 @@ export class UssdStateMachine {
     if (!/^\d{4,6}$/.test(input.trim())) {
       return this.con('Invalid PIN. Enter your 4-6 digit PIN:\n(0 to go back)');
     }
-    // TODO: replace stub with real auth service call
-    const pinValid = input.trim().length >= 4; // stub
-    if (!pinValid) {
+    if (!session.pendingLoginPhone) {
+      session.step = UssdStep.LOGIN_PHONE;
+      session.history = [];
+      await this.sessionStore.set(session);
+      return this.promptForStep(session);
+    }
+
+    const result = await this.ussdAuthService.verifyPin(
+      session.pendingLoginPhone,
+      input.trim(),
+    );
+
+    if (!result.success) {
+      if (result.reason === 'locked') {
+        session.step = UssdStep.CANCELLED;
+        await this.sessionStore.set(session);
+        return this.end(
+          'Too many failed attempts. Your account is temporarily locked. Please try again later.',
+        );
+      }
       return this.con('Incorrect PIN. Try again:\n(0 to go back)');
     }
+
+    session.userId = result.userId;
+    delete session.pendingLoginPhone;
     session.history.push(session.step);
     session.step = UssdStep.SELECT_BLOOD_TYPE;
     await this.sessionStore.set(session);
@@ -194,13 +301,13 @@ export class UssdStateMachine {
     if (input === '1') {
       try {
         await createOrder(session);
-        await this.sessionStore.delete(session.sessionId);
+        session.step = UssdStep.ORDER_PLACED;
+        await this.sessionStore.set(session);
         return this.end(
           `Order placed!\nBlood: ${session.selectedBloodType}\nUnits: ${session.selectedQuantity}\nBank: ${session.selectedBloodBankName}\nThank you.`,
         );
       } catch (err) {
         this.logger.error('Order creation failed', err);
-        await this.sessionStore.delete(session.sessionId);
         return this.end('Order failed. Please try again or call support.');
       }
     } else if (input === '2') {
@@ -238,6 +345,10 @@ export class UssdStateMachine {
         );
       case UssdStep.CONFIRM_ORDER:
         return this.con(this.buildConfirmMenu(session));
+      case UssdStep.ORDER_PLACED:
+        return this.end('Request already submitted. Thank you.');
+      case UssdStep.CANCELLED:
+        return this.end('Session cancelled. Goodbye.');
       default:
         return this.end('Session error. Please try again.');
     }

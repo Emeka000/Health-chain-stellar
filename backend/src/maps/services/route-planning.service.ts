@@ -14,6 +14,7 @@ import {
   MultiStopRouteResponse,
   ETAResponse,
 } from '../dto/route-planning.dto';
+import { isMapsApiKeyConfigured } from '../utils/maps-api-key.util';
 
 @Injectable()
 export class RoutePlanningService {
@@ -23,7 +24,15 @@ export class RoutePlanningService {
   constructor(
     private readonly configService: ConfigService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
-  ) {}
+  ) {
+    const apiKey = this.configService.get<string>('GOOGLE_MAPS_API_KEY');
+    if (!isMapsApiKeyConfigured(apiKey)) {
+      this.logger.warn(
+        'GOOGLE_MAPS_API_KEY is missing or a placeholder value. Route planning ' +
+          'and ETA calculation are DEGRADED and will fail or fall back at runtime.',
+      );
+    }
+  }
 
   /**
    * Calculate a single route with optional waypoints

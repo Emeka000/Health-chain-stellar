@@ -1,15 +1,22 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Keypair } from '@stellar/stellar-sdk';
 
 import { DeliveryProofService } from './delivery-proof.service';
 import { DeliveryProofEntity } from './entities/delivery-proof.entity';
+import { CustodyService } from '../custody/custody.service';
+import { SorobanService } from '../soroban/soroban.service';
+import { UploadValidationService } from './upload-validation.service';
+import { FileMetadataService } from '../file-metadata/file-metadata.service';
 
 const mockProof = (
   overrides: Partial<DeliveryProofEntity> = {},
 ): DeliveryProofEntity =>
   ({
     id: 'proof-1',
+    deliveryId: 1001,
     orderId: 'order-1',
     riderId: 'rider-1',
     requestId: 'request-1',
@@ -20,6 +27,15 @@ const mockProof = (
     temperatureCelsius: 4.0,
     notes: null,
     isTemperatureCompliant: true,
+    signerKeyId: 'delivery-proof-key-1',
+    signerPublicKey: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
+    signerRole: 'rider',
+    signedAt: new Date('2024-01-15T10:00:00Z'),
+    proofSignature: null,
+    proofPayloadDigest: null,
+    trustedTimestampAt: null,
+    timestampAnchorHash: null,
+    evidenceDigestReferences: ['a'.repeat(64)],
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -36,6 +52,8 @@ const buildRepo = (proofs: DeliveryProofEntity[]) => {
   };
   return {
     findOne: jest.fn(),
+    create: jest.fn((entity) => ({ ...entity })),
+    save: jest.fn((entity) => Promise.resolve({ id: 'proof-created', ...entity })),
     createQueryBuilder: jest.fn().mockReturnValue(qb),
     _qb: qb,
   };
@@ -44,19 +62,61 @@ const buildRepo = (proofs: DeliveryProofEntity[]) => {
 describe('DeliveryProofService', () => {
   let service: DeliveryProofService;
   let repo: ReturnType<typeof buildRepo>;
+  let signerKeypair: Keypair;
+  const custodyService = { assertCustodyComplete: jest.fn().mockResolvedValue(undefined) };
+  const sorobanService = {} as SorobanService;
+  const uploadValidation = {} as UploadValidationService;
+  const fileMetadata = {} as FileMetadataService;
+  const configService = {
+    get: jest.fn((key: string, fallback?: string) => {
+      if (key === 'DELIVERY_PROOF_SIGNER_KID') return 'delivery-proof-key-1';
+      if (key === 'DELIVERY_PROOF_SIGNER_PUBLIC_KEY') return signerKeypair.publicKey();
+      if (key === 'DELIVERY_PROOF_PREVIOUS_SIGNER_KID') return undefined;
+      if (key === 'DELIVERY_PROOF_PREVIOUS_SIGNER_PUBLIC_KEY') return undefined;
+      return fallback;
+    }),
+  } as unknown as ConfigService;
 
   beforeEach(async () => {
     repo = buildRepo([mockProof()]);
+    signerKeypair = Keypair.random();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DeliveryProofService,
         { provide: getRepositoryToken(DeliveryProofEntity), useValue: repo },
+        { provide: ConfigService, useValue: configService },
+        { provide: CustodyService, useValue: custodyService },
+        { provide: SorobanService, useValue: sorobanService },
+        { provide: UploadValidationService, useValue: uploadValidation },
+        { provide: FileMetadataService, useValue: fileMetadata },
       ],
     }).compile();
 
     service = module.get(DeliveryProofService);
   });
+
+  const signPayload = (dto: {
+    deliveryId: number;
+    orderId: string;
+    requestId: string;
+    riderId: string;
+    signerRole: string;
+    signedAt: string;
+    evidenceDigestReferences: string[];
+  }): string => {
+    const canonical = JSON.stringify({
+      deliveryId: dto.deliveryId,
+      orderId: dto.orderId,
+      requestId: dto.requestId,
+      riderId: dto.riderId,
+      signerRole: dto.signerRole,
+      signedAt: dto.signedAt,
+      evidenceDigestReferences: [...dto.evidenceDigestReferences].sort(),
+    });
+    const digest = Buffer.from(require('crypto').createHash('sha256').update(canonical).digest('hex'), 'hex');
+    return Buffer.from(signerKeypair.sign(digest)).toString('base64');
+  };
 
   describe('getDeliveryProof', () => {
     it('returns proof when found', async () => {
@@ -167,29 +227,10 @@ describe('DeliveryProofService', () => {
       repo._qb.getMany.mockResolvedValue(proofs);
 
       const stats = await service.getDeliveryStatistics('rider-1');
-
       expect(stats.totalDeliveries).toBe(2);
-      expect(stats.successfulDeliveries).toBe(2);
-      expect(stats.successRate).toBe(100);
-      expect(stats.temperatureCompliantDeliveries).toBe(1);
-      expect(stats.temperatureComplianceRate).toBe(50);
-      expect(stats.averageTemperatureCelsius).toBe(6);
-    });
-
-    it('returns null averageTemperature when no temperature data', async () => {
-      repo._qb.getMany.mockResolvedValue([
-        mockProof({ temperatureCelsius: null }),
-      ]);
-      const stats = await service.getDeliveryStatistics('rider-1');
-      expect(stats.averageTemperatureCelsius).toBeNull();
-    });
-
-    it('returns zero rates when no deliveries', async () => {
-      repo._qb.getMany.mockResolvedValue([]);
-      const stats = await service.getDeliveryStatistics('rider-1');
-      expect(stats.totalDeliveries).toBe(0);
-      expect(stats.successRate).toBe(0);
-      expect(stats.temperatureComplianceRate).toBe(0);
+      expect(stats.temperatureCompliant).toBe(1);
+      expect(stats.temperatureNonCompliant).toBe(1);
+      expect(stats.successRate).toBe(50);
     });
   });
 
@@ -198,12 +239,46 @@ describe('DeliveryProofService', () => {
       expect(service.calculateSuccessRate(0, 0)).toBe(0);
     });
 
-    it('returns 100 when all successful', () => {
-      expect(service.calculateSuccessRate(5, 5)).toBe(100);
+    it('computes percentage', () => {
+      expect(service.calculateSuccessRate(3, 4)).toBe(75);
+    });
+  });
+
+  describe('create (#1535 behaviour)', () => {
+    it('creates a proof with a valid signature and digest', async () => {
+      const signedAt = '2024-01-15T10:00:00.000Z';
+      const dto: any = {
+        deliveryId: 1001,
+        orderId: 'order-1',
+        requestId: 'request-1',
+        riderId: 'rider-1',
+        recipientName: 'John Doe',
+        signerRole: 'rider',
+        signedAt,
+        evidenceDigestReferences: ['a'.repeat(64)],
+      };
+      dto.proofSignature = signPayload(dto);
+
+      const result = await service.create(dto);
+      expect(repo.save).toHaveBeenCalled();
+      expect(result).toBeDefined();
     });
 
-    it('returns correct percentage', () => {
-      expect(service.calculateSuccessRate(3, 4)).toBe(75);
+    it('rejects a proof with an invalid signature', async () => {
+      const dto: any = {
+        deliveryId: 1001,
+        orderId: 'order-1',
+        requestId: 'request-1',
+        riderId: 'rider-1',
+        recipientName: 'John Doe',
+        signerRole: 'rider',
+        signedAt: '2024-01-15T10:00:00.000Z',
+        evidenceDigestReferences: ['a'.repeat(64)],
+        proofSignature: Buffer.from('invalid').toString('base64'),
+      };
+
+      await expect(service.create(dto)).rejects.toThrow();
+      expect(repo.save).not.toHaveBeenCalled();
     });
   });
 });

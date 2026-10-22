@@ -1,0 +1,25 @@
+{
+  "_comment": "Contract address registry for HealthChain Stellar contracts. Populated by the deploy script. Read by SorobanService via STELLAR_NETWORK env var.",
+  "_env_vars": {
+    "STELLAR_NETWORK": "Network to use: 'testnet' or 'mainnet'. Defaults to 'testnet'.",
+    "COORDINATOR_CONTRACT_ID": "Override: coordinator contract address (takes precedence over this file).",
+    "INVENTORY_CONTRACT_ID": "Override: inventory contract address (takes precedence over this file).",
+    "PAYMENTS_CONTRACT_ID": "Override: payments contract address (takes precedence over this file).",
+    "TEMPERATURE_CONTRACT_ID": "Override: temperature contract address (takes precedence over this file).",
+    "REQUESTS_CONTRACT_ID": "Override: requests contract address (takes precedence over this file)."
+  },
+  "testnet": {
+    "coordinator": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "inventory":   "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "payments":    "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "temperature": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "requests":    "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  },
+  "mainnet": {
+    "coordinator": "",
+    "inventory":   "",
+    "payments":    "",
+    "temperature": "",
+    "requests":    ""
+  }
+}

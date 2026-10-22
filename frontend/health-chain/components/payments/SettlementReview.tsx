@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { CheckCircle, XCircle, AlertTriangle, Clock, ShieldCheck } from "lucide-react";
 import type { ProofBundle, ValidationResult } from "@/lib/types/proof-bundle";
 import { releaseEscrow } from "@/lib/api/proof-bundle.api";
+import { useAuthStore } from "@/lib/stores/auth.store";
 
 interface Props {
   paymentId: string;
@@ -89,12 +90,13 @@ export function SettlementReview({ paymentId, bundles: initialBundles, onRelease
   const [bundles, setBundles] = useState<ProofBundle[]>(initialBundles);
   const [releasing, setReleasing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const user = useAuthStore((s) => s.user);
 
   const handleRelease = async (bundleId: string) => {
     setReleasing(bundleId);
     setError(null);
     try {
-      const updated = await releaseEscrow(bundleId, "finance-ops");
+      const updated = await releaseEscrow(bundleId, user?.id ?? user?.email ?? "finance-ops");
       setBundles((prev) => prev.map((b) => (b.id === bundleId ? updated : b)));
       onReleased?.(updated);
     } catch (e: unknown) {

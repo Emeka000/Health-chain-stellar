@@ -27,6 +27,12 @@ export class UserRepository extends SoftDeleteRepository<UserEntity> {
     });
   }
 
+  findByPhoneNumber(phoneNumber: string): Promise<UserEntity | null> {
+    return this.findOne({
+      where: { phoneNumber, deletedAt: null },
+    });
+  }
+
   findByOrganization(organizationId: string): Promise<UserEntity[]> {
     return this.find({ where: { organizationId, deletedAt: null } });
   }

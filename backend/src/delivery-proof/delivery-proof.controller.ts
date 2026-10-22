@@ -1,66 +1,115 @@
-import { Body, Controller, Get, Param, Post, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  Req,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Request } from 'express';
 
 import { CreateDeliveryProofDto } from './dto/create-delivery-proof.dto';
 import { DeliveryProofQueryDto } from './dto/delivery-proof-query.dto';
 import { DeliveryProofService } from './delivery-proof.service';
+import {
+  QueryDeliveryProofDto,
+  UploadPhotoDto,
+} from './dto/delivery-proof.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PermissionsGuard } from '../auth/guards/permissions.guard';
+import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
+import { Permission } from '../auth/enums/permission.enum';
+import { Role } from '../auth/enums/role.enum';
 
+interface AuthenticatedUser {
+  id: string;
+  role: Role;
+  permissions?: Permission[];
+}
+
+@ApiTags('delivery-proofs')
+@ApiBearerAuth()
 @Controller('delivery-proofs')
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 export class DeliveryProofController {
-  constructor(private readonly service: DeliveryProofService) {}
+  constructor(private readonly deliveryProofService: DeliveryProofService) {}
 
   @Post()
-  create(@Body() dto: CreateDeliveryProofDto) {
-    return this.service.create(dto);
+  @ApiOperation({ summary: 'Create a delivery proof' })
+  @ApiResponse({ status: 201, description: 'Delivery proof created' })
+  @RequirePermissions(Permission.DELIVERY_PROOF_CREATE)
+  create(@Body() dto: CreateDeliveryProofDto, @Req() req: Request) {
+    return this.deliveryProofService.create(dto, req.user as AuthenticatedUser);
   }
 
-  /**
-   * Endpoint for tamper-evident photo upload.
-   * Multipart/form-data, max 5MB.
-   * Closes #464
-   */
   @Post(':orderId/upload')
+  @ApiOperation({ summary: 'Upload a delivery proof photo' })
+  @ApiResponse({ status: 201, description: 'Photo uploaded' })
   @UseInterceptors(FileInterceptor('image'))
+  @RequirePermissions(Permission.DELIVERY_PROOF_CREATE)
   async uploadPhoto(
-    @Param('orderId') orderId: string,
+    @Param('orderId', new ParseUUIDPipe({ version: '4' })) orderId: string,
     @UploadedFile() file: any, // Express.Multer.File
+    @Body() dto: UploadPhotoDto,
+    @Req() req: Request,
   ) {
-    return this.service.uploadPhoto(orderId, file);
+    return this.deliveryProofService.uploadPhoto(
+      orderId,
+      file,
+      req.user as AuthenticatedUser,
+    );
   }
-
 
   @Get(':id')
-  getOne(@Param('id') id: string) {
-    return this.service.getDeliveryProof(id);
+  @ApiOperation({ summary: 'Get a delivery proof by id' })
+  @ApiResponse({ status: 200, description: 'Delivery proof found' })
+  @RequirePermissions(Permission.DELIVERY_PROOF_READ)
+  getOne(@Param('id') id: string, @Req() req: Request) {
+    return this.deliveryProofService.getOne(id, req.user as AuthenticatedUser);
   }
 
   @Get()
-  query(@Query() query: DeliveryProofQueryDto) {
-    return this.service.queryProofs(query);
+  @ApiOperation({ summary: 'Query delivery proofs' })
+  @ApiResponse({ status: 200, description: 'Delivery proofs listed' })
+  @RequirePermissions(Permission.DELIVERY_PROOF_READ)
+  query(@Query() query: DeliveryProofQueryDto, @Req() req: Request) {
+    return this.deliveryProofService.query(query, req.user as AuthenticatedUser);
   }
 
   @Get('rider/:riderId')
-  byRider(
-    @Param('riderId') riderId: string,
-    @Query() query: DeliveryProofQueryDto,
-  ) {
-    return this.service.getProofsByRider(riderId, query);
+  @ApiOperation({ summary: 'List delivery proofs by rider' })
+  @ApiResponse({ status: 200, description: 'Delivery proofs listed' })
+  @RequirePermissions(Permission.DELIVERY_PROOF_READ)
+  byRider(@Param('riderId') riderId: string, @Req() req: Request) {
+    return this.deliveryProofService.byRider(
+      riderId,
+      req.user as AuthenticatedUser,
+    );
   }
 
   @Get('request/:requestId')
-  byRequest(
-    @Param('requestId') requestId: string,
-    @Query() query: DeliveryProofQueryDto,
-  ) {
-    return this.service.getProofsByRequest(requestId, query);
+  @ApiOperation({ summary: 'List delivery proofs by request' })
+  @ApiResponse({ status: 200, description: 'Delivery proofs listed' })
+  @RequirePermissions(Permission.DELIVERY_PROOF_READ)
+  byRequest(@Param('requestId') requestId: string, @Req() req: Request) {
+    return this.deliveryProofService.byRequest(
+      requestId,
+      req.user as AuthenticatedUser,
+    );
   }
 
-  @Get('rider/:riderId/statistics')
-  statistics(
-    @Param('riderId') riderId: string,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-  ) {
-    return this.service.getDeliveryStatistics(riderId, startDate, endDate);
+  @Get('statistics')
+  @ApiOperation({ summary: 'Get delivery proof statistics' })
+  @ApiResponse({ status: 200, description: 'Statistics returned' })
+  @RequirePermissions(Permission.DELIVERY_PROOF_READ)
+  statistics(@Req() req: Request) {
+    return this.deliveryProofService.statistics(req.user as AuthenticatedUser);
   }
 }

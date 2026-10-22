@@ -96,6 +96,15 @@ pub const MAX_UNIT_ID_LENGTH: u32 = 64;
 /// Used for custody event IDs and other cryptographic identifiers.
 pub const HEX_HASH_LENGTH: usize = 64;
 
+// ── DELIVERY ADDRESS VALIDATION ────────────────────────────────────────────────
+
+/// Maximum length for a delivery_address string stored in BloodRequest.
+///
+/// Prevents callers from bloating on-chain storage with multi-KB strings while
+/// still accommodating real-world addresses. Every read of BloodRequest pays
+/// for the full record size, so this cap keeps storage costs bounded.
+pub const MAX_DELIVERY_ADDRESS_LENGTH: u32 = 200;
+
 // ── SUPER ADMIN NOMINATION ────────────────────────────────────────────────────
 
 /// Nomination expiry window in seconds (24 hours).

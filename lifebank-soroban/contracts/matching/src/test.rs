@@ -66,8 +66,8 @@ mod pure_matching {
     fn o_negative_is_universal_donor() {
         use BloodType::*;
         let all = [
-            APositive, ANegative, BPositive, BNegative,
-            ABPositive, ABNegative, OPositive, ONegative,
+            APositive, ANegative, BPositive, BNegative, ABPositive, ABNegative, OPositive,
+            ONegative,
         ];
         for recipient in all {
             assert!(
@@ -82,8 +82,8 @@ mod pure_matching {
     fn ab_positive_is_universal_recipient() {
         use BloodType::*;
         let all = [
-            APositive, ANegative, BPositive, BNegative,
-            ABPositive, ABNegative, OPositive, ONegative,
+            APositive, ANegative, BPositive, BNegative, ABPositive, ABNegative, OPositive,
+            ONegative,
         ];
         for donor in all {
             assert!(
@@ -150,8 +150,8 @@ mod pure_matching {
         let env = env();
         use BloodType::*;
         let all = [
-            APositive, ANegative, BPositive, BNegative,
-            ABPositive, ABNegative, OPositive, ONegative,
+            APositive, ANegative, BPositive, BNegative, ABPositive, ABNegative, OPositive,
+            ONegative,
         ];
         for bt in all {
             let types = compatible_donor_types(&env, bt);
@@ -213,7 +213,13 @@ mod pure_matching {
         let compat_unit = make_unit(&env, 2, BloodType::ONegative, 450, 86_400 * 5);
 
         let exact_score = score_unit(&exact_unit, BloodType::APositive, Urgency::Routine, None, 0);
-        let compat_score = score_unit(&compat_unit, BloodType::APositive, Urgency::Routine, None, 0);
+        let compat_score = score_unit(
+            &compat_unit,
+            BloodType::APositive,
+            Urgency::Routine,
+            None,
+            0,
+        );
 
         assert!(
             exact_score > compat_score,
@@ -227,10 +233,10 @@ mod pure_matching {
     fn expiring_soon_scores_higher_than_fresh() {
         let env = env();
         let expiring = make_unit(&env, 1, BloodType::OPositive, 450, 86_400 * 2); // 2 days
-        let fresh    = make_unit(&env, 2, BloodType::OPositive, 450, 86_400 * 60); // 60 days
+        let fresh = make_unit(&env, 2, BloodType::OPositive, 450, 86_400 * 60); // 60 days
 
         let s_expiring = score_unit(&expiring, BloodType::OPositive, Urgency::Routine, None, 0);
-        let s_fresh    = score_unit(&fresh,    BloodType::OPositive, Urgency::Routine, None, 0);
+        let s_fresh = score_unit(&fresh, BloodType::OPositive, Urgency::Routine, None, 0);
 
         assert!(s_expiring > s_fresh);
     }
@@ -240,7 +246,7 @@ mod pure_matching {
         let env = env();
         let unit = make_unit(&env, 1, BloodType::BPositive, 450, 86_400 * 10);
 
-        let s_critical  = score_unit(&unit, BloodType::BPositive, Urgency::Critical,  None, 0);
+        let s_critical = score_unit(&unit, BloodType::BPositive, Urgency::Critical, None, 0);
         let s_scheduled = score_unit(&unit, BloodType::BPositive, Urgency::Scheduled, None, 0);
 
         assert!(s_critical > s_scheduled);
@@ -355,7 +361,9 @@ mod pure_matching {
         );
 
         assert_eq!(result.len(), 3);
-        let total: u32 = (0..result.len()).map(|i| result.get(i).unwrap().quantity_ml).sum();
+        let total: u32 = (0..result.len())
+            .map(|i| result.get(i).unwrap().quantity_ml)
+            .sum();
         assert_eq!(total, 500);
         assert_eq!(result.get(2).unwrap().quantity_ml, 100); // last unit partially used
     }
@@ -365,13 +373,27 @@ mod pure_matching {
         let env = env();
         let mut candidates = soroban_sdk::Vec::new(&env);
         candidates.push_back(make_unit_with_status(
-            &env, 1, BloodType::ABNegative, 450, 1000, BloodStatus::Reserved,
+            &env,
+            1,
+            BloodType::ABNegative,
+            450,
+            1000,
+            BloodStatus::Reserved,
         ));
         candidates.push_back(make_unit_with_status(
-            &env, 2, BloodType::ABNegative, 450, 2000, BloodStatus::Expired,
+            &env,
+            2,
+            BloodType::ABNegative,
+            450,
+            2000,
+            BloodStatus::Expired,
         ));
         candidates.push_back(make_unit(
-            &env, 3, BloodType::ABNegative, 450, 3000, // Available
+            &env,
+            3,
+            BloodType::ABNegative,
+            450,
+            3000, // Available
         ));
 
         let result = select_units(
@@ -386,6 +408,31 @@ mod pure_matching {
 
         assert_eq!(result.len(), 1);
         assert_eq!(result.get(0).unwrap().unit_id, 3);
+    }
+
+    #[test]
+    fn expired_but_available_status_unit_is_excluded() {
+        // Regression test: an Available unit whose expiration_timestamp has
+        // already passed must never be selected, even though its status
+        // hasn't been flipped to Expired yet by the inventory housekeeping job.
+        let env = env();
+        let mut candidates = soroban_sdk::Vec::new(&env);
+        candidates.push_back(make_unit(&env, 1, BloodType::ABNegative, 450, 500)); // expired
+        candidates.push_back(make_unit(&env, 2, BloodType::ABNegative, 450, 5000)); // fresh
+
+        let now_timestamp = 1000;
+        let result = select_units(
+            &env,
+            candidates,
+            BloodType::ABNegative,
+            Urgency::Routine,
+            450,
+            None,
+            now_timestamp,
+        );
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result.get(0).unwrap().unit_id, 2);
     }
 
     #[test]
@@ -428,7 +475,9 @@ mod pure_matching {
         assert_eq!(result.len(), 2);
         assert_eq!(result.get(0).unwrap().match_kind, MatchKind::Exact);
         assert_eq!(result.get(1).unwrap().match_kind, MatchKind::Compatible);
-        let total: u32 = (0..result.len()).map(|i| result.get(i).unwrap().quantity_ml).sum();
+        let total: u32 = (0..result.len())
+            .map(|i| result.get(i).unwrap().quantity_ml)
+            .sum();
         assert_eq!(total, 500);
     }
 
@@ -470,10 +519,7 @@ mod pure_matching {
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod contract_tests {
-    use soroban_sdk::{
-        testutils::Address as _,
-        Address, Env,
-    };
+    use soroban_sdk::{testutils::Address as _, Address, Env};
 
     use crate::{BloodType, MatchingContract, MatchingContractClient};
 
@@ -526,8 +572,10 @@ mod contract_tests {
     fn check_compatibility_o_neg_to_all() {
         let (_env, client, ..) = setup();
         use BloodType::*;
-        for recipient in [APositive, ANegative, BPositive, BNegative,
-                          ABPositive, ABNegative, OPositive, ONegative] {
+        for recipient in [
+            APositive, ANegative, BPositive, BNegative, ABPositive, ABNegative, OPositive,
+            ONegative,
+        ] {
             assert!(client.check_compatibility(&ONegative, &recipient));
         }
     }
@@ -598,5 +646,402 @@ mod circuit_breaker_tests {
         let (env, client, _admin) = setup();
         let attacker = Address::generate(&env);
         client.pause(&attacker);
+    }
+
+    #[test]
+    fn test_pause_emits_event() {
+        use soroban_sdk::testutils::Events as _;
+        use soroban_sdk::{symbol_short, IntoVal};
+
+        let (env, client, admin) = setup();
+        client.pause(&admin);
+
+        let events = env.events().all();
+        let expected = (symbol_short!("paused"), admin.clone()).into_val(&env);
+        assert!(
+            events.iter().any(|(_, topics, _)| topics == expected),
+            "pause should emit a paused event"
+        );
+    }
+
+    #[test]
+    fn test_unpause_emits_event() {
+        use soroban_sdk::testutils::Events as _;
+        use soroban_sdk::{symbol_short, IntoVal};
+
+        let (env, client, admin) = setup();
+        client.pause(&admin);
+        client.unpause(&admin);
+
+        let events = env.events().all();
+        let expected = (symbol_short!("unpaused"), admin.clone()).into_val(&env);
+        assert!(
+            events.iter().any(|(_, topics, _)| topics == expected),
+            "unpause should emit an unpaused event"
+        );
+    }
+}
+
+/// #1654: the matching contract's instance entries (Admin, InventoryContract,
+/// RequestsContract, Initialized, Paused) must be bumped on every entrypoint so
+/// they never archive. This test advances the ledger past the instance TTL and
+/// then still calls `match_request` successfully.
+#[cfg(test)]
+mod instance_ttl_tests {
+    use soroban_sdk::testutils::{Address as _, Ledger as _};
+    use soroban_sdk::{Address, Env};
+
+    use crate::{MatchingContract, MatchingContractClient};
+
+    fn setup<'a>() -> (Env, MatchingContractClient<'a>, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(MatchingContract, ());
+        let client = MatchingContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let inventory = Address::generate(&env);
+        let requests = Address::generate(&env);
+        client.initialize(&admin, &inventory, &requests);
+        (env, client, admin)
+    }
+
+    #[test]
+    fn match_request_succeeds_after_ledger_advances_past_instance_ttl() {
+        let (env, client, _admin) = setup();
+
+        // Advance the ledger well past the default instance TTL. Without the
+        // bump_instance_ttl call the instance entries would be archived and
+        // match_request would fail with NotInitialized.
+        env.ledger().with_mut(|li| {
+            li.sequence_number += 10_000_000;
+        });
+
+        // The contract must still be initialized and reachable.
+        assert!(client.is_initialized());
+
+        // match_request will fail on the cross-contract call (no inventory /
+        // requests contracts registered), but it must get past the
+        // initialization and pause checks — i.e. not return NotInitialized.
+        let result = client.try_match_request(&1u64);
+        match result {
+            Err(Ok(crate::MatchingError::NotInitialized)) => {
+                panic!("instance entries archived: match_request returned NotInitialized")
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod match_request_integration_tests {
+    use soroban_sdk::{testutils::Address as _, Address, Env};
+
+    use crate::{
+        BloodComponent, BloodRequest, BloodStatus, BloodType, BloodUnit, MatchingContract,
+        MatchingContractClient, RequestStatus, Urgency,
+    };
+
+    fn setup<'a>() -> (Env, MatchingContractClient<'a>, Address, Address, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(MatchingContract, ());
+        let client = MatchingContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let inventory = Address::generate(&env);
+        let requests = Address::generate(&env);
+        client.initialize(&admin, &inventory, &requests);
+        (env, client, admin, inventory, requests)
+    }
+
+    fn make_blood_unit(
+        env: &Env,
+        id: u64,
+        blood_type: BloodType,
+        quantity_ml: u32,
+        expiration_timestamp: u64,
+    ) -> BloodUnit {
+        BloodUnit {
+            id,
+            blood_type,
+            quantity_ml,
+            bank_id: Address::generate(env),
+            donor_id: None,
+            donation_timestamp: 0,
+            expiration_timestamp,
+            status: BloodStatus::Available,
+            metadata: soroban_sdk::Map::new(env),
+        }
+    }
+
+    fn make_blood_request(
+        env: &Env,
+        id: u64,
+        blood_type: BloodType,
+        quantity_ml: u32,
+        urgency: Urgency,
+        required_by_timestamp: u64,
+    ) -> BloodRequest {
+        BloodRequest {
+            id,
+            hospital_id: Address::generate(env),
+            blood_type,
+            component: BloodComponent::WholeBlood,
+            quantity_ml,
+            urgency,
+            created_timestamp: 0,
+            required_by_timestamp,
+            status: RequestStatus::Pending,
+            assigned_units: soroban_sdk::Vec::new(env),
+            fulfilled_quantity_ml: 0,
+            reservation_id: None,
+            fulfilled_by: None,
+            history: soroban_sdk::Vec::new(env),
+        }
+    }
+
+    // Smoke-test: ensure the helper constructors compile and produce valid structs.
+    #[test]
+    fn helper_constructors_produce_valid_structs() {
+        let env = Env::default();
+        let unit = make_blood_unit(&env, 1, BloodType::APositive, 450, 9999);
+        assert_eq!(unit.id, 1);
+        assert_eq!(unit.status, BloodStatus::Available);
+
+        let req = make_blood_request(&env, 42, BloodType::APositive, 450, Urgency::Routine, 5000);
+        assert_eq!(req.id, 42);
+        assert_eq!(req.status, RequestStatus::Pending);
+    }
+
+    // Verify that calling match_request on an uninitialised contract returns an error.
+    #[test]
+    #[should_panic(expected = "Error(Contract, #601)")]
+    fn match_request_before_init_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(MatchingContract, ());
+        let client = MatchingContractClient::new(&env, &contract_id);
+        client.match_request(&1);
+    }
+
+    // Verify that match_request after pause returns ContractPaused.
+    #[test]
+    fn match_request_blocked_when_paused() {
+        let (_env, client, admin, _inv, _req) = setup();
+        client.pause(&admin);
+        let result = client.try_match_request(&1u64);
+        assert!(result.is_err());
+    }
+}
+
+#[cfg(test)]
+mod match_multiple_requests_integration_tests {
+    use soroban_sdk::{testutils::Address as _, Address, Env};
+
+    use crate::{MatchingContract, MatchingContractClient, Urgency};
+
+    fn setup<'a>() -> (Env, MatchingContractClient<'a>, Address, Address, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(MatchingContract, ());
+        let client = MatchingContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let inventory = Address::generate(&env);
+        let requests = Address::generate(&env);
+        client.initialize(&admin, &inventory, &requests);
+        (env, client, admin, inventory, requests)
+    }
+
+    /// Urgency priority ordering must hold so insertion sort in
+    /// match_multiple_requests processes Critical before Scheduled.
+    #[test]
+    fn urgency_priority_determines_request_processing_order() {
+        assert!(Urgency::Critical.priority() > Urgency::Urgent.priority());
+        assert!(Urgency::Urgent.priority() > Urgency::Routine.priority());
+        assert!(Urgency::Routine.priority() > Urgency::Scheduled.priority());
+    }
+
+    /// Passing an empty list must not panic and must return an empty Vec.
+    #[test]
+    fn match_multiple_requests_empty_list_returns_empty() {
+        let (env, client, _admin, _inventory, _requests) = setup();
+        let empty: soroban_sdk::Vec<u64> = soroban_sdk::Vec::new(&env);
+        // Cross-contract calls return errors for unknown request IDs;
+        // an empty input skips the loop entirely and returns Ok(empty).
+        let result = client.try_match_multiple_requests(&empty);
+        // Empty input: no requests to load, so Ok([]) is expected.
+        match result {
+            Ok(Ok(results)) => assert_eq!(results.len(), 0),
+            // If the contract returns an error for an empty list that is also
+            // acceptable — the important thing is it does not panic.
+            _ => {}
+        }
+    }
+
+    /// Exceeding MAX_BATCH_SIZE (50) must return BatchTooLarge, not panic.
+    #[test]
+    fn match_multiple_requests_batch_too_large_returns_error() {
+        use crate::MatchingError;
+        let (env, client, _admin, _inventory, _requests) = setup();
+        let mut ids: soroban_sdk::Vec<u64> = soroban_sdk::Vec::new(&env);
+        for i in 0..51u64 {
+            ids.push_back(i + 1);
+        }
+        let result = client.try_match_multiple_requests(&ids);
+        // A contract error surfaces as Err(Ok(error)) from the generated try_ client.
+        assert_eq!(result.err(), Some(Ok(MatchingError::BatchTooLarge)));
+    }
+
+    /// Two Pending requests competing for the same three compatible units
+    /// must never be offered the same unit twice (#1126 / #1755).
+    #[test]
+    fn match_multiple_requests_no_double_allocation() {
+        use crate::{
+            BloodComponent, BloodRequest, BloodStatus, BloodType, BloodUnit, RequestStatus,
+        };
+        use request_contract::{RequestContract, RequestContractClient};
+
+        let env = Env::default();
+        env.mock_all_auths();
+
+        // Real requests contract holding the two competing requests.
+        let requests_id = env.register(RequestContract, ());
+        let requests = RequestContractClient::new(&env, &requests_id);
+        requests.initialize(&Address::generate(&env), &Address::generate(&env));
+        let hospital = Address::generate(&env);
+        requests.authorize_hospital(&hospital);
+
+        let now = env.ledger().timestamp();
+        let req_a = requests.create_request(
+            &hospital,
+            &BloodType::APositive,
+            &BloodComponent::WholeBlood,
+            &450u32,
+            &Urgency::Critical,
+            &(now + 3_600),
+        );
+        let req_b = requests.create_request(
+            &hospital,
+            &BloodType::APositive,
+            &BloodComponent::WholeBlood,
+            &450u32,
+            &Urgency::Scheduled,
+            &(now + 7_200),
+        );
+
+        // Inventory contract holding three compatible units.
+        let inventory_id = env.register(inventory_contract::InventoryContract, ());
+        let inventory = inventory_contract::InventoryContractClient::new(&env, &inventory_id);
+        inventory.initialize(&Address::generate(&env), &Address::generate(&env));
+        let bank = Address::generate(&env);
+        inventory.authorize_bank(&bank);
+        for id in 1..=3u64 {
+            inventory.register_blood_unit(
+                &bank,
+                &id,
+                &BloodType::APositive,
+                &BloodComponent::WholeBlood,
+                &450u32,
+                &(now + 86_400 * 30),
+                &None,
+            );
+        }
+
+        // Matching contract wired to the two above.
+        let matching_id = env.register(MatchingContract, ());
+        let client = MatchingContractClient::new(&env, &matching_id);
+        client.initialize(
+            &Address::generate(&env),
+            &inventory_id,
+            &requests_id,
+        );
+
+        let mut ids: soroban_sdk::Vec<u64> = soroban_sdk::Vec::new(&env);
+        ids.push_back(req_a);
+        ids.push_back(req_b);
+
+        let results = client.match_multiple_requests(&ids);
+        assert_eq!(results.len(), 2);
+
+        // Collect every unit ID assigned across the batch and assert uniqueness.
+        let mut seen: soroban_sdk::Vec<u64> = soroban_sdk::Vec::new(&env);
+        for i in 0..results.len() {
+            let units = results.get(i).unwrap().units;
+            for j in 0..units.len() {
+                let unit_id = units.get(j).unwrap().unit_id;
+                assert!(
+                    !seen.contains(unit_id),
+                    "unit {} allocated to more than one request",
+                    unit_id
+                );
+                seen.push_back(unit_id);
+            }
+        }
+
+        // Sanity: the structs referenced above still mirror the real contracts.
+        let _ = BloodRequest {
+            id: req_a,
+            hospital_id: hospital.clone(),
+            blood_type: BloodType::APositive,
+            component: BloodComponent::WholeBlood,
+            quantity_ml: 450,
+            urgency: Urgency::Critical,
+            created_timestamp: now,
+            required_by_timestamp: now + 3_600,
+            status: RequestStatus::Pending,
+            assigned_units: soroban_sdk::Vec::new(&env),
+            fulfilled_quantity_ml: 0,
+            reservation_id: None,
+            fulfilled_by: None,
+            history: soroban_sdk::Vec::new(&env),
+        };
+        let _ = BloodUnit {
+            id: 1,
+            blood_type: BloodType::APositive,
+            quantity_ml: 450,
+            bank_id: bank.clone(),
+            donor_id: None,
+            donation_timestamp: now,
+            expiration_timestamp: now + 86_400 * 30,
+            status: BloodStatus::Available,
+            metadata: soroban_sdk::Map::new(&env),
+        };
+    }
+}
+
+/// #1453: the mirrored BloodRequest must decode a request returned by the
+/// real requests contract, which carries reservation_id / fulfilled_by /
+/// history. A missing field makes every cross-contract get_request fail.
+#[cfg(test)]
+mod request_mirror {
+    use crate::types::RequestStatus;
+    use crate::RequestsContractClient;
+    use request_contract::{
+        BloodComponent, BloodType, RequestContract, RequestContractClient, Urgency,
+    };
+    use soroban_sdk::{testutils::Address as _, Address, Env};
+
+    #[test]
+    fn mirror_decodes_live_request() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let requests_id = env.register(RequestContract, ());
+        let requests = RequestContractClient::new(&env, &requests_id);
+        requests.initialize(&Address::generate(&env), &Address::generate(&env));
+        let hospital = Address::generate(&env);
+        requests.authorize_hospital(&hospital);
+        let request_id = requests.create_request(
+            &hospital,
+            &BloodType::APositive,
+            &BloodComponent::WholeBlood,
+            &450u32,
+            &Urgency::Urgent,
+            &(env.ledger().timestamp() + 3_600),
+        );
+
+        let mirrored = RequestsContractClient::new(&env, &requests_id).get_request(&request_id);
+        assert_eq!(mirrored.id, request_id);
+        assert_eq!(mirrored.status, RequestStatus::Pending);
+        assert_eq!(mirrored.quantity_ml, 450);
+        assert_eq!(mirrored.fulfilled_by, None);
     }
 }

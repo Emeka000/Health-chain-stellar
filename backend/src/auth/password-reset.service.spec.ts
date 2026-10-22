@@ -8,6 +8,7 @@ import { UserEntity } from '../users/entities/user.entity';
 import { EmailVerificationEntity } from './entities/email-verification.entity';
 import { PasswordResetTokenEntity } from './entities/password-reset-token.entity';
 import { PasswordResetService } from './password-reset.service';
+import { AuthSessionRepository } from './repositories/auth-session.repository';
 
 const mockTransporter = { sendMail: jest.fn().mockResolvedValue({}) };
 jest.mock('nodemailer', () => ({ createTransport: () => mockTransporter }));
@@ -18,11 +19,13 @@ describe('PasswordResetService', () => {
   let resetRepo: jest.Mocked<Partial<Repository<PasswordResetTokenEntity>>>;
   let verifyRepo: jest.Mocked<Partial<Repository<EmailVerificationEntity>>>;
   let configService: jest.Mocked<Partial<ConfigService>>;
+  let authSessionRepo: { revokeUserSessions: jest.Mock };
 
   beforeEach(() => {
     userRepo = {
       findOne: jest.fn(),
       update: jest.fn(),
+      save: jest.fn(),
     };
     resetRepo = {
       findOne: jest.fn(),
@@ -37,7 +40,13 @@ describe('PasswordResetService', () => {
       create: jest.fn((x) => x as EmailVerificationEntity),
     };
     configService = {
-      get: jest.fn().mockReturnValue('http://localhost:3000'),
+      get: jest.fn().mockImplementation((key: string, defaultValue?: unknown) => {
+        if (key === 'PASSWORD_HISTORY_LENGTH') return 3;
+        return defaultValue ?? 'http://localhost:3000';
+      }),
+    };
+    authSessionRepo = {
+      revokeUserSessions: jest.fn().mockResolvedValue(undefined),
     };
 
     service = new PasswordResetService(
@@ -45,6 +54,7 @@ describe('PasswordResetService', () => {
       userRepo as Repository<UserEntity>,
       resetRepo as Repository<PasswordResetTokenEntity>,
       verifyRepo as Repository<EmailVerificationEntity>,
+      authSessionRepo as unknown as AuthSessionRepository,
     );
   });
 
@@ -82,19 +92,43 @@ describe('PasswordResetService', () => {
   describe('resetPassword', () => {
     it('resets password with valid token', async () => {
       const record = { id: 'tok-1', userId: 'user-1' } as PasswordResetTokenEntity;
+      const user = {
+        id: 'user-1',
+        passwordHash: 'old-hash',
+        passwordHistory: [],
+        failedLoginAttempts: 3,
+        lockedUntil: new Date(Date.now() + 60_000),
+      } as UserEntity;
+
       (resetRepo.findOne as jest.Mock).mockResolvedValue(record);
-      (userRepo.update as jest.Mock).mockResolvedValue({});
-      (resetRepo.update as jest.Mock).mockResolvedValue({});
+      (userRepo.findOne as jest.Mock).mockResolvedValue(user);
+      (resetRepo.update as jest.Mock).mockResolvedValue({ affected: 1 });
+      (userRepo.save as jest.Mock).mockResolvedValue(user);
 
       const result = await service.resetPassword('valid-token', 'NewPass123!');
       expect(result.message).toBe('Password reset successfully');
-      expect(userRepo.update).toHaveBeenCalledWith('user-1', expect.objectContaining({ passwordHash: expect.any(String) }));
-      expect(resetRepo.update).toHaveBeenCalledWith('tok-1', { used: true });
+      expect(resetRepo.update).toHaveBeenCalledWith(
+        { id: 'tok-1', used: false, expiresAt: expect.any(Object) },
+        { used: true },
+      );
+      expect(userRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          passwordHash: expect.any(String),
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+        }),
+      );
+      expect(authSessionRepo.revokeUserSessions).toHaveBeenCalledWith(
+        'user-1',
+        'Password reset',
+      );
     });
 
     it('throws BadRequestException for invalid/expired token', async () => {
       (resetRepo.findOne as jest.Mock).mockResolvedValue(null);
-      await expect(service.resetPassword('bad-token', 'pass')).rejects.toThrow(BadRequestException);
+      await expect(
+        service.resetPassword('bad-token', 'Weakpass1!'),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
