@@ -14,26 +14,9 @@ import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { Public } from '../../auth/decorators/public.decorator';
-import { DonationAsset } from '../enums/donation.enum';
-import { PledgeFrequency, PledgeStatus } from '../enums/pledge.enum';
 import { PledgeEntity } from '../entities/pledge.entity';
 import { PledgeService } from '../services/pledge.service';
-
-export class CreatePledgeDto {
-  amount: number;
-  payerAddress: string;
-  recipientId: string;
-  frequency: PledgeFrequency;
-  causeTag?: string;
-  regionTag?: string;
-  emergencyPool?: boolean;
-  asset?: DonationAsset;
-  sorobanPledgeId?: string;
-}
-
-export class UpdatePledgeStatusDto {
-  status: PledgeStatus;
-}
+import { CreatePledgeDto, UpdatePledgeStatusDto } from '../dto';
 
 @ApiTags('donations')
 @Controller('donations/pledges')

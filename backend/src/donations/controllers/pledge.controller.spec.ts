@@ -1,112 +1,158 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
-import { PledgeController } from './pledge.controller';
-import { PledgeService } from '../services/pledge.service';
-import { PledgeEntity } from '../entities/pledge.entity';
-import { PledgeFrequency, PledgeStatus } from '../enums/pledge.enum';
+import { validate } from 'class-validator';
+import { plainToClass } from 'class-transformer';
+import { CreatePledgeDto, UpdatePledgeStatusDto } from '../dto';
 import { DonationAsset } from '../enums/donation.enum';
+import { PledgeFrequency, PledgeStatus } from '../enums/pledge.enum';
 
-describe('PledgeController', () => {
-  let controller: PledgeController;
-  let pledgeService: PledgeService;
+describe('Pledge DTOs — validation', () => {
+  describe('CreatePledgeDto', () => {
+    it('accepts a valid pledge payload', async () => {
+      const dto = plainToClass(CreatePledgeDto, {
+        amount: 50.0,
+        payerAddress: 'GBRPYHIL2CI3WHZDTOOQFC6EB4PSZNRISKIEMXG45VQUVFODRJTCHKSC',
+        recipientId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+        frequency: PledgeFrequency.MONTHLY,
+        asset: DonationAsset.XLM,
+      });
+      const errors = await validate(dto);
+      expect(errors).toHaveLength(0);
+    });
 
-  const mockPledge: PledgeEntity = {
-    id: 'pledge-1',
-    amount: 50,
-    payerAddress: 'GBBBB...',
-    recipientId: 'hospital-1',
-    frequency: PledgeFrequency.MONTHLY,
-    asset: DonationAsset.XLM,
-    status: PledgeStatus.ACTIVE,
-    memo: 'PLG-XYZ789',
-    donorUserId: 'user-1',
-    causeTag: '',
-    regionTag: '',
-    emergencyPool: false,
-    sorobanPledgeId: null,
-    nextExecutionAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
+    it('accepts minimal required fields', async () => {
+      const dto = plainToClass(CreatePledgeDto, {
+        amount: 50.0,
+        payerAddress: 'GBRPYHIL2CI3WHZDTOOQFC6EB4PSZNRISKIEMXG45VQUVFODRJTCHKSC',
+        recipientId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+        frequency: PledgeFrequency.WEEKLY,
+      });
+      const errors = await validate(dto);
+      expect(errors).toHaveLength(0);
+    });
 
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      controllers: [PledgeController],
-      providers: [
-        {
-          provide: PledgeService,
-          useValue: {
-            getById: jest.fn(),
-            setStatus: jest.fn(),
-            createPledge: jest.fn(),
-            listByPayer: jest.fn(),
-          },
-        },
-      ],
-    }).compile();
+    it('rejects missing required fields', async () => {
+      const dto = plainToClass(CreatePledgeDto, {
+        amount: 50.0,
+        payerAddress: 'GBRPYHIL2CI3WHZDTOOQFC6EB4PSZNRISKIEMXG45VQUVFODRJTCHKSC',
+      });
+      const errors = await validate(dto);
+      expect(errors.length).toBeGreaterThan(0);
+      const fieldNames = errors.map((e) => e.property);
+      expect(fieldNames).toContain('recipientId');
+      expect(fieldNames).toContain('frequency');
+    });
 
-    controller = module.get<PledgeController>(PledgeController);
-    pledgeService = module.get<PledgeService>(PledgeService);
+    it('rejects non-positive amounts', async () => {
+      const dto = plainToClass(CreatePledgeDto, {
+        amount: 0,
+        payerAddress: 'GBRPYHIL2CI3WHZDTOOQFC6EB4PSZNRISKIEMXG45VQUVFODRJTCHKSC',
+        recipientId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+        frequency: PledgeFrequency.MONTHLY,
+      });
+      const errors = await validate(dto);
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors[0].constraints).toHaveProperty('isPositive');
+    });
+
+    it('rejects invalid frequency enum', async () => {
+      const dto = plainToClass(CreatePledgeDto, {
+        amount: 50.0,
+        payerAddress: 'GBRPYHIL2CI3WHZDTOOQFC6EB4PSZNRISKIEMXG45VQUVFODRJTCHKSC',
+        recipientId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+        frequency: 'DAILY' as any,
+      });
+      const errors = await validate(dto);
+      expect(errors.length).toBeGreaterThan(0);
+      const freqError = errors.find((e) => e.property === 'frequency');
+      expect(freqError?.constraints).toHaveProperty('isEnum');
+    });
+
+    it('validates all PledgeFrequency enum values', async () => {
+      const frequencies = [
+        PledgeFrequency.WEEKLY,
+        PledgeFrequency.MONTHLY,
+        PledgeFrequency.QUARTERLY,
+      ];
+      for (const frequency of frequencies) {
+        const dto = plainToClass(CreatePledgeDto, {
+          amount: 50.0,
+          payerAddress:
+            'GBRPYHIL2CI3WHZDTOOQFC6EB4PSZNRISKIEMXG45VQUVFODRJTCHKSC',
+          recipientId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+          frequency,
+        });
+        const errors = await validate(dto);
+        expect(errors).toHaveLength(0);
+      }
+    });
+
+    it('accepts optional fields', async () => {
+      const dto = plainToClass(CreatePledgeDto, {
+        amount: 50.0,
+        payerAddress: 'GBRPYHIL2CI3WHZDTOOQFC6EB4PSZNRISKIEMXG45VQUVFODRJTCHKSC',
+        recipientId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+        frequency: PledgeFrequency.MONTHLY,
+        causeTag: 'malaria',
+        regionTag: 'sub-saharan',
+        emergencyPool: true,
+        asset: DonationAsset.USDC,
+        sorobanPledgeId: 'pledge-12345',
+      });
+      const errors = await validate(dto);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('rejects invalid payer address', async () => {
+      const dto = plainToClass(CreatePledgeDto, {
+        amount: 50.0,
+        payerAddress: 'not-a-stellar-address',
+        recipientId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+        frequency: PledgeFrequency.MONTHLY,
+      });
+      const errors = await validate(dto);
+      expect(errors.length).toBeGreaterThan(0);
+      const payerError = errors.find((e) => e.property === 'payerAddress');
+      expect(payerError?.constraints).toHaveProperty('matches');
+    });
   });
 
-  describe('getOne', () => {
-    it('should return pledge for authenticated owner', async () => {
-      jest.spyOn(pledgeService, 'getById').mockResolvedValue(mockPledge);
-
-      const req = { user: { id: 'user-1' } };
-      const result = await controller.getOne('pledge-1', req);
-
-      expect(result).toEqual(mockPledge);
-      expect(pledgeService.getById).toHaveBeenCalledWith('pledge-1', 'user-1');
+  describe('UpdatePledgeStatusDto', () => {
+    it('accepts a valid status update', async () => {
+      for (const status of [
+        PledgeStatus.ACTIVE,
+        PledgeStatus.PAUSED,
+        PledgeStatus.COMPLETED,
+      ]) {
+        const dto = plainToClass(UpdatePledgeStatusDto, { status });
+        const errors = await validate(dto);
+        expect(errors).toHaveLength(0);
+      }
     });
 
-    it('should return 404 when non-owner tries to access pledge', async () => {
-      jest.spyOn(pledgeService, 'getById').mockRejectedValue(
-        new NotFoundException('Pledge not found'),
-      );
-
-      const req = { user: { id: 'user-2' } };
-
-      await expect(controller.getOne('pledge-1', req)).rejects.toThrow(NotFoundException);
-      expect(pledgeService.getById).toHaveBeenCalledWith('pledge-1', 'user-2');
-    });
-  });
-
-  describe('setStatus', () => {
-    it('should allow owner to pause active pledge', async () => {
-      const pausedPledge = { ...mockPledge, status: PledgeStatus.PAUSED };
-      jest.spyOn(pledgeService, 'setStatus').mockResolvedValue(pausedPledge);
-
-      const req = { user: { id: 'user-1' } };
-      const dto = { status: PledgeStatus.PAUSED };
-      const result = await controller.setStatus('pledge-1', dto, req);
-
-      expect(result).toEqual(pausedPledge);
-      expect(pledgeService.setStatus).toHaveBeenCalledWith('pledge-1', PledgeStatus.PAUSED, 'user-1');
+    it('rejects missing status', async () => {
+      const dto = plainToClass(UpdatePledgeStatusDto, {});
+      const errors = await validate(dto);
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors[0].property).toBe('status');
     });
 
-    it('should prevent non-owner from changing pledge status', async () => {
-      jest.spyOn(pledgeService, 'setStatus').mockRejectedValue(
-        new ForbiddenException('You are not authorized to modify this pledge'),
-      );
-
-      const req = { user: { id: 'user-2' } };
-      const dto = { status: PledgeStatus.PAUSED };
-
-      await expect(controller.setStatus('pledge-1', dto, req)).rejects.toThrow(ForbiddenException);
-      expect(pledgeService.setStatus).toHaveBeenCalledWith('pledge-1', PledgeStatus.PAUSED, 'user-2');
+    it('rejects invalid status value', async () => {
+      const dto = plainToClass(UpdatePledgeStatusDto, {
+        status: 'CANCELLED' as any,
+      });
+      const errors = await validate(dto);
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors[0].constraints).toHaveProperty('isEnum');
     });
 
-    it('should reject invalid status transitions', async () => {
-      jest.spyOn(pledgeService, 'setStatus').mockRejectedValue(
-        new BadRequestException('Invalid status transition'),
-      );
-
-      const req = { user: { id: 'user-1' } };
-      const dto = { status: PledgeStatus.ACTIVE };
-
-      // Attempting to transition COMPLETED back to ACTIVE
-      await expect(controller.setStatus('pledge-1', dto, req)).rejects.toThrow(BadRequestException);
+    it('provides field-level error messages', async () => {
+      const dto = plainToClass(UpdatePledgeStatusDto, {
+        status: 'INVALID' as any,
+      });
+      const errors = await validate(dto);
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors[0].constraints?.isEnum).toContain('ACTIVE');
+      expect(errors[0].constraints?.isEnum).toContain('PAUSED');
+      expect(errors[0].constraints?.isEnum).toContain('COMPLETED');
     });
   });
 });

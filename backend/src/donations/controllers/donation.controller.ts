@@ -5,18 +5,7 @@ import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { DonationService } from '../services/donation.service';
 import { PledgeService } from '../services/pledge.service';
 import { DonationEntity } from '../entities/donation.entity';
-import { DonationAsset } from '../enums/donation.enum';
-
-export class CreateDonationDto {
-  amount: number;
-  payerAddress: string;
-  recipientId: string;
-  asset?: DonationAsset;
-}
-
-export class ConfirmDonationDto {
-  transactionHash: string;
-}
+import { CreateDonationDto, ConfirmDonationDto } from '../dto';
 
 @ApiTags('donations')
 @Controller('donations')
