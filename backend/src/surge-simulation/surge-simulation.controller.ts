@@ -36,6 +36,7 @@ export class SurgeSimulationController {
     private readonly surgeSimulationService: SurgeSimulationService,
   ) {}
 
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Post()
   @ApiOperation({
     summary:

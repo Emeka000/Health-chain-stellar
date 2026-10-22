@@ -63,6 +63,9 @@ export interface ScenarioComparisonResult {
   recommendation: string;
 }
 
+/** Default volume of a single blood unit in millilitres (a standard bag). */
+const DEFAULT_UNIT_VOLUME_ML = 450;
+
 /** Seeded pseudo-random number generator (LCG) for deterministic replay */
 function seededRandom(seed: number): () => number {
   let s = seed;
@@ -100,11 +103,29 @@ export class SurgeSimulationService {
 
     let baselineStockUnits = dto.overrideStockUnits;
     if (baselineStockUnits === undefined) {
-      const _aggResult = await this.inventoryRepo
+      // Inventory is stored in millilitres; convert to whole blood units so the
+      // baseline is comparable to surgeDemandUnits (which is in units).
+      const unitVolumeMl =
+        dto.unitVolumeMl && dto.unitVolumeMl > 0
+          ? dto.unitVolumeMl
+          : DEFAULT_UNIT_VOLUME_ML;
+
+      const stockQuery = this.inventoryRepo
         .createQueryBuilder('s')
-        .select('SUM(s.availableUnitsMl)', 'total')
-        .getRawOne<{ total: string }>();
-      baselineStockUnits = parseInt(_aggResult?.total ?? '0', 10);
+        .select('SUM(s.availableUnitsMl)', 'total');
+
+      if (dto.bloodType) {
+        stockQuery.andWhere('s.bloodType = :bloodType', {
+          bloodType: dto.bloodType,
+        });
+      }
+      if (dto.region) {
+        stockQuery.andWhere('s.region = :region', { region: dto.region });
+      }
+
+      const _aggResult = await stockQuery.getRawOne<{ total: string }>();
+      const totalMl = parseInt(_aggResult?.total ?? '0', 10);
+      baselineStockUnits = Math.floor(totalMl / unitVolumeMl);
     }
 
     let riderCapacityUnits = dto.overrideRiderCapacityUnits;
@@ -236,172 +257,4 @@ export class SurgeSimulationService {
 
   async listScenarios(
     query: PaginationQueryDto,
-  ): Promise<PaginatedResponse<SurgeScenarioEntity>> {
-    const page = query.page ?? 1;
-    const pageSize = query.pageSize ?? 25;
-    const [data, totalCount] = await this.scenarioRepo.findAndCount({
-      order: { createdAt: 'DESC' },
-      take: pageSize,
-      skip: PaginationUtil.calculateSkip(page, pageSize),
-    });
-    return PaginationUtil.createResponse(data, page, pageSize, totalCount);
-  }
-
-  async getScenario(id: string): Promise<SurgeScenarioEntity> {
-    const s = await this.scenarioRepo.findOne({ where: { id } });
-    if (!s) throw new NotFoundException(`Scenario ${id} not found`);
-    return s;
-  }
-
-  /** Compare multiple scenarios and identify bottlenecks */
-  async compareScenarios(
-    scenarioIds: string[],
-  ): Promise<ScenarioComparisonResult> {
-    const scenarios = await Promise.all(
-      scenarioIds.map((id) => this.getScenario(id)),
-    );
-
-    const results = await Promise.all(
-      scenarios.map(async (s) => ({
-        id: s.id,
-        name: s.name,
-        outcome:
-          (s.outcome as unknown as SurgeSimulationResult) ??
-          (await this.simulate(
-            {
-              surgeDemandUnits: s.surgeDemandUnits,
-              overrideStockUnits: s.overrideStockUnits ?? undefined,
-              overrideRiderCapacityUnits:
-                s.overrideRiderCapacityUnits ?? undefined,
-              unitsPerRider: s.unitsPerRider,
-            },
-            s.seed,
-          )),
-        policyConfig: s.policyConfig,
-      })),
-    );
-
-    // Identify dominant bottleneck across scenarios
-    const avgStockGap =
-      results.reduce((a, r) => a + r.outcome.stockGapUnits, 0) / results.length;
-    const avgRiderGap =
-      results.reduce((a, r) => a + r.outcome.riderGapUnits, 0) / results.length;
-
-    let bottleneck: 'stock' | 'riders' | 'none';
-    let recommendation: string;
-
-    if (avgStockGap === 0 && avgRiderGap === 0) {
-      bottleneck = 'none';
-      recommendation = 'All scenarios can be absorbed with current capacity.';
-    } else if (avgStockGap >= avgRiderGap) {
-      bottleneck = 'stock';
-      recommendation = `Stock is the primary bottleneck (avg gap: ${avgStockGap.toFixed(0)} units). Consider pre-positioning inventory.`;
-    } else {
-      bottleneck = 'riders';
-      recommendation = `Rider capacity is the primary bottleneck (avg gap: ${avgRiderGap.toFixed(0)} units). Consider activating standby riders.`;
-    }
-
-    return { scenarios: results, bottleneck, recommendation };
-  }
-
-  // ── Existing methods ─────────────────────────────────────────────────────
-
-  async evaluateSurge(): Promise<SurgeEvaluationResult> {
-    const rules = await this.surgeRuleRepo.find();
-    if (rules.length === 0)
-      return { activated: [], deactivated: [], activeRules: [] };
-
-    const stockRows = await this.inventoryRepo
-      .createQueryBuilder('s')
-      .select('s.blood_type', 'bloodType')
-      .addSelect('SUM(s.available_units_ml)', 'total')
-      .groupBy('s.blood_type')
-      .getRawMany<{ bloodType: BloodType; total: string }>();
-
-    const stockMap = new Map<BloodType, number>(
-      stockRows.map((r) => [r.bloodType, Number(r.total)]),
-    );
-
-    const activated: BloodType[] = [];
-    const deactivated: BloodType[] = [];
-    const toSave: SurgeRuleEntity[] = [];
-
-    for (const rule of rules) {
-      const stock = stockMap.get(rule.bloodType) ?? 0;
-      const shouldBeActive = stock < rule.threshold;
-
-      if (shouldBeActive && !rule.active) {
-        rule.active = true;
-        activated.push(rule.bloodType);
-        toSave.push(rule);
-        this.eventEmitter.emit('surge.activated', {
-          bloodType: rule.bloodType,
-          stock,
-          threshold: rule.threshold,
-          multiplier: rule.multiplier,
-        });
-      } else if (!shouldBeActive && rule.active) {
-        rule.active = false;
-        deactivated.push(rule.bloodType);
-        toSave.push(rule);
-        this.eventEmitter.emit('surge.deactivated', {
-          bloodType: rule.bloodType,
-          stock,
-          threshold: rule.threshold,
-        });
-      }
-    }
-
-    if (toSave.length > 0) {
-      await this.surgeRuleRepo.save(toSave);
-    }
-
-    if (activated.length > 0) {
-      await this.notifyHospitals(activated);
-    }
-
-    const activeRules = rules.filter((r) => r.active);
-    return { activated, deactivated, activeRules };
-  }
-
-  async findAllRules(): Promise<SurgeRuleEntity[]> {
-    return this.surgeRuleRepo.find();
-  }
-
-  async upsertRule(
-    dto: Partial<SurgeRuleEntity> & { bloodType: BloodType },
-  ): Promise<SurgeRuleEntity> {
-    const existing = await this.surgeRuleRepo.findOne({
-      where: { bloodType: dto.bloodType },
-    });
-    const rule = existing ?? this.surgeRuleRepo.create({ active: false });
-    Object.assign(rule, dto);
-    return this.surgeRuleRepo.save(rule);
-  }
-
-  async deleteRule(id: string): Promise<void> {
-    await this.surgeRuleRepo.delete(id);
-  }
-
-  private async notifyHospitals(bloodTypes: BloodType[]): Promise<void> {
-    const hospitals = await this.hospitalRepo.find({ select: ['id'] });
-    const bloodTypeList = bloodTypes.join(', ');
-
-    await Promise.allSettled(
-      hospitals.map((h) =>
-        this.notificationsService
-          .send({
-            recipientId: h.id,
-            channels: [NotificationChannel.IN_APP],
-            templateKey: 'surge.activated',
-            variables: { bloodTypes: bloodTypeList },
-          })
-          .catch((err: unknown) =>
-            this.logger.warn(
-              `Surge notification failed for hospital ${h.id}: ${err instanceof Error ? err.message : String(err)}`,
-            ),
-          ),
-      ),
-    );
-  }
-}
+  ): Promise<PaginatedResponse<
