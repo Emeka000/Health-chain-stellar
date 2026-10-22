@@ -37,15 +37,18 @@ export class RestockingCampaignService {
     if (existing) return;
 
     const LOW_STOCK_THRESHOLD = 10;
-    if (stock.availableUnits <= LOW_STOCK_THRESHOLD) {
+    // Convert ml stock to unit count before comparing against unit thresholds.
+    const availableUnits = stock.availableUnitsCount;
+    if (availableUnits <= LOW_STOCK_THRESHOLD) {
+      const targetUnits = LOW_STOCK_THRESHOLD * 5;
       const campaign = await this.campaignRepo.save(
         this.campaignRepo.create({
           bloodType,
           bloodBankId,
           region: 'default',
           thresholdUnits: LOW_STOCK_THRESHOLD,
-          currentUnits: stock.availableUnits,
-          targetUnits: LOW_STOCK_THRESHOLD * 5,
+          currentUnits: availableUnits,
+          targetUnits: targetUnits,
           status: CampaignStatus.ACTIVE,
         }),
       );
@@ -53,9 +56,9 @@ export class RestockingCampaignService {
       await this.outreachQueue.add('donor-outreach', {
         bloodType,
         region: 'default',
-        urgency: stock.availableUnits <= 3 ? 'critical' : 'high',
-        projectedDaysOfSupply: stock.availableUnits,
-        requiredUnits: campaign.targetUnits - stock.availableUnits,
+        urgency: availableUnits <= 3 ? 'critical' : 'high',
+        projectedDaysOfSupply: availableUnits,
+        requiredUnits: Math.max(0, targetUnits - availableUnits),
         campaignId: campaign.id,
       });
 
@@ -68,10 +71,12 @@ export class RestockingCampaignService {
       where: { bloodBankId: dto.bloodBankId, bloodType: dto.bloodType },
     });
 
+    const availableUnits = stock?.availableUnitsCount ?? 0;
+
     const campaign = await this.campaignRepo.save(
       this.campaignRepo.create({
         ...dto,
-        currentUnits: stock?.availableUnits ?? 0,
+        currentUnits: availableUnits,
         status: CampaignStatus.ACTIVE,
       }),
     );
@@ -80,8 +85,8 @@ export class RestockingCampaignService {
       bloodType: dto.bloodType,
       region: dto.region,
       urgency: 'high',
-      projectedDaysOfSupply: stock?.availableUnits ?? 0,
-      requiredUnits: dto.targetUnits - (stock?.availableUnits ?? 0),
+      projectedDaysOfSupply: availableUnits,
+      requiredUnits: Math.max(0, dto.targetUnits - availableUnits),
       campaignId: campaign.id,
     });
 

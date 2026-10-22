@@ -260,25 +260,28 @@ export class InventoryAlertService {
         continue;
       }
 
-      if (item.availableUnits <= criticalThreshold) {
+      // Convert ml stock to unit count before comparing against unit thresholds.
+      const availableUnits = item.availableUnitsCount;
+
+      if (availableUnits <= criticalThreshold) {
         await this.createAlert({
           bloodBankId: item.bloodBankId,
           bloodType: item.bloodType,
           alertType: AlertType.LOW_STOCK,
           severity: AlertSeverity.CRITICAL,
-          message: `Critical stock level for ${item.bloodType} at ${item.bloodBankId}. Only ${item.availableUnits} units remaining.`,
+          message: `Critical stock level for ${item.bloodType} at ${item.bloodBankId}. Only ${availableUnits} units remaining.`,
           thresholdValue: criticalThreshold,
-          currentValue: item.availableUnits,
+          currentValue: availableUnits,
         });
-      } else if (item.availableUnits <= threshold) {
+      } else if (availableUnits <= threshold) {
         await this.createAlert({
           bloodBankId: item.bloodBankId,
           bloodType: item.bloodType,
           alertType: AlertType.LOW_STOCK,
           severity: AlertSeverity.HIGH,
-          message: `Low stock level for ${item.bloodType} at ${item.bloodBankId}. ${item.availableUnits} units remaining.`,
+          message: `Low stock level for ${item.bloodType} at ${item.bloodBankId}. ${availableUnits} units remaining.`,
           thresholdValue: threshold,
-          currentValue: item.availableUnits,
+          currentValue: availableUnits,
         });
       }
     }
