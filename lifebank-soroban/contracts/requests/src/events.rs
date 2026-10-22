@@ -1,5 +1,5 @@
 use crate::types::{BloodRequest, RequestCreatedEvent, RequestStatus};
-use soroban_sdk::{contractevent, Address, Env};
+use soroban_sdk::{contractevent, Address, Env, Symbol};
 
 #[contractevent(topics = ["fulfilling_org_set"], data_format = "vec")]
 pub struct FulfillingOrgSet {
@@ -41,6 +41,56 @@ pub struct ReservationIdSet {
     pub request_id: u64,
     pub actor: Address,
     pub reservation_id: u64,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["hospital_authorized"], data_format = "vec")]
+pub struct HospitalAuthorized {
+    pub hospital: Address,
+    pub actor: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["hospital_revoked"], data_format = "vec")]
+pub struct HospitalRevoked {
+    pub hospital: Address,
+    pub actor: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["blood_bank_authorized"], data_format = "vec")]
+pub struct BloodBankAuthorized {
+    pub blood_bank: Address,
+    pub actor: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["blood_bank_revoked"], data_format = "vec")]
+pub struct BloodBankRevoked {
+    pub blood_bank: Address,
+    pub actor: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["rider_authorized"], data_format = "vec")]
+pub struct RiderAuthorized {
+    pub rider: Address,
+    pub actor: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["rider_revoked"], data_format = "vec")]
+pub struct RiderRevoked {
+    pub rider: Address,
+    pub actor: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["rider_assigned"], data_format = "vec")]
+pub struct RiderAssigned {
+    pub request_id: u64,
+    pub rider: Address,
+    pub actor: Address,
     pub timestamp: u64,
 }
 
@@ -128,4 +178,94 @@ pub fn emit_fulfilling_org_set(
         timestamp,
     }
     .publish(env);
+}
+
+pub fn emit_hospital_authorized(env: &Env, hospital: &Address, actor: &Address, timestamp: u64) {
+    HospitalAuthorized {
+        hospital: hospital.clone(),
+        actor: actor.clone(),
+        timestamp,
+    }
+    .publish(env);
+}
+
+pub fn emit_hospital_revoked(env: &Env, hospital: &Address, actor: &Address, timestamp: u64) {
+    HospitalRevoked {
+        hospital: hospital.clone(),
+        actor: actor.clone(),
+        timestamp,
+    }
+    .publish(env);
+}
+
+pub fn emit_blood_bank_authorized(
+    env: &Env,
+    blood_bank: &Address,
+    actor: &Address,
+    timestamp: u64,
+) {
+    BloodBankAuthorized {
+        blood_bank: blood_bank.clone(),
+        actor: actor.clone(),
+        timestamp,
+    }
+    .publish(env);
+}
+
+pub fn emit_blood_bank_revoked(env: &Env, blood_bank: &Address, actor: &Address, timestamp: u64) {
+    BloodBankRevoked {
+        blood_bank: blood_bank.clone(),
+        actor: actor.clone(),
+        timestamp,
+    }
+    .publish(env);
+}
+
+pub fn emit_rider_authorized(env: &Env, rider: &Address, actor: &Address, timestamp: u64) {
+    RiderAuthorized {
+        rider: rider.clone(),
+        actor: actor.clone(),
+        timestamp,
+    }
+    .publish(env);
+}
+
+pub fn emit_rider_revoked(env: &Env, rider: &Address, actor: &Address, timestamp: u64) {
+    RiderRevoked {
+        rider: rider.clone(),
+        actor: actor.clone(),
+        timestamp,
+    }
+    .publish(env);
+}
+
+pub fn emit_rider_assigned(
+    env: &Env,
+    request_id: u64,
+    rider: &Address,
+    actor: &Address,
+    timestamp: u64,
+) {
+    RiderAssigned {
+        request_id,
+        rider: rider.clone(),
+        actor: actor.clone(),
+        timestamp,
+    }
+    .publish(env);
+}
+
+/// Returns the topic symbols emitted by the role-change and rider-assignment
+/// events, so callers and tests can reference them without duplicating
+/// string literals.
+pub fn role_event_topics(env: &Env) -> [Symbol; 7] {
+    [
+        Symbol::new(env, "hospital_authorized"),
+        Symbol::new(env, "hospital_revoked"),
+        Symbol::new(env, "blood_bank_authorized"),
+        Symbol::new(env, "blood_bank_revoked"),
+        Symbol::new(env, "rider_authorized"),
+        Symbol::new(env, "rider_revoked"),
+        Symbol::new(env, "rider_assigned"),
+    ]
 }

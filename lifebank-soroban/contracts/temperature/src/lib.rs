@@ -76,6 +76,10 @@ const GOVERNANCE_DELAY_SECONDS: u64 = 7 * 24 * 3600;
 /// Entries are bumped whenever their remaining TTL falls below the threshold.
 const ORACLE_BUMP_THRESHOLD: u32 = 518_400; // ~30 days
 const ORACLE_BUMP_TO: u32 = 1_036_800; // ~60 days
+/// TTL constants for pending threshold changes. The entry must outlive the
+/// 7-day governance delay, so it is bumped well past `effective_at`.
+const PENDING_CHANGE_BUMP_THRESHOLD: u32 = 518_400; // ~30 days
+const PENDING_CHANGE_BUMP_TO: u32 = 1_036_800; // ~60 days
 
 #[contract]
 pub struct TemperatureContract;
@@ -89,6 +93,12 @@ pub trait CoordinatorContractInterface {
         payment_id: u64,
         excursion_summary: ExcursionSummary,
     ) -> Result<(), soroban_sdk::Error>;
+
+    fn is_unit_linked_to_payment(
+        env: soroban_sdk::Env,
+        unit_id: u64,
+        payment_id: u64,
+    ) -> Result<bool, soroban_sdk::Error>;
 }
 
 #[contractimpl]
@@ -142,6 +152,14 @@ impl TemperatureContract {
         }
         Self::validate_threshold(min_celsius_x100, max_celsius_x100)?;
 
+        // Reject a second proposal while one is pending: silently replacing
+        // the existing proposal would restart the 7-day clock and let the
+        // admin keep a change permanently out of reach of the timelock.
+        let pending_key = DataKey::PendingThresholdChange(unit_id);
+        if env.storage().persistent().has(&pending_key) {
+            return Err(ContractError::PendingChangeExists);
+        }
+
         let effective_at = env.ledger().timestamp() + GOVERNANCE_DELAY_SECONDS;
         let pending_change = PendingThresholdChange {
             unit_id,
@@ -151,9 +169,14 @@ impl TemperatureContract {
             proposed_by: admin.clone(),
         };
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::PendingThresholdChange(unit_id), &pending_change);
+        env.storage().persistent().set(&pending_key, &pending_change);
+        // Keep the pending entry alive past its effective_at so it cannot
+        // archive before the timelock elapses.
+        env.storage().persistent().extend_ttl(
+            &pending_key,
+            PENDING_CHANGE_BUMP_THRESHOLD,
+            PENDING_CHANGE_BUMP_TO,
+        );
 
         // Emit event for transparency
         ThresholdProposed {
@@ -240,9 +263,6 @@ impl TemperatureContract {
             .get(&DataKey::PendingThresholdChange(unit_id))
     }
 
-    /// Set threshold immediately (legacy method - kept for backward compatibility)
-    ///
-    /// WARNING: This bypasses governance. Consider using propose_threshold_change instead.
     /// Unpause the contract. Admin only.
     pub fn unpause(env: Env, admin: Address) -> Result<(), ContractError> {
         admin.require_auth();
@@ -287,6 +307,18 @@ impl TemperatureContract {
         Ok(())
     }
 
+    /// Set the initial threshold for a unit that has none yet, and bind the
+    /// unit to the oracle that will monitor it.
+    ///
+    /// This is the only immediate threshold write. Once a threshold exists,
+    /// every change must go through `propose_threshold_change` →
+    /// `apply_threshold_change` so the 7-day timelock cannot be bypassed.
+    ///
+    /// # Errors
+    /// - `Unauthorized`: Caller is not the admin
+    /// - `ContractPaused`: Contract is paused
+    /// - `InvalidThreshold`: Min >= Max, or either bound outside the allowed band
+    /// - `ThresholdAlreadySet`: The unit already has a threshold
     pub fn set_threshold(
         env: Env,
         admin: Address,
@@ -304,12 +336,49 @@ impl TemperatureContract {
 
         Self::validate_threshold(min_celsius_x100, max_celsius_x100)?;
 
+        // Only allow initial setup: an existing threshold can only be changed
+        // through the timelocked governance path.
+        if storage::get_threshold(&env, unit_id).is_some() {
+            return Err(ContractError::ThresholdAlreadySet);
+        }
+
         let threshold = TemperatureThreshold {
             min_celsius_x100,
             max_celsius_x100,
         };
         storage::set_threshold(&env, unit_id, &threshold);
         Ok(())
+    }
+
+    /// Register the oracle assigned to monitor `unit_id`.
+    ///
+    /// Only the assigned oracle (or the admin) may log readings for the unit,
+    /// so a single compromised sensor key cannot fabricate excursions for, or
+    /// mask violations on, every other unit.
+    pub fn assign_oracle(
+        env: Env,
+        admin: Address,
+        unit_id: u64,
+        oracle: Address,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        let stored_admin = storage::get_admin(&env);
+        if admin != stored_admin {
+            return Err(ContractError::Unauthorized);
+        }
+        let key = DataKey::AssignedOracle(unit_id);
+        env.storage().persistent().set(&key, &oracle);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, ORACLE_BUMP_THRESHOLD, ORACLE_BUMP_TO);
+        Ok(())
+    }
+
+    /// Return the oracle assigned to `unit_id`, if any.
+    pub fn get_assigned_oracle(env: Env, unit_id: u64) -> Option<Address> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::AssignedOracle(unit_id))
     }
 
     pub fn log_reading(
@@ -332,6 +401,21 @@ impl TemperatureContract {
 
         if !is_admin && !is_approved {
             return Err(ContractError::OracleNotWhitelisted);
+        }
+
+        // Bind the reading to the unit's assigned oracle. The admin may still
+        // log for any unit (e.g. manual calibration), but a whitelisted oracle
+        // may only log for the unit it was assigned to.
+        if !is_admin {
+            let assigned: Option<Address> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::AssignedOracle(unit_id));
+            if let Some(assigned_oracle) = assigned {
+                if assigned_oracle != oracle {
+                    return Err(ContractError::OracleNotAssigned);
+                }
+            }
         }
 
         if !(MIN_PLAUSIBLE_TEMP_CELSIUS_X100..=MAX_PLAUSIBLE_TEMP_CELSIUS_X100)
@@ -799,6 +883,24 @@ impl TemperatureContract {
             return Err(ContractError::ExcursionSummaryMismatch);
         }
 
+        // Bind the payment to the unit: the coordinator must confirm that
+        // `payment_id` actually pays for a request this unit was allocated to,
+        // otherwise any oracle could dispute an unrelated payment.
+        let coordinator_addr: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::CoordinatorContract)
+            .ok_or(ContractError::CoordinatorNotSet)?;
+
+        let coord_client = CoordinatorContractClient::new(&env, &coordinator_addr);
+        let is_linked = coord_client
+            .try_is_unit_linked_to_payment(&unit_id, &payment_id)
+            .map_err(|_| ContractError::CoordinatorCallFailed)?
+            .map_err(|_| ContractError::CoordinatorCallFailed)?;
+        if !is_linked {
+            return Err(ContractError::PaymentUnitMismatch);
+        }
+
         // Derive violation_count/peak_celsius_x100/detected_at from the
         // actual stored readings rather than trusting caller input — this
         // also verifies the unit has recorded violations before reporting.
@@ -811,13 +913,6 @@ impl TemperatureContract {
             detected_at,
         };
 
-        let coordinator_addr: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::CoordinatorContract)
-            .ok_or(ContractError::CoordinatorNotSet)?;
-
-        let coord_client = CoordinatorContractClient::new(&env, &coordinator_addr);
         coord_client
             .try_flag_temperature_breach(&caller, &payment_id, &verified_summary)
             .map_err(|_| ContractError::CoordinatorCallFailed)?
@@ -1810,5 +1905,64 @@ mod tests {
             &MIN_THRESHOLD_CELSIUS_X100,
             &MAX_THRESHOLD_CELSIUS_X100,
         );
+    }
+
+    /// #1646: once a threshold exists, set_threshold cannot change it without
+    /// going through the timelock.
+    #[test]
+    fn test_set_threshold_cannot_bypass_timelock() {
+        let (_env, admin, _oracle, client) = create_test_contract();
+        let unit_id = 9u64;
+        client.set_threshold(&admin, &unit_id, &200, &600);
+
+        assert_eq!(
+            client.try_set_threshold(&admin, &unit_id, &100, &500),
+            Err(Ok(ContractError::ThresholdAlreadySet))
+        );
+        // The original threshold is untouched.
+        client.log_reading(&admin, &unit_id, &400);
+        let readings = client.get_readings(&unit_id, &0u32, &100u32);
+        assert_eq!(readings.len(), 1);
+    }
+
+    /// #1648: an oracle assigned to one unit cannot log for another.
+    #[test]
+    fn test_oracle_cannot_log_for_unassigned_unit() {
+        let (env, admin, oracle, client) = create_test_contract();
+        let unit_a = 10u64;
+        let unit_b = 11u64;
+        client.set_threshold(&admin, &unit_a, &200, &600);
+        client.set_threshold(&admin, &unit_b, &200, &600);
+        client.assign_oracle(&admin, &unit_a, &oracle);
+
+        // Assigned oracle can log for unit A.
+        client.log_reading(&oracle, &unit_a, &400);
+
+        // But not for unit B.
+        let other = Address::generate(&env);
+        client.add_oracle(&admin, &other);
+        client.assign_oracle(&admin, &unit_b, &other);
+        assert_eq!(
+            client.try_log_reading(&oracle, &unit_b, &400),
+            Err(Ok(ContractError::OracleNotAssigned))
+        );
+
+        // Admin may still log for any unit.
+        client.log_reading(&admin, &unit_b, &400);
+    }
+
+    /// #1649: a second proposal while one is pending is rejected.
+    #[test]
+    fn test_second_proposal_rejected_while_pending() {
+        let (_env, admin, _oracle, client) = create_test_contract();
+        let unit_id = 12u64;
+        client.propose_threshold_change(&admin, &unit_id, &200, &600);
+        assert_eq!(
+            client.try_propose_threshold_change(&admin, &unit_id, &100, &500),
+            Err(Ok(ContractError::PendingChangeExists))
+        );
+        let pending = client.get_pending_threshold_change(&unit_id).unwrap();
+        assert_eq!(pending.new_min_celsius_x100, 200);
+        assert_eq!(pending.new_max_celsius_x100, 600);
     }
 }

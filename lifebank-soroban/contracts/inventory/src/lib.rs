@@ -8,7 +8,7 @@ mod types;
 mod validation;
 
 use crate::error::ContractError;
-use crate::types::{BloodStatus, BloodUnit, DataKey, Reservation, Role};
+use crate::types::{DataKey, Reservation, Role};
 
 pub use crate::types::{BloodStatus, BloodType, BloodUnit};
 

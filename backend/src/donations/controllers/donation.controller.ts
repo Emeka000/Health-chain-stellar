@@ -52,8 +52,9 @@ export class DonationController {
   }
 
   @Get(':id')
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Retrieve specific donation details' })
-  async findOne(@Param('id') id: string) {
-    return this.donationService.getDonationById(id);
+  async findOne(@Param('id') id: string, @Request() req: any) {
+    return this.donationService.getDonationById(id, req.user?.id);
   }
 }

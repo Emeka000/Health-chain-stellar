@@ -2,7 +2,7 @@
 #![deny(deprecated)]
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, Address, Env, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env, Vec,
 };
 
 // ── Constants (all arithmetic is integer, scaled ×100 for two decimal places) ──
@@ -180,6 +180,7 @@ pub enum DataKey {
     MinimumInteractions,
     BadgeConfig,
     Paused,
+    PendingAdmin,
 }
 
 // ── Contract events ───────────────────────────────────────────────────────────
@@ -193,6 +194,22 @@ pub struct ReputationInitialized {
 pub struct ReputationUpdated {
     pub entity_id: u64,
     pub score: i64,
+}
+
+#[contractevent(topics = ["admin", "proposed"], data_format = "single-value")]
+pub struct AdminProposed {
+    pub new_admin: Address,
+}
+
+#[contractevent(topics = ["admin", "transferred"], data_format = "vec")]
+pub struct AdminTransferred {
+    pub old_admin: Address,
+    pub new_admin: Address,
+}
+
+#[contractevent(topics = ["upgraded"], data_format = "single-value")]
+pub struct ContractUpgraded {
+    pub new_wasm_hash: BytesN<32>,
 }
 
 // ── Contract ───────────────────────────────────────────────────────────────────
@@ -348,6 +365,60 @@ impl ReputationContract {
             .instance()
             .get(&DataKey::Admin)
             .ok_or(Error::NotInitialized)
+    }
+
+    /// Propose a new admin. The current admin must authorize. The transfer
+    /// only takes effect once the proposed address calls `accept_admin`.
+    pub fn propose_admin(env: Env, admin: Address, new_admin: Address) -> Result<(), Error> {
+        Self::require_admin_auth(&env, &admin)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
+        Self::extend_instance_ttl(&env);
+        AdminProposed { new_admin }.publish(&env);
+        Ok(())
+    }
+
+    /// Accept a pending admin transfer. Only the proposed address may call.
+    pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        new_admin.require_auth();
+        let pending: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmin)
+            .ok_or(Error::NotAuthorized)?;
+        if pending != new_admin {
+            return Err(Error::NotAuthorized);
+        }
+        let old_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.storage().instance().remove(&DataKey::PendingAdmin);
+        Self::extend_instance_ttl(&env);
+        AdminTransferred {
+            old_admin,
+            new_admin,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Return the pending admin, if a transfer is in progress.
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::PendingAdmin)
+    }
+
+    /// Upgrade the contract WASM. Admin only.
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
+        Self::require_admin_auth(&env, &admin)?;
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+        Self::extend_instance_ttl(&env);
+        ContractUpgraded { new_wasm_hash }.publish(&env);
+        Ok(())
     }
 
     pub fn get_rating_scale_config(env: Env) -> Result<RatingScaleConfig, Error> {

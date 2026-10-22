@@ -5,7 +5,14 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 
-import { Repository, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
+import {
+  Repository,
+  LessThanOrEqual,
+  MoreThanOrEqual,
+  MoreThan,
+  IsNull,
+  Or,
+} from 'typeorm';
 
 import {
   CreateFeePolicyDto,
@@ -15,6 +22,7 @@ import {
 } from './dto/fee-policy.dto';
 import { FeePolicyEntity } from './entities/fee-policy.entity';
 import { FeePolicyAnalyzerService } from './fee-policy-analyzer.service';
+import { calculateFee } from './fee-calculator';
 
 @Injectable()
 export class FeePolicyService {
@@ -107,18 +115,24 @@ export class FeePolicyService {
   private async findApplicablePolicy(
     dto: FeePreviewDto,
   ): Promise<FeePolicyEntity | null> {
-    const where: Record<string, any> = {
+    const now = new Date();
+    const distanceKm = dto.distanceKm || 0;
+    const base: Record<string, any> = {
       geographyCode: dto.geographyCode,
       urgencyTier: dto.urgencyTier,
       serviceLevel: dto.serviceLevel,
-      minDistanceKm: LessThanOrEqual(dto.distanceKm || 0),
-      effectiveFrom: LessThanOrEqual(new Date()),
+      minDistanceKm: LessThanOrEqual(distanceKm),
+      effectiveFrom: LessThanOrEqual(now),
+      effectiveTo: Or(IsNull(), MoreThan(now)),
     };
-    if (dto.distanceKm) {
-      where.maxDistanceKm = MoreThanOrEqual(dto.distanceKm);
-    }
+
+    // Bounded tiers match when maxDistanceKm >= distance; open-ended tiers
+    // (maxDistanceKm IS NULL) have no upper bound and must also match.
     return this.repository.findOne({
-      where,
+      where: [
+        { ...base, maxDistanceKm: MoreThanOrEqual(distanceKm) },
+        { ...base, maxDistanceKm: IsNull() },
+      ],
       order: { priority: 'DESC', effectiveFrom: 'DESC' },
     });
   }
@@ -127,20 +141,20 @@ export class FeePolicyService {
     policy: FeePolicyEntity,
     dto: FeePreviewDto,
   ): FeeBreakdownDto {
-    // TODO: Implement based on rates, base price (e.g. quantity * unit), distance, etc.
-    const baseAmount = dto.quantity * 100; // Placeholder unit price
-    const deliveryFee = baseAmount * (policy.deliveryFeeRate / 100);
-    const platformFee = deliveryFee * (policy.platformFeePct / 100);
-    const performanceFee = dto.distanceKm * policy.performanceMultiplier;
-    const totalFee = deliveryFee + platformFee + performanceFee;
+    const result = calculateFee(policy, {
+      quantity: dto.quantity,
+      distanceKm: dto.distanceKm,
+      urgencyTier: dto.urgencyTier,
+      partnerId: dto.partnerId,
+    });
 
     return {
-      deliveryFee,
-      platformFee,
-      performanceFee,
-      fixedFee: policy.fixedFee || 0,
-      totalFee,
-      baseAmount,
+      deliveryFee: result.deliveryFee,
+      platformFee: result.platformFee,
+      performanceFee: result.performanceFee,
+      fixedFee: result.fixedFee,
+      totalFee: result.totalFee,
+      baseAmount: result.baseAmount,
       appliedPolicyId: policy.id,
       auditHash: this.generateAuditHash(policy, dto), // Deterministic
       distanceKm: dto.distanceKm,

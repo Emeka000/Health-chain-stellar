@@ -9,6 +9,32 @@ use soroban_sdk::{
     vec, Address, BytesN, Env, String, Symbol, TryFromVal,
 };
 
+/// Registers a requests contract, initializes it, wires it into the identity
+/// contract and creates request `request_id` so `verify_delivery`'s cross-check
+/// against the requests contract succeeds.
+fn wire_requests_contract(
+    env: &Env,
+    client: &IdentityContractClient<'_>,
+    admin: &Address,
+    request_id: u64,
+) {
+    let requests_id = env.register(RequestContract, ());
+    let requests_client = RequestContractClient::new(env, &requests_id);
+    requests_client.initialize(admin, &requests_id);
+    client.set_requests_contract(admin, &requests_id);
+
+    let requester = Address::generate(env);
+    let created = requests_client.create_request(
+        &requester,
+        &BloodType::APositive,
+        &BloodComponent::WholeBlood,
+        &450u32,
+        &Urgency::Urgent,
+        &1_600u64,
+    );
+    assert_eq!(created, request_id);
+}
+
 // ---------------------------------------------------------------------------
 // IdentityContract tests
 // ---------------------------------------------------------------------------
@@ -1050,32 +1076,92 @@ fn test_revoke_badge_not_found() {
 // Delivery verification tests
 // ---------------------------------------------------------------------------
 
-#[test]
-fn test_verify_delivery() {
+/// Wires an identity contract and a requests contract together, registers the
+/// blood bank org, and returns everything needed to drive delivery proofs.
+fn setup_delivery_env<'a>(
+    license: &str,
+) -> (
+    Env,
+    IdentityContractClient<'a>,
+    RequestContractClient<'a>,
+    Address,
+    Address,
+    Address,
+) {
     let env = Env::default();
     env.mock_all_auths();
 
     let contract_id = env.register(IdentityContract, ());
     let client = IdentityContractClient::new(&env, &contract_id);
+    let requests_id = env.register(RequestContract, ());
+    let requests_client = RequestContractClient::new(&env, &requests_id);
 
-    let owner = Address::generate(&env);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    client.set_requests_contract(&admin, &requests_id);
+    requests_client.initialize(&admin, &requests_id);
+
+    let bank = Address::generate(&env);
     let loc = BytesN::from_array(&env, &[0u8; 32]);
     client.register_organization(
-        &owner,
+        &bank,
         &OrgType::BloodBank,
         &String::from_str(&env, "Bank"),
-        &String::from_str(&env, "DEL001"),
+        &String::from_str(&env, license),
         &loc,
         &vec![&env],
     );
 
-    // The recipient verifying their own delivery is an authorized path.
     let recipient = Address::generate(&env);
 
-    client.verify_delivery(&recipient, &1_u64, &owner, &recipient, &500_u32, &true);
+    (env, client, requests_client, admin, bank, recipient)
+}
 
-    let proof = client.get_delivery(&1_u64).unwrap();
-    assert_eq!(proof.request_id, 1);
+/// Creates a request for `recipient`, marks it Approved, and records `bank` as
+/// the fulfilling org. The request is left in `Approved` so callers can drive
+/// it to whatever status they need.
+fn create_approved_request(
+    env: &Env,
+    requests_client: &RequestContractClient<'_>,
+    recipient: &Address,
+    bank: &Address,
+) -> u64 {
+    let request_id = requests_client.create_request(
+        recipient,
+        &BloodType::APositive,
+        &BloodComponent::WholeBlood,
+        &450u32,
+        &Urgency::Urgent,
+        &1_600u64,
+    );
+    requests_client.update_request_status(
+        recipient,
+        &request_id,
+        &RequestStatus::Approved,
+        &String::from_str(env, "approved"),
+    );
+    requests_client.set_fulfilling_org(recipient, &request_id, bank);
+    request_id
+}
+
+#[test]
+fn test_verify_delivery() {
+    let (env, client, requests_client, _admin, bank, recipient) =
+        setup_delivery_env("DEL001");
+
+    let request_id = create_approved_request(&env, &requests_client, &recipient, &bank);
+    requests_client.update_request_status(
+        &recipient,
+        &request_id,
+        &RequestStatus::InProgress,
+        &String::from_str(&env, "in progress"),
+    );
+
+    // The recipient verifying their own delivery is an authorized path.
+    client.verify_delivery(&recipient, &request_id, &bank, &recipient, &500_u32, &true);
+
+    let proof = client.get_delivery(&request_id).unwrap();
+    assert_eq!(proof.request_id, request_id);
     assert_eq!(proof.quantity_delivered, 500);
     assert!(proof.temperature_ok);
     assert!(proof.verified);
@@ -1083,6 +1169,186 @@ fn test_verify_delivery() {
 
 #[test]
 fn test_verify_delivery_authorized_rider() {
+    let (env, client, requests_client, admin, bank, recipient) =
+        setup_delivery_env("DEL005");
+
+    let request_id = create_approved_request(&env, &requests_client, &recipient, &bank);
+    requests_client.update_request_status(
+        &recipient,
+        &request_id,
+        &RequestStatus::InProgress,
+        &String::from_str(&env, "in progress"),
+    );
+
+    // The rider actually assigned to this request.
+    let rider = Address::generate(&env);
+    client.grant_role(&admin, &rider, &Role::Rider);
+    requests_client.assign_rider(&recipient, &request_id, &rider);
+
+    client.verify_delivery(&rider, &request_id, &bank, &recipient, &500_u32, &true);
+
+    let proof = client.get_delivery(&request_id).unwrap();
+    assert!(proof.verified);
+}
+
+#[test]
+fn test_verify_delivery_unauthorized_verifier_rejected() {
+    let (env, client, requests_client, admin, bank, recipient) =
+        setup_delivery_env("DEL006");
+
+    let request_id = create_approved_request(&env, &requests_client, &recipient, &bank);
+    requests_client.update_request_status(
+        &recipient,
+        &request_id,
+        &RequestStatus::InProgress,
+        &String::from_str(&env, "in progress"),
+    );
+
+    // A rider with the contract-wide Rider role who is NOT assigned to this
+    // request must not be able to record its proof.
+    let unassigned_rider = Address::generate(&env);
+    client.grant_role(&admin, &unassigned_rider, &Role::Rider);
+
+    let result = client.try_verify_delivery(
+        &unassigned_rider,
+        &request_id,
+        &bank,
+        &recipient,
+        &500_u32,
+        &true,
+    );
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+    assert!(client.get_delivery(&request_id).is_none());
+
+    // Neither a Rider, the recipient, nor the org itself.
+    let stranger = Address::generate(&env);
+    let result =
+        client.try_verify_delivery(&stranger, &request_id, &bank, &recipient, &500_u32, &true);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+    assert!(client.get_delivery(&request_id).is_none());
+}
+
+#[test]
+fn test_verify_delivery_rejects_wrong_request_status() {
+    let (env, client, requests_client, _admin, bank, recipient) =
+        setup_delivery_env("DEL008");
+
+    // Approved: fulfilling org is set but the request has not started.
+    let approved_id = create_approved_request(&env, &requests_client, &recipient, &bank);
+    let result =
+        client.try_verify_delivery(&recipient, &approved_id, &bank, &recipient, &500_u32, &true);
+    assert_eq!(result, Err(Ok(Error::InvalidDeliveryProof)));
+    assert!(client.get_delivery(&approved_id).is_none());
+
+    // Cancelled.
+    let cancelled_id = create_approved_request(&env, &requests_client, &recipient, &bank);
+    requests_client.update_request_status(
+        &recipient,
+        &cancelled_id,
+        &RequestStatus::Cancelled,
+        &String::from_str(&env, "cancelled"),
+    );
+    let result = client.try_verify_delivery(
+        &recipient,
+        &cancelled_id,
+        &bank,
+        &recipient,
+        &500_u32,
+        &true,
+    );
+    assert_eq!(result, Err(Ok(Error::InvalidDeliveryProof)));
+    assert!(client.get_delivery(&cancelled_id).is_none());
+
+    // Rejected.
+    let rejected_id = create_approved_request(&env, &requests_client, &recipient, &bank);
+    requests_client.update_request_status(
+        &recipient,
+        &rejected_id,
+        &RequestStatus::Rejected,
+        &String::from_str(&env, "rejected"),
+    );
+    let result = client.try_verify_delivery(
+        &recipient,
+        &rejected_id,
+        &bank,
+        &recipient,
+        &500_u32,
+        &true,
+    );
+    assert_eq!(result, Err(Ok(Error::InvalidDeliveryProof)));
+    assert!(client.get_delivery(&rejected_id).is_none());
+}
+
+#[test]
+fn test_correct_delivery_proof_keeps_history() {
+    let (env, client, requests_client, admin, bank, recipient) =
+        setup_delivery_env("DEL009");
+
+    let request_id = create_approved_request(&env, &requests_client, &recipient, &bank);
+    requests_client.update_request_status(
+        &recipient,
+        &request_id,
+        &RequestStatus::InProgress,
+        &String::from_str(&env, "in progress"),
+    );
+
+    // A griefer locks in a non-compliant proof.
+    client.verify_delivery(&recipient, &request_id, &bank, &recipient, &500_u32, &false);
+    let original = client.get_delivery(&request_id).unwrap();
+    assert!(!original.temperature_ok);
+
+    // Admin corrects it.
+    client.correct_delivery_proof(&admin, &request_id, &450_u32, &true);
+
+    let corrected = client.get_delivery(&request_id).unwrap();
+    assert_eq!(corrected.quantity_delivered, 450);
+    assert!(corrected.temperature_ok);
+
+    // The original proof stays auditable in history.
+    let history = client.get_delivery_history(&request_id);
+    assert_eq!(history.len(), 2);
+    let first = history.get(0).unwrap();
+    assert_eq!(first.quantity_delivered, 500);
+    assert!(!first.temperature_ok);
+    let second = history.get(1).unwrap();
+    assert_eq!(second.quantity_delivered, 450);
+    assert!(second.temperature_ok);
+
+    // An event records the correction.
+    let events = env.events().all();
+    let mut found = false;
+    for (_, topics, _) in events.iter() {
+        if let Some(topic) = topics.get(topics.len() - 1) {
+            let symbol: Symbol = TryFromVal::try_from_val(&env, &topic).unwrap();
+            if symbol == Symbol::new(&env, "delivery_corrected") {
+                found = true;
+            }
+        }
+    }
+    assert!(found, "delivery_corrected event must be emitted");
+}
+
+#[test]
+fn test_correct_delivery_proof_requires_admin() {
+    let (env, client, requests_client, _admin, bank, recipient) =
+        setup_delivery_env("DEL010");
+
+    let request_id = create_approved_request(&env, &requests_client, &recipient, &bank);
+    requests_client.update_request_status(
+        &recipient,
+        &request_id,
+        &RequestStatus::InProgress,
+        &String::from_str(&env, "in progress"),
+    );
+    client.verify_delivery(&recipient, &request_id, &bank, &recipient, &500_u32, &true);
+
+    let stranger = Address::generate(&env);
+    let result = client.try_correct_delivery_proof(&stranger, &request_id, &450_u32, &false);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
+fn test_verify_delivery_prevents_overwrite() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -1098,67 +1364,12 @@ fn test_verify_delivery_authorized_rider() {
         &owner,
         &OrgType::BloodBank,
         &String::from_str(&env, "Bank"),
-        &String::from_str(&env, "DEL005"),
-        &loc,
-        &vec![&env],
-    );
-
-    let rider = Address::generate(&env);
-    client.grant_role(&admin, &rider, &Role::Rider);
-    let recipient = Address::generate(&env);
-
-    client.verify_delivery(&rider, &1_u64, &owner, &recipient, &500_u32, &true);
-
-    let proof = client.get_delivery(&1_u64).unwrap();
-    assert!(proof.verified);
-}
-
-#[test]
-fn test_verify_delivery_unauthorized_verifier_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(IdentityContract, ());
-    let client = IdentityContractClient::new(&env, &contract_id);
-
-    let owner = Address::generate(&env);
-    let loc = BytesN::from_array(&env, &[0u8; 32]);
-    client.register_organization(
-        &owner,
-        &OrgType::BloodBank,
-        &String::from_str(&env, "Bank"),
-        &String::from_str(&env, "DEL006"),
-        &loc,
-        &vec![&env],
-    );
-
-    // Neither a Rider, the recipient, nor the org itself.
-    let stranger = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    let result = client.try_verify_delivery(&stranger, &1_u64, &owner, &recipient, &500_u32, &true);
-    assert_eq!(result, Err(Ok(Error::Unauthorized)));
-    assert!(client.get_delivery(&1_u64).is_none());
-}
-
-#[test]
-fn test_verify_delivery_prevents_overwrite() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(IdentityContract, ());
-    let client = IdentityContractClient::new(&env, &contract_id);
-
-    let owner = Address::generate(&env);
-    let loc = BytesN::from_array(&env, &[0u8; 32]);
-    client.register_organization(
-        &owner,
-        &OrgType::BloodBank,
-        &String::from_str(&env, "Bank"),
         &String::from_str(&env, "DEL007"),
         &loc,
         &vec![&env],
     );
+
+    wire_requests_contract(&env, &client, &admin, 1);
 
     let recipient = Address::generate(&env);
     client.verify_delivery(&recipient, &1_u64, &owner, &recipient, &500_u32, &true);
@@ -2022,4 +2233,124 @@ fn test_identity_non_admin_cannot_pause() {
     let (env, client, _admin) = setup_identity();
     let attacker = Address::generate(&env);
     client.pause(&attacker);
+}
+
+// ---------------------------------------------------------------------------
+// Upgrade tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_upgrade_by_admin_succeeds() {
+    let (env, client, admin) = setup_identity();
+    let new_wasm_hash = BytesN::from_array(&env, &[7u8; 32]);
+
+    client.upgrade(&admin, &new_wasm_hash);
+
+    assert_eq!(client.get_admin(), admin);
+}
+
+#[test]
+fn test_upgrade_by_non_admin_rejected() {
+    let (env, client, _admin) = setup_identity();
+    let attacker = Address::generate(&env);
+    let new_wasm_hash = BytesN::from_array(&env, &[7u8; 32]);
+
+    let result = client.try_upgrade(&attacker, &new_wasm_hash);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
+fn test_upgrade_before_initialize_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    let caller = Address::generate(&env);
+    let new_wasm_hash = BytesN::from_array(&env, &[7u8; 32]);
+
+    let result = client.try_upgrade(&caller, &new_wasm_hash);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+}
+
+// ---------------------------------------------------------------------------
+// Two-step admin transfer tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_propose_and_accept_admin_transfer() {
+    let (env, client, admin) = setup_identity();
+    let new_admin = Address::generate(&env);
+
+    client.propose_admin(&admin, &new_admin);
+    assert_eq!(client.get_pending_admin(), Some(new_admin.clone()));
+    // Admin is unchanged until the nominee accepts.
+    assert_eq!(client.get_admin(), admin);
+
+    client.accept_admin(&new_admin);
+    assert_eq!(client.get_admin(), new_admin);
+    assert_eq!(client.get_pending_admin(), None);
+}
+
+#[test]
+fn test_propose_admin_by_non_admin_rejected() {
+    let (env, client, _admin) = setup_identity();
+    let attacker = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+
+    let result = client.try_propose_admin(&attacker, &new_admin);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+    assert_eq!(client.get_pending_admin(), None);
+}
+
+#[test]
+fn test_accept_admin_by_wrong_address_rejected() {
+    let (env, client, admin) = setup_identity();
+    let new_admin = Address::generate(&env);
+    let impostor = Address::generate(&env);
+
+    client.propose_admin(&admin, &new_admin);
+
+    let result = client.try_accept_admin(&impostor);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+    assert_eq!(client.get_admin(), admin);
+}
+
+#[test]
+fn test_accept_admin_without_proposal_rejected() {
+    let (env, client, _admin) = setup_identity();
+    let nominee = Address::generate(&env);
+
+    let result = client.try_accept_admin(&nominee);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
+fn test_propose_admin_emits_event() {
+    let (env, client, admin) = setup_identity();
+    let new_admin = Address::generate(&env);
+
+    client.propose_admin(&admin, &new_admin);
+
+    let events = env.events().all();
+    assert!(!events.is_empty());
+    let (_, topics, _) = events.last().unwrap();
+    let event_topic: Symbol =
+        TryFromVal::try_from_val(&env, &topics.get(topics.len() - 1).unwrap()).unwrap();
+    assert_eq!(event_topic, Symbol::new(&env, "admin_proposed"));
+}
+
+#[test]
+fn test_accept_admin_emits_event() {
+    let (env, client, admin) = setup_identity();
+    let new_admin = Address::generate(&env);
+
+    client.propose_admin(&admin, &new_admin);
+    client.accept_admin(&new_admin);
+
+    let events = env.events().all();
+    assert!(!events.is_empty());
+    let (_, topics, _) = events.last().unwrap();
+    let event_topic: Symbol =
+        TryFromVal::try_from_val(&env, &topics.get(topics.len() - 1).unwrap()).unwrap();
+    assert_eq!(event_topic, Symbol::new(&env, "admin_transferred"));
 }

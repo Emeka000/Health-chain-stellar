@@ -30,10 +30,72 @@ mod security_tests {
         let client = PaymentContractClient::new(&env, &cid);
         client.initialize(&Address::generate(&env), &Some(requests_id));
 
-        let payer = Address::generate(&env);
+        // The payer must be the request's hospital (see #1619).
         let payee = Address::generate(&env);
-        let payment_id = client.create_payment(&request_id, &payer, &payee, &100i128);
-        (env, client, payment_id, payer, payee)
+        let payment_id = client.create_payment(&request_id, &hospital, &payee, &100i128);
+        (env, client, payment_id, hospital, payee)
+    }
+
+    /// #1619: create_payment rejects a payer that isn't the request's hospital.
+    #[test]
+    fn test_create_payment_rejects_non_hospital_payer() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let requests_id = env.register(RequestContract, ());
+        let requests = RequestContractClient::new(&env, &requests_id);
+        requests.initialize(&Address::generate(&env), &Address::generate(&env));
+        let hospital = Address::generate(&env);
+        requests.authorize_hospital(&hospital);
+        let request_id = requests.create_request(
+            &hospital,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &250u32,
+            &Urgency::Routine,
+            &(env.ledger().timestamp() + 3_600),
+        );
+
+        let cid = env.register(PaymentContract, ());
+        let client = PaymentContractClient::new(&env, &cid);
+        client.initialize(&Address::generate(&env), &Some(requests_id));
+
+        let impostor = Address::generate(&env);
+        let payee = Address::generate(&env);
+        let result = client.try_create_payment(&request_id, &impostor, &payee, &100i128);
+
+        assert_eq!(result, Err(Ok(Error::Unauthorized)));
+    }
+
+    /// #1619: create_escrow rejects a payer that isn't the request's hospital.
+    #[test]
+    fn test_create_escrow_rejects_non_hospital_payer() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let requests_id = env.register(RequestContract, ());
+        let requests = RequestContractClient::new(&env, &requests_id);
+        requests.initialize(&Address::generate(&env), &Address::generate(&env));
+        let hospital = Address::generate(&env);
+        requests.authorize_hospital(&hospital);
+        let request_id = requests.create_request(
+            &hospital,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &250u32,
+            &Urgency::Routine,
+            &(env.ledger().timestamp() + 3_600),
+        );
+
+        let cid = env.register(PaymentContract, ());
+        let client = PaymentContractClient::new(&env, &cid);
+        client.initialize(&Address::generate(&env), &Some(requests_id));
+
+        let impostor = Address::generate(&env);
+        let payee = Address::generate(&env);
+        let result = client.try_create_escrow(&request_id, &impostor, &payee, &100i128);
+
+        assert_eq!(result, Err(Ok(Error::Unauthorized)));
     }
 
     /// #1152: Verify record_dispute requires caller to be payer or payee.

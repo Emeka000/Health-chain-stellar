@@ -90,6 +90,7 @@ mod request_client {
     #[allow(dead_code)]
     pub trait RequestContractInterface {
         fn get_request(env: Env, request_id: u64) -> BloodRequest;
+        fn get_request_rider(env: Env, request_id: u64) -> Option<Address>;
     }
 }
 
@@ -125,6 +126,8 @@ pub enum Error {
     OrganizationAlreadyRegistered = 215,
     /// The primary admin's `Admin` role cannot be revoked, so one admin always remains.
     CannotRevokeLastAdmin = 216,
+    /// No admin transfer has been proposed.
+    NoPendingAdmin = 217,
 }
 
 // ---------------------------------------------------------------------------
@@ -260,6 +263,15 @@ pub struct DeliveryProofRecorded {
     pub temperature_ok: bool,
 }
 
+#[contractevent(topics = ["delivery_proof_corrected"], data_format = "vec")]
+pub struct DeliveryProofCorrected {
+    pub request_id: u64,
+    pub admin: Address,
+    pub org_id: Address,
+    pub recipient: Address,
+    pub temperature_ok: bool,
+}
+
 #[contractevent(topics = ["role_granted"], data_format = "vec")]
 pub struct RoleGranted {
     pub address: Address,
@@ -283,6 +295,23 @@ pub struct ScopeGranted {
 pub struct ScopeRevoked {
     pub address: Address,
     pub scope: PermissionScope,
+}
+
+#[contractevent(topics = ["admin", "proposed"], data_format = "vec")]
+pub struct AdminTransferProposed {
+    pub current_admin: Address,
+    pub new_admin: Address,
+}
+
+#[contractevent(topics = ["admin", "transferred"], data_format = "vec")]
+pub struct AdminTransferred {
+    pub previous_admin: Address,
+    pub new_admin: Address,
+}
+
+#[contractevent(topics = ["upgraded"], data_format = "single-value")]
+pub struct ContractUpgraded {
+    pub new_wasm_hash: BytesN<32>,
 }
 
 #[contracttype]
@@ -338,6 +367,7 @@ pub enum DataKey {
     Docs(Address),
     OrgCounter,
     Admin,
+    PendingAdmin,
     OrgTypeList(OrgType),
     OrgVerifier(Address),
     OrgUnverifyReason(Address),
@@ -351,6 +381,7 @@ pub enum DataKey {
     OrgBadges(Address),
     // Delivery
     Delivery(u64),
+    DeliveryHistory(u64),
     // IdentityContract role storage
     AddressRoles(Address),
     // Fine-grained permission scopes (Issue #374)
@@ -488,6 +519,83 @@ impl IdentityContract {
     /// Get contract version
     pub fn version(_env: Env) -> u32 {
         CONTRACT_VERSION
+    }
+
+    /// Upgrade the contract to a new WASM hash. Admin only.
+    pub fn upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, Role::Admin)?;
+
+        env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
+
+        ContractUpgraded { new_wasm_hash }.publish(&env);
+
+        Ok(())
+    }
+
+    /// Propose a new admin. The current admin must authorize this call; the
+    /// proposed admin must then call `accept_admin` to complete the transfer.
+    pub fn propose_admin(env: Env, admin: Address, new_admin: Address) -> Result<(), Error> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, Role::Admin)?;
+
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
+
+        AdminTransferProposed {
+            current_admin: admin,
+            new_admin,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Accept a pending admin transfer. Only the proposed admin may call this.
+    pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        new_admin.require_auth();
+
+        let pending: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmin)
+            .ok_or(Error::NoPendingAdmin)?;
+
+        if pending != new_admin {
+            return Err(Error::Unauthorized);
+        }
+
+        let previous_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::Unauthorized)?;
+
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.storage().instance().remove(&DataKey::PendingAdmin);
+
+        // Grant the Admin role to the new admin and drop it from the previous
+        // admin so the role set stays consistent with the primary admin key.
+        Self::grant_role_internal(&env, new_admin.clone(), Role::Admin);
+        Self::revoke_admin_role_internal(&env, &previous_admin);
+
+        AdminTransferred {
+            previous_admin,
+            new_admin,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Return the pending admin, if any.
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::PendingAdmin)
     }
 
     /// Pause all state-mutating functions. Admin only.
@@ -810,6 +918,26 @@ impl IdentityContract {
         env.storage()
             .persistent()
             .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    /// Internal helper to drop the `Admin` role from an address (no auth check).
+    fn revoke_admin_role_internal(env: &Env, address: &Address) {
+        let key = DataKey::AddressRoles(address.clone());
+        if let Some(roles) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Vec<RoleGrant>>(&key)
+        {
+            let roles = Self::remove_role_from_vec(env, roles, &Role::Admin);
+            if roles.is_empty() {
+                env.storage().persistent().remove(&key);
+            } else {
+                env.storage().persistent().set(&key, &roles);
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+            }
+        }
     }
 
     /// Get the primary role of an address (first role in the sorted vec, if any).
@@ -1335,15 +1463,28 @@ impl IdentityContract {
             return Err(Error::Unauthorized);
         }
 
+        // A proof may only be recorded once the delivery is actually underway
+        // or complete. Approved/Cancelled/Rejected requests have no delivery
+        // to attest.
+        if request.status != request_client::RequestStatus::InProgress
+            && request.status != request_client::RequestStatus::Fulfilled
+        {
+            return Err(Error::Unauthorized);
+        }
+
         if quantity_delivered > request.quantity_ml {
             return Err(Error::InvalidDeliveryProof);
         }
 
-        // Verifier must be an authorized courier (Rider) or the recipient who
-        // received the delivery. The org that fulfilled the request is not an
-        // authorized verifier of its own delivery.
-        let is_authorized = Self::has_role_internal(env.clone(), verifier.clone(), Role::Rider)
-            || verifier == recipient;
+        // Verifier must be the rider actually assigned to this request or the
+        // recipient who received the delivery. A contract-wide Rider role is
+        // not sufficient: a rider who never touched the request must not be
+        // able to record its (single, uncorrectable) proof.
+        let assigned_rider = requests_client
+            .try_get_request_rider(&request_id)
+            .map_err(|_| Error::Unauthorized)?
+            .map_err(|_| Error::Unauthorized)?;
+        let is_authorized = assigned_rider == Some(verifier.clone()) || verifier == recipient;
         if !is_authorized {
             return Err(Error::Unauthorized);
         }
@@ -1384,11 +1525,95 @@ impl IdentityContract {
         Ok(())
     }
 
+    /// Admin-only: replace a wrong delivery proof. The previous proof is
+    /// appended to the request's history so the original stays auditable.
+    pub fn correct_delivery_proof(
+        env: Env,
+        admin: Address,
+        request_id: u64,
+        org_id: Address,
+        recipient: Address,
+        quantity_delivered: u32,
+        temperature_ok: bool,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        Self::require_not_paused(&env)?;
+        Self::require_role(&env, &admin, Role::Admin)?;
+
+        if quantity_delivered == 0 {
+            return Err(Error::InvalidDeliveryProof);
+        }
+
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::Org(org_id.clone()))
+        {
+            return Err(Error::OrganizationNotFound);
+        }
+
+        let delivery_key = DataKey::Delivery(request_id);
+        let previous: DeliveryProof = env
+            .storage()
+            .persistent()
+            .get(&delivery_key)
+            .ok_or(Error::InvalidDeliveryProof)?;
+
+        // Keep the original proof in an append-only history.
+        let history_key = DataKey::DeliveryHistory(request_id);
+        let mut history: Vec<DeliveryProof> = env
+            .storage()
+            .persistent()
+            .get(&history_key)
+            .unwrap_or(Vec::new(&env));
+        history.push_back(previous);
+        env.storage().persistent().set(&history_key, &history);
+        env.storage()
+            .persistent()
+            .extend_ttl(&history_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        let now = env.ledger().timestamp();
+        let proof = DeliveryProof {
+            request_id,
+            org_id: org_id.clone(),
+            recipient: recipient.clone(),
+            quantity_delivered,
+            temperature_ok,
+            delivered_at: now,
+            verified: true,
+            verified_at: Some(now),
+        };
+
+        env.storage().persistent().set(&delivery_key, &proof);
+        env.storage()
+            .persistent()
+            .extend_ttl(&delivery_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        DeliveryProofCorrected {
+            request_id,
+            admin,
+            org_id,
+            recipient,
+            temperature_ok,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
     /// Get a delivery proof by request ID
     pub fn get_delivery(env: Env, request_id: u64) -> Option<DeliveryProof> {
         env.storage()
             .persistent()
             .get(&DataKey::Delivery(request_id))
+    }
+
+    /// Get the superseded delivery proofs for a request, oldest first.
+    pub fn get_delivery_history(env: Env, request_id: u64) -> Vec<DeliveryProof> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::DeliveryHistory(request_id))
+            .unwrap_or(Vec::new(&env))
     }
 
     // -----------------------------------------------------------------------

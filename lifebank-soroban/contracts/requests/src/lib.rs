@@ -149,43 +149,55 @@ impl RequestContract {
 
     pub fn authorize_hospital(env: Env, hospital: Address) -> Result<(), ContractError> {
         storage::require_initialized(&env)?;
-        storage::get_admin(&env).require_auth();
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
         storage::authorize_hospital(&env, &hospital);
+        events::emit_hospital_authorized(&env, &admin, &hospital);
         Ok(())
     }
 
     pub fn revoke_hospital(env: Env, hospital: Address) -> Result<(), ContractError> {
         storage::require_initialized(&env)?;
-        storage::get_admin(&env).require_auth();
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
         storage::revoke_hospital(&env, &hospital);
+        events::emit_hospital_revoked(&env, &admin, &hospital);
         Ok(())
     }
 
     pub fn authorize_blood_bank(env: Env, blood_bank: Address) -> Result<(), ContractError> {
         storage::require_initialized(&env)?;
-        storage::get_admin(&env).require_auth();
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
         storage::authorize_blood_bank(&env, &blood_bank);
+        events::emit_blood_bank_authorized(&env, &admin, &blood_bank);
         Ok(())
     }
 
     pub fn revoke_blood_bank(env: Env, blood_bank: Address) -> Result<(), ContractError> {
         storage::require_initialized(&env)?;
-        storage::get_admin(&env).require_auth();
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
         storage::revoke_blood_bank(&env, &blood_bank);
+        events::emit_blood_bank_revoked(&env, &admin, &blood_bank);
         Ok(())
     }
 
     pub fn authorize_rider(env: Env, rider: Address) -> Result<(), ContractError> {
         storage::require_initialized(&env)?;
-        storage::get_admin(&env).require_auth();
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
         storage::authorize_rider(&env, &rider);
+        events::emit_rider_authorized(&env, &admin, &rider);
         Ok(())
     }
 
     pub fn revoke_rider(env: Env, rider: Address) -> Result<(), ContractError> {
         storage::require_initialized(&env)?;
-        storage::get_admin(&env).require_auth();
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
         storage::revoke_rider(&env, &rider);
+        events::emit_rider_revoked(&env, &admin, &rider);
         Ok(())
     }
 
@@ -193,7 +205,8 @@ impl RequestContract {
     /// Admin only. May be called again to reassign before pickup.
     pub fn assign_rider(env: Env, request_id: u64, rider: Address) -> Result<(), ContractError> {
         storage::require_initialized(&env)?;
-        storage::get_admin(&env).require_auth();
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
 
         if !storage::is_rider_authorized(&env, &rider) {
             return Err(ContractError::NotAuthorizedRider);
@@ -206,6 +219,7 @@ impl RequestContract {
         }
 
         storage::set_request_rider(&env, request_id, &rider);
+        events::emit_rider_assigned(&env, &admin, request_id, &rider);
         Ok(())
     }
 
@@ -354,12 +368,6 @@ impl RequestContract {
             return Err(ContractError::NotRequestOwner);
         }
 
-        // Units in an InProgress request are already on a rider's vehicle;
-        // cancelling would release their reservation while they are in transit.
-        if request.status == RequestStatus::InProgress {
-            return Err(ContractError::InvalidRequestStatus);
-        }
-
         Self::cancel_internal(&env, &mut request, &caller, reason)
     }
 
@@ -416,8 +424,12 @@ impl RequestContract {
         actor: &Address,
         reason: String,
     ) -> Result<(), ContractError> {
+        // Units in an InProgress request are already on a rider's vehicle;
+        // cancelling would release their reservation while they are in transit.
+        // This guard lives here (not only in `cancel_request`) so that every
+        // cancellation path, including `cancel_request_by_contract`, enforces it.
         match request.status {
-            RequestStatus::Pending | RequestStatus::Approved | RequestStatus::InProgress => {}
+            RequestStatus::Pending | RequestStatus::Approved => {}
             _ => return Err(ContractError::InvalidRequestStatus),
         }
 
@@ -735,6 +747,12 @@ impl RequestContract {
     pub fn get_request(env: Env, request_id: u64) -> Result<BloodRequest, ContractError> {
         storage::require_initialized(&env)?;
         storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)
+    }
+
+    /// Returns the rider assigned to `request_id` via `assign_rider`, if any.
+    /// Used by the identity contract to authorize delivery proofs.
+    pub fn get_request_rider(env: Env, request_id: u64) -> Option<Address> {
+        storage::get_request_rider(&env, request_id)
     }
 
     pub fn get_admin(env: Env) -> Result<Address, ContractError> {

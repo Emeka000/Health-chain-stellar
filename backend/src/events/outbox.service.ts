@@ -168,14 +168,33 @@ export class OutboxService {
 
     if (!result.affected) return [];
 
-    return this.outboxRepo.find({
-      where: {
-        status: OutboxEventStatus.PROCESSING,
-        leaseHolder: workerId,
-      },
-      order: { createdAt: 'ASC' },
-      take: limit,
-    });
+    if (!result || result.length === 0) return [];
+
+    // Convert DB rows to entities
+    return result.map((row: any) =>
+      this.outboxRepo.create({
+        id: row.id,
+        aggregateId: row.aggregate_id,
+        aggregateType: row.aggregate_type,
+        eventType: row.event_type,
+        eventVersion: row.event_version,
+        correlationId: row.correlation_id,
+        payload: row.payload,
+        status: row.status,
+        dedupKey: row.dedup_key,
+        leaseHolder: row.lease_holder,
+        leaseExpiresAt: row.lease_expires_at,
+        attemptCount: row.attempt_count,
+        nextAttemptAt: row.next_attempt_at,
+        lastError: row.last_error,
+        published: row.published,
+        retryCount: row.retry_count,
+        error: row.error,
+        publishedAt: row.published_at,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }),
+    );
   }
 
   /**

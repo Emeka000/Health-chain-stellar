@@ -450,6 +450,9 @@ fn test_authorized_rider_can_set_inprogress() {
     let rider = Address::generate(&env);
     client.authorize_rider(&rider);
 
+    // #1626: the rider must be assigned to the request before pickup.
+    client.assign_rider(&admin, &request_id, &rider);
+
     client.update_request_status(
         &rider,
         &request_id,
@@ -573,6 +576,69 @@ fn test_hospital_index_pruned_on_fulfill() {
     let results = client.get_requests_by_hospital(&hospital, &0u32, &10u32);
     assert_eq!(results.len(), 1);
     assert_eq!(results.get(0).unwrap().id, req2);
+}
+
+// ── #1754: cancel_request_by_contract must not cancel InProgress requests ─────
+
+/// #1754: The contract-only cancellation path must reject an InProgress request
+/// and leave the reservation intact, so in-transit units are never released.
+#[test]
+fn test_cancel_request_by_contract_rejects_inprogress() {
+    let (env, client, admin, hospital) = setup_authorized_hospital();
+    let request_id = create_urgent_request(&client, &hospital);
+
+    client.update_request_status(
+        &admin,
+        &request_id,
+        &RequestStatus::Approved,
+        &String::from_str(&env, "Approved"),
+    );
+    client.set_reservation_id(&admin, &request_id, &77u64);
+
+    let rider = Address::generate(&env);
+    client.authorize_rider(&rider);
+    client.assign_rider(&admin, &request_id, &rider);
+    client.update_request_status(
+        &rider,
+        &request_id,
+        &RequestStatus::InProgress,
+        &String::from_str(&env, "Rider picked up blood"),
+    );
+
+    let result = client.try_cancel_request_by_contract(
+        &admin,
+        &request_id,
+        &String::from_str(&env, "dispute expired"),
+    );
+    assert_eq!(result, Err(Ok(ContractError::InvalidRequestStatus)));
+
+    let request = client.get_request(&request_id);
+    assert_eq!(request.status, RequestStatus::InProgress);
+    assert_eq!(request.reservation_id, Some(77));
+}
+
+/// #1754: Cancelling Pending/Approved requests through the contract path still works.
+#[test]
+fn test_cancel_request_by_contract_allows_approved() {
+    let (env, client, admin, hospital) = setup_authorized_hospital();
+    let request_id = create_urgent_request(&client, &hospital);
+
+    client.update_request_status(
+        &admin,
+        &request_id,
+        &RequestStatus::Approved,
+        &String::from_str(&env, "Approved"),
+    );
+    client.set_reservation_id(&admin, &request_id, &88u64);
+
+    client.cancel_request_by_contract(
+        &admin,
+        &request_id,
+        &String::from_str(&env, "dispute expired"),
+    );
+
+    let request = client.get_request(&request_id);
+    assert_eq!(request.status, RequestStatus::Cancelled);
 }
 
 /// #1470: Rejecting a request removes it from the hospital's index.

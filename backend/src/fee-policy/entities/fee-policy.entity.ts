@@ -1,5 +1,15 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, UpdateDateColumn, Index } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
+
+/**
+ * The `pg` driver returns DECIMAL/NUMERIC columns as strings. Without a
+ * transformer, arithmetic like `a + b` concatenates instead of adding.
+ * This coerces values back to numbers on read.
+ */
+const numericTransformer = {
+    to: (value: number | null | undefined) => value,
+    from: (value: string | null) => (value === null ? null : Number(value)),
+};
 
 export enum UrgencyTier {
     STANDARD = 'standard',
@@ -32,10 +42,10 @@ export class FeePolicyEntity extends BaseEntity {
     })
     urgencyTier: UrgencyTier;
 
-    @Column({ type: 'decimal', precision: 6, scale: 2, default: 0 })
+    @Column({ type: 'decimal', precision: 6, scale: 2, default: 0, transformer: numericTransformer })
     minDistanceKm: number;
 
-    @Column({ type: 'decimal', precision: 6, scale: 2, nullable: true })
+    @Column({ type: 'decimal', precision: 6, scale: 2, nullable: true, transformer: numericTransformer })
     maxDistanceKm?: number;
 
     @Column({
@@ -44,16 +54,16 @@ export class FeePolicyEntity extends BaseEntity {
     })
     serviceLevel: ServiceLevel;
 
-    @Column({ type: 'decimal', precision: 8, scale: 4, default: 0 })
+    @Column({ type: 'decimal', precision: 8, scale: 4, default: 0, transformer: numericTransformer })
     deliveryFeeRate: number; // % of base
 
-    @Column({ type: 'decimal', precision: 5, scale: 4, default: 0 })
+    @Column({ type: 'decimal', precision: 5, scale: 4, default: 0, transformer: numericTransformer })
     platformFeePct: number; // % of delivery fee
 
-    @Column({ type: 'decimal', precision: 8, scale: 4, default: 0 })
+    @Column({ type: 'decimal', precision: 8, scale: 4, default: 0, transformer: numericTransformer })
     performanceMultiplier: number; // per km
 
-    @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+    @Column({ type: 'decimal', precision: 10, scale: 2, default: 0, transformer: numericTransformer })
     fixedFee: number; // flat fee
 
     @Column({ nullable: true })
@@ -62,7 +72,7 @@ export class FeePolicyEntity extends BaseEntity {
     @Column({ default: 1 })
     priority: number; // higher first for matching
 
-    @CreateDateColumn({ name: 'effective_from' })
+    @Column({ name: 'effective_from', type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
     effectiveFrom: Date;
 
     @Column({ name: 'effective_to', type: 'timestamp', nullable: true })
