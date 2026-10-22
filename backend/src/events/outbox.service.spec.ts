@@ -146,6 +146,41 @@ describe('OutboxService', () => {
       expect(outboxRepo.createQueryBuilder).toHaveBeenCalled();
       expect(events.length).toBeGreaterThanOrEqual(0);
     });
+
+    it('re-claims a PROCESSING event with an expired lease (worker crash recovery)', async () => {
+      const expiredEvent = makeOutboxEvent({
+        status: OutboxEventStatus.PROCESSING,
+        leaseHolder: 'worker-1',
+        leaseExpiresAt: new Date(Date.now() - 60_000), // expired 1 minute ago
+        attemptCount: 2,
+      });
+      outboxRepo.find.mockResolvedValue([expiredEvent]);
+
+      const queryBuilder = {
+        update: jest.fn().mockReturnThis(),
+        set: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        execute: jest.fn(() => Promise.resolve({ affected: 1 })),
+      };
+      outboxRepo.createQueryBuilder.mockReturnValue(queryBuilder);
+
+      const events = await service.claimPendingEvents('worker-2', 10);
+
+      // Verify the set() call includes attempt_count increment
+      expect(queryBuilder.set).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: OutboxEventStatus.PROCESSING,
+          leaseHolder: 'worker-2',
+        }),
+      );
+      // The query should have been called with both PENDING and PROCESSING status conditions
+      const whereCall = queryBuilder.where.mock.calls[0];
+      expect(whereCall[0]).toContain('status');
+      expect(whereCall[0]).toContain('PENDING');
+      expect(whereCall[0]).toContain('PROCESSING');
+    });
   });
 
   describe('markPublished', () => {

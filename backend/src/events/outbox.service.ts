@@ -128,9 +128,10 @@ export class OutboxService {
   // ── Lease-based polling ──────────────────────────────────────────────
 
   /**
-   * Claim up to `limit` PENDING events by acquiring a lease.
+   * Claim up to `limit` PENDING or expired-PROCESSING events by acquiring a lease.
    * Events with an active lease held by another worker are skipped.
    * Events whose nextAttemptAt is in the future are skipped (backoff).
+   * Re-claims expired PROCESSING events from crashed workers (increments attempt_count).
    */
   async claimPendingEvents(
     workerId: string,
@@ -139,7 +140,7 @@ export class OutboxService {
     const now = new Date();
     const leaseExpiry = new Date(now.getTime() + LEASE_TTL_MS);
 
-    // Atomically claim events: status=PENDING, no active lease, backoff elapsed
+    // Atomically claim events: status=PENDING OR (status=PROCESSING with expired lease)
     const result = await this.outboxRepo
       .createQueryBuilder()
       .update(OutboxEventEntity)
@@ -147,11 +148,15 @@ export class OutboxService {
         status: OutboxEventStatus.PROCESSING,
         leaseHolder: workerId,
         leaseExpiresAt: leaseExpiry,
+        attemptCount: () => 'attempt_count + 1',
       })
-      .where('status = :status', { status: OutboxEventStatus.PENDING })
-      .andWhere(
-        '(lease_expires_at IS NULL OR lease_expires_at < :now)',
-        { now },
+      .where(
+        '(status = :pending OR (status = :processing AND lease_expires_at < :now))',
+        {
+          pending: OutboxEventStatus.PENDING,
+          processing: OutboxEventStatus.PROCESSING,
+          now,
+        },
       )
       .andWhere(
         '(next_attempt_at IS NULL OR next_attempt_at <= :now)',
