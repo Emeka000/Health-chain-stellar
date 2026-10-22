@@ -47,6 +47,7 @@ export class OrderFeeService {
       distanceKm: 10,
       serviceLevel: 'BASIC' as any,
       quantity: order.quantity,
+      partnerId: (order as any).partnerId,
     };
   }
 }
