@@ -890,6 +890,122 @@ mod match_multiple_requests_integration_tests {
         // A contract error surfaces as Err(Ok(error)) from the generated try_ client.
         assert_eq!(result.err(), Some(Ok(MatchingError::BatchTooLarge)));
     }
+
+    /// Two Pending requests competing for the same three compatible units
+    /// must never be offered the same unit twice (#1126 / #1755).
+    #[test]
+    fn match_multiple_requests_no_double_allocation() {
+        use crate::{
+            BloodComponent, BloodRequest, BloodStatus, BloodType, BloodUnit, RequestStatus,
+        };
+        use request_contract::{RequestContract, RequestContractClient};
+
+        let env = Env::default();
+        env.mock_all_auths();
+
+        // Real requests contract holding the two competing requests.
+        let requests_id = env.register(RequestContract, ());
+        let requests = RequestContractClient::new(&env, &requests_id);
+        requests.initialize(&Address::generate(&env), &Address::generate(&env));
+        let hospital = Address::generate(&env);
+        requests.authorize_hospital(&hospital);
+
+        let now = env.ledger().timestamp();
+        let req_a = requests.create_request(
+            &hospital,
+            &BloodType::APositive,
+            &BloodComponent::WholeBlood,
+            &450u32,
+            &Urgency::Critical,
+            &(now + 3_600),
+        );
+        let req_b = requests.create_request(
+            &hospital,
+            &BloodType::APositive,
+            &BloodComponent::WholeBlood,
+            &450u32,
+            &Urgency::Scheduled,
+            &(now + 7_200),
+        );
+
+        // Inventory contract holding three compatible units.
+        let inventory_id = env.register(inventory_contract::InventoryContract, ());
+        let inventory = inventory_contract::InventoryContractClient::new(&env, &inventory_id);
+        inventory.initialize(&Address::generate(&env), &Address::generate(&env));
+        let bank = Address::generate(&env);
+        inventory.authorize_bank(&bank);
+        for id in 1..=3u64 {
+            inventory.register_blood_unit(
+                &bank,
+                &id,
+                &BloodType::APositive,
+                &BloodComponent::WholeBlood,
+                &450u32,
+                &(now + 86_400 * 30),
+                &None,
+            );
+        }
+
+        // Matching contract wired to the two above.
+        let matching_id = env.register(MatchingContract, ());
+        let client = MatchingContractClient::new(&env, &matching_id);
+        client.initialize(
+            &Address::generate(&env),
+            &inventory_id,
+            &requests_id,
+        );
+
+        let mut ids: soroban_sdk::Vec<u64> = soroban_sdk::Vec::new(&env);
+        ids.push_back(req_a);
+        ids.push_back(req_b);
+
+        let results = client.match_multiple_requests(&ids);
+        assert_eq!(results.len(), 2);
+
+        // Collect every unit ID assigned across the batch and assert uniqueness.
+        let mut seen: soroban_sdk::Vec<u64> = soroban_sdk::Vec::new(&env);
+        for i in 0..results.len() {
+            let units = results.get(i).unwrap().units;
+            for j in 0..units.len() {
+                let unit_id = units.get(j).unwrap().unit_id;
+                assert!(
+                    !seen.contains(unit_id),
+                    "unit {} allocated to more than one request",
+                    unit_id
+                );
+                seen.push_back(unit_id);
+            }
+        }
+
+        // Sanity: the structs referenced above still mirror the real contracts.
+        let _ = BloodRequest {
+            id: req_a,
+            hospital_id: hospital.clone(),
+            blood_type: BloodType::APositive,
+            component: BloodComponent::WholeBlood,
+            quantity_ml: 450,
+            urgency: Urgency::Critical,
+            created_timestamp: now,
+            required_by_timestamp: now + 3_600,
+            status: RequestStatus::Pending,
+            assigned_units: soroban_sdk::Vec::new(&env),
+            fulfilled_quantity_ml: 0,
+            reservation_id: None,
+            fulfilled_by: None,
+            history: soroban_sdk::Vec::new(&env),
+        };
+        let _ = BloodUnit {
+            id: 1,
+            blood_type: BloodType::APositive,
+            quantity_ml: 450,
+            bank_id: bank.clone(),
+            donor_id: None,
+            donation_timestamp: now,
+            expiration_timestamp: now + 86_400 * 30,
+            status: BloodStatus::Available,
+            metadata: soroban_sdk::Map::new(&env),
+        };
+    }
 }
 
 /// #1453: the mirrored BloodRequest must decode a request returned by the

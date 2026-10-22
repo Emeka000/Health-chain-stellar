@@ -46,6 +46,11 @@ export class EnvironmentVariables {
   @IsBoolean()
   TRUST_PROXY: boolean = false;
 
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  ENABLE_SWAGGER: boolean = false;
+
   // ─── Database ─────────────────────────────────────────────────────────────
   // Canonical naming: DATABASE_* (not DB_*). All database config reads from these keys.
   // TypeOrmModule and data-source.ts are both hardcoded to use DATABASE_* env vars.

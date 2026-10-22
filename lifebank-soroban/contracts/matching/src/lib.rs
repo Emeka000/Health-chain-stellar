@@ -200,6 +200,85 @@ impl MatchingContract {
         Self::match_request_excluding(&env, request_id, &excluded)
     }
 
+    /// Match several blood requests in one call, allocating each unit at most
+    /// once across the whole batch.
+    ///
+    /// Algorithm:
+    /// 1. Reject batches larger than `MAX_BATCH_SIZE` with `BatchTooLarge`.
+    /// 2. Load each request and sort by urgency
+    ///    (Critical → Urgent → Routine → Scheduled), then by
+    ///    `required_by_timestamp` (earliest first).
+    /// 3. Match each request in that order via `match_request_excluding`,
+    ///    passing the unit ids already selected earlier in the batch so they
+    ///    cannot be double-allocated.
+    /// 4. Requests that cannot be loaded or are not `Pending` are skipped
+    ///    instead of aborting the whole batch.
+    pub fn match_multiple_requests(
+        env: Env,
+        request_ids: Vec<u64>,
+    ) -> Result<Vec<MatchResult>, MatchingError> {
+        if request_ids.len() > MAX_BATCH_SIZE {
+            return Err(MatchingError::BatchTooLarge);
+        }
+
+        Self::require_initialized(&env)?;
+        Self::require_not_paused(&env)?;
+
+        let req_addr: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::RequestsContract)
+            .unwrap();
+        let req_client = RequestsContractClient::new(&env, &req_addr);
+
+        // Load the requests we can, skipping invalid or non-Pending ones.
+        let mut pending: Vec<BloodRequest> = Vec::new(&env);
+        for i in 0..request_ids.len() {
+            let request_id = request_ids.get(i).unwrap();
+            if let Ok(Ok(request)) = req_client.try_get_request(&request_id) {
+                if request.status == RequestStatus::Pending {
+                    pending.push_back(request);
+                }
+            }
+        }
+
+        // Insertion sort by urgency, then required_by_timestamp (stable).
+        let len = pending.len();
+        for i in 1..len {
+            let mut j = i;
+            while j > 0 {
+                let prev = pending.get(j - 1).unwrap();
+                let cur = pending.get(j).unwrap();
+                let prev_rank = urgency_rank(prev.urgency);
+                let cur_rank = urgency_rank(cur.urgency);
+                let out_of_order = cur_rank < prev_rank
+                    || (cur_rank == prev_rank
+                        && cur.required_by_timestamp < prev.required_by_timestamp);
+                if !out_of_order {
+                    break;
+                }
+                pending.set(j - 1, cur);
+                pending.set(j, prev);
+                j -= 1;
+            }
+        }
+
+        let mut excluded: Vec<u64> = Vec::new(&env);
+        let mut results: Vec<MatchResult> = Vec::new(&env);
+        for i in 0..pending.len() {
+            let request = pending.get(i).unwrap();
+            if let Ok(result) = Self::match_request_excluding(&env, request.id, &excluded) {
+                for k in 0..result.matched_units.len() {
+                    let unit = result.matched_units.get(k).unwrap();
+                    excluded.push_back(unit.blood_unit_id);
+                }
+                results.push_back(result);
+            }
+        }
+
+        Ok(results)
+    }
+
     /// Same matching algorithm as `match_request`, but drops any candidate
     /// unit whose id is present in `excluded`. Used by `match_multiple_requests`
     /// so units already assigned earlier in the same batch cannot be
@@ -295,5 +374,15 @@ impl MatchingContract {
             return Err(MatchingError::NotInitialized);
         }
         Ok(())
+    }
+}
+
+/// Ordering rank for batch matching: Critical → Urgent → Routine → Scheduled.
+fn urgency_rank(urgency: Urgency) -> u32 {
+    match urgency {
+        Urgency::Critical => 0,
+        Urgency::Urgent => 1,
+        Urgency::Routine => 2,
+        Urgency::Scheduled => 3,
     }
 }

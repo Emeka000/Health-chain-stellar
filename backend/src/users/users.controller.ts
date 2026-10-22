@@ -1,5 +1,3 @@
-import { extname } from 'path';
-
 import {
   Controller,
   Get,
@@ -10,6 +8,7 @@ import {
   Delete,
   HttpCode,
   HttpStatus,
+  BadRequestException,
   Request,
   UseInterceptors,
   UploadedFile,
@@ -17,7 +16,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 
-import { diskStorage } from 'multer';
+import { memoryStorage } from 'multer';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
@@ -97,16 +96,20 @@ export class UsersController {
   @Post('profile/avatar')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: './uploads/temp',
-        filename: (req, file, cb) => {
-          const randomName = Array(32)
-            .fill(null)
-            .map(() => Math.round(Math.random() * 16).toString(16))
-            .join('');
-          cb(null, `${randomName}${extname(file.originalname)}`);
-        },
-      }),
+      storage: memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024 },
+      fileFilter: (req, file, cb) => {
+        const allowedMimeTypes = ['image/png', 'image/jpeg', 'image/webp'];
+        if (!allowedMimeTypes.includes(file.mimetype)) {
+          return cb(
+            new BadRequestException(
+              'Only PNG, JPEG and WebP images are allowed',
+            ),
+            false,
+          );
+        }
+        cb(null, true);
+      },
     }),
   )
   uploadAvatar(@UploadedFile() file: Express.Multer.File, @Request() req: any) {

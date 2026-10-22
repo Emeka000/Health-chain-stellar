@@ -1,9 +1,10 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
+import { Repository, LessThanOrEqual, MoreThan, IsNull, Or } from 'typeorm';
 
 import { FeePolicyEntity } from './entities/fee-policy.entity';
 import { FeePreviewDto } from './dto/fee-policy.dto';
+import { calculateFee } from './fee-calculator';
 
 export interface PolicyConflict {
   policyId: string;
@@ -157,20 +158,23 @@ export class FeePolicyAnalyzerService {
 
 
   private async findApplicablePolicy(dto: FeePreviewDto): Promise<FeePolicyEntity | null> {
-    const where: Record<string, any> = {
+    const now = new Date();
+    const distanceKm = dto.distanceKm || 0;
+
+    const base: Record<string, any> = {
       geographyCode: dto.geographyCode,
       urgencyTier: dto.urgencyTier,
       serviceLevel: dto.serviceLevel,
-      minDistanceKm: LessThanOrEqual(dto.distanceKm || 0),
-      effectiveFrom: LessThanOrEqual(new Date()),
+      minDistanceKm: LessThanOrEqual(distanceKm),
+      effectiveFrom: LessThanOrEqual(now),
+      effectiveTo: Or(IsNull(), MoreThan(now)),
     };
 
-    if (dto.distanceKm) {
-      where.maxDistanceKm = MoreThanOrEqual(dto.distanceKm);
-    }
-
     return this.repository.findOne({
-      where,
+      where: [
+        { ...base, maxDistanceKm: MoreThan(distanceKm) },
+        { ...base, maxDistanceKm: IsNull() },
+      ],
       order: { priority: 'DESC', effectiveFrom: 'DESC' },
     });
   }
@@ -179,54 +183,48 @@ export class FeePolicyAnalyzerService {
     policy: FeePolicyEntity,
     dto: FeePreviewDto,
   ): Promise<Omit<FeeCalculationTrace, 'policyId' | 'policyName' | 'input' | 'timestamp'>> {
-    const calculationSteps: Array<{ step: string; value: number; formula: string }> = [];
+    const result = calculateFee(policy, dto);
 
-    // Base amount calculation
-    const baseAmount = dto.quantity * 100; // Placeholder unit price
-    calculationSteps.push({
-      step: 'Base Amount',
-      value: baseAmount,
-      formula: `${dto.quantity} units × 100 (placeholder unit price)`,
-    });
+    const calculationSteps: Array<{ step: string; value: number; formula: string }> = [
+      {
+        step: 'Base Amount',
+        value: result.baseAmount,
+        formula: `${dto.quantity} units × 100 (placeholder unit price)`,
+      },
+      {
+        step: 'Delivery Fee',
+        value: result.deliveryFee,
+        formula: `${result.baseAmount} × ${result.deliveryFeeRate}%`,
+      },
+      {
+        step: 'Platform Fee',
+        value: result.platformFee,
+        formula: `${result.deliveryFee} × ${result.platformFeePct}%`,
+      },
+      {
+        step: 'Performance Fee',
+        value: result.performanceFee,
+        formula: `${dto.distanceKm || 0} km × ${result.performanceMultiplier}`,
+      },
+      {
+        step: 'Fixed Fee',
+        value: result.fixedFee,
+        formula: `Fixed amount: ${result.fixedFee}`,
+      },
+    ];
 
-    // Delivery fee calculation
-    const deliveryFee = baseAmount * (policy.deliveryFeeRate / 100);
-    calculationSteps.push({
-      step: 'Delivery Fee',
-      value: deliveryFee,
-      formula: `${baseAmount} × ${policy.deliveryFeeRate}%`,
-    });
+    if (result.waived) {
+      calculationSteps.push({
+        step: 'WAIVED',
+        value: 0,
+        formula: `Delivery and platform fees waived (${result.waiverReason})`,
+      });
+    }
 
-    // Platform fee calculation
-    const platformFee = deliveryFee * (policy.platformFeePct / 100);
-    calculationSteps.push({
-      step: 'Platform Fee',
-      value: platformFee,
-      formula: `${deliveryFee} × ${policy.platformFeePct}%`,
-    });
-
-    // Performance fee calculation
-    const performanceFee = (dto.distanceKm || 0) * policy.performanceMultiplier;
-    calculationSteps.push({
-      step: 'Performance Fee',
-      value: performanceFee,
-      formula: `${dto.distanceKm || 0} km × ${policy.performanceMultiplier}`,
-    });
-
-    // Fixed fee
-    const fixedFee = policy.fixedFee || 0;
-    calculationSteps.push({
-      step: 'Fixed Fee',
-      value: fixedFee,
-      formula: `Fixed amount: ${fixedFee}`,
-    });
-
-    // Total fee
-    const totalFee = deliveryFee + platformFee + performanceFee + fixedFee;
     calculationSteps.push({
       step: 'Total Fee',
-      value: totalFee,
-      formula: `${deliveryFee} + ${platformFee} + ${performanceFee} + ${fixedFee}`,
+      value: result.totalFee,
+      formula: `${result.deliveryFee} + ${result.platformFee} + ${result.performanceFee} + ${result.fixedFee}`,
     });
 
     // Generate audit hash
@@ -235,11 +233,11 @@ export class FeePolicyAnalyzerService {
     return {
       calculationSteps,
       finalBreakdown: {
-        deliveryFee,
-        platformFee,
-        performanceFee,
-        fixedFee,
-        totalFee,
+        deliveryFee: result.deliveryFee,
+        platformFee: result.platformFee,
+        performanceFee: result.performanceFee,
+        fixedFee: result.fixedFee,
+        totalFee: result.totalFee,
       },
       auditHash,
     };

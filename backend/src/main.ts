@@ -68,18 +68,25 @@ async function bootstrap() {
   app.setGlobalPrefix(apiPrefix);
 
   // Swagger/OpenAPI configuration
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Health-chain-stellar API')
-    .setDescription(
-      'HealthDonor Protocol - Transparent health donations on Stellar Soroban',
-    )
-    .setVersion('1.0.0')
-    .addBearerAuth()
-    .addTag('Authentication', 'User authentication and session management')
-    .build();
+  // Only mount Swagger outside production, or when explicitly enabled.
+  const enableSwagger =
+    !isProduction ||
+    configService.get<string>('ENABLE_SWAGGER', 'false') === 'true';
 
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('docs', app, document);
+  if (enableSwagger) {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('Health-chain-stellar API')
+      .setDescription(
+        'HealthDonor Protocol - Transparent health donations on Stellar Soroban',
+      )
+      .setVersion('1.0.0')
+      .addBearerAuth()
+      .addTag('Authentication', 'User authentication and session management')
+      .build();
+
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('docs', app, document);
+  }
 
   const port = configService.get<number>('PORT', 3001);
   await app.listen(port);
@@ -87,9 +94,11 @@ async function bootstrap() {
   logger.log(
     `Application is running on: http://localhost:${port}/${apiPrefix}`,
   );
-  logger.log(
-    `Swagger documentation available at: http://localhost:${port}/docs`,
-  );
+  if (enableSwagger) {
+    logger.log(
+      `Swagger documentation available at: http://localhost:${port}/docs`,
+    );
+  }
   logger.log(
     `Environment: ${configService.get<string>('NODE_ENV', 'development')}`,
   );
