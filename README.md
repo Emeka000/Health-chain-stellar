@@ -104,25 +104,4 @@ For contract deployment, full environment variable reference, and contributor gu
 | `lifebank-soroban/docs/contracts/` | [Contract Reference Docs](./lifebank-soroban/docs/contracts/) |
 | `docs/architecture.md` | [Architecture Diagram](./docs/architecture.md) |
 
-## Handsoff notes
 
-<!-- handsoff-issue-1291 -->
-- #1291: [contracts/temperature] log_reading never emits an event for detected violations
-
-<!-- handsoff-issue-1490 -->
-- #1490: [backend/auth] Account lockout is never enforced — ensureAccountIsUsable() has no throw for a still-locked account
-
-<!-- handsoff-issue-1452 -->
-- #1452: [lifebank/payments] Mirrored BloodRequest struct is missing a field, so every cross-call to the requests contract fails and create_payment/create_escrow become permanently
-
-<!-- handsoff-issue-1454 -->
-- #1454: [lifebank/payments] index_by_request never extends its persistent-storage TTL, letting the DuplicatePayment guard silently expire
-
-<!-- handsoff-issue-1455 -->
-- #1455: [lifebank/payments] update_status can silently exit Disputed status, bypassing resolve_dispute and leaving stale dispute fields
-
-<!-- handsoff-issue-1482 -->
-- #1482: [lifebank/temperature] compute_excursion_data trusts stale is_violation flags computed under a historical threshold instead of re-validating against the current one
-
-<!-- handsoff-issue-1675 -->
-- #1675: [backend/auth, backend/route-deviation] #1490 and #1531 were closed by README-only commits and are still present

@@ -217,6 +217,12 @@ Before opening a PR, ensure:
 5. Address review feedback promptly.
 6. A maintainer will merge once approved.
 
+### Closing Issues
+
+A PR that references `Closes #N` must include actual code or test changes — not just documentation updates to README.md or similar meta files. Reviewers should reject `Closes #N` labels on README-only diffs; instead, such PRs should omit the `Closes` reference and open a new issue if tracking that update is needed.
+
+This prevents bugs from being falsely marked as resolved when only the tracking list has changed.
+
 ## Code Style
 
 ### Backend (TypeScript/NestJS)
