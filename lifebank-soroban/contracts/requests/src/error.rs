@@ -29,6 +29,12 @@ pub enum ContractError {
     FulfillingOrgAlreadySet = 316,
     /// No trusted payments contract has been configured.
     PaymentsContractNotSet = 317,
+    /// The inventory contract refused to release the request's reservation
+    /// (e.g. inventory is paused). The transition is aborted so the
+    /// reservation is never orphaned; retry once inventory accepts releases.
+    InventoryReleaseFailed = 318,
+    /// `expire_request` was called before the request's `required_by_timestamp` passed.
+    RequestNotExpired = 319,
 }
 
 #[cfg(test)]
@@ -58,6 +64,8 @@ mod tests {
             ContractError::BatchTooLarge,
             ContractError::FulfillingOrgAlreadySet,
             ContractError::PaymentsContractNotSet,
+            ContractError::InventoryReleaseFailed,
+            ContractError::RequestNotExpired,
         ];
 
         for i in 0..all.len() {

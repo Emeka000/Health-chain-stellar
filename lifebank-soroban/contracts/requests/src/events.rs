@@ -27,6 +27,17 @@ pub struct RequestCancelled {
     pub timestamp: u64,
 }
 
+/// Emitted when `expire_request` closes an overdue request. The request's
+/// status becomes `Cancelled`; this event (and the history entry reason)
+/// distinguish an expiry from a manual cancellation.
+#[contractevent(topics = ["request_expired"], data_format = "vec")]
+pub struct RequestExpired {
+    pub request_id: u64,
+    pub required_by_timestamp: u64,
+    pub released_reservation: bool,
+    pub timestamp: u64,
+}
+
 #[contractevent(topics = ["request_status_updated"], data_format = "vec")]
 pub struct RequestStatusUpdated {
     pub request_id: u64,
@@ -125,6 +136,22 @@ pub fn emit_request_cancelled(env: &Env, request_id: u64, actor: &Address, times
     RequestCancelled {
         request_id,
         actor: actor.clone(),
+        timestamp,
+    }
+    .publish(env);
+}
+
+pub fn emit_request_expired(
+    env: &Env,
+    request_id: u64,
+    required_by_timestamp: u64,
+    released_reservation: bool,
+    timestamp: u64,
+) {
+    RequestExpired {
+        request_id,
+        required_by_timestamp,
+        released_reservation,
         timestamp,
     }
     .publish(env);
@@ -258,6 +285,7 @@ pub fn emit_rider_assigned(
 /// Returns the topic symbols emitted by the role-change and rider-assignment
 /// events, so callers and tests can reference them without duplicating
 /// string literals.
+#[allow(dead_code)]
 pub fn role_event_topics(env: &Env) -> [Symbol; 7] {
     [
         Symbol::new(env, "hospital_authorized"),

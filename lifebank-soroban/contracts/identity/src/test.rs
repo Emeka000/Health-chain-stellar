@@ -646,6 +646,9 @@ fn setup_fulfilled_request(
     hospital: &Address,
     request_client: &RequestContractClient<'_>,
 ) -> u64 {
+    // The requests contract no longer authorizes its admin as a hospital
+    // implicitly (#1813), so grant the role explicitly.
+    request_client.authorize_hospital(hospital);
     let request_id = request_client.create_request(
         hospital,
         &BloodType::APositive,
@@ -1298,7 +1301,7 @@ fn test_correct_delivery_proof_keeps_history() {
     assert!(!original.temperature_ok);
 
     // Admin corrects it.
-    client.correct_delivery_proof(&admin, &request_id, &450_u32, &true);
+    client.correct_delivery_proof(&admin, &request_id, &bank, &recipient, &450_u32, &true);
 
     let corrected = client.get_delivery(&request_id).unwrap();
     assert_eq!(corrected.quantity_delivered, 450);
@@ -1343,7 +1346,14 @@ fn test_correct_delivery_proof_requires_admin() {
     client.verify_delivery(&recipient, &request_id, &bank, &recipient, &500_u32, &true);
 
     let stranger = Address::generate(&env);
-    let result = client.try_correct_delivery_proof(&stranger, &request_id, &450_u32, &false);
+    let result = client.try_correct_delivery_proof(
+        &stranger,
+        &request_id,
+        &bank,
+        &recipient,
+        &450_u32,
+        &false,
+    );
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
 }
 
