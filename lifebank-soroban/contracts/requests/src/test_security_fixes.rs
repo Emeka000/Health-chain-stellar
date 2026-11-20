@@ -420,9 +420,9 @@ fn test_set_fulfilling_org_records_history_and_event() {
     let blood_bank = Address::generate(&env);
     client.authorize_blood_bank(&blood_bank);
 
-    let events_before = env.events().all().len();
+    // `env.events().all()` only holds the events of the last invocation.
     client.set_fulfilling_org(&blood_bank, &request_id, &blood_bank);
-    assert_eq!(env.events().all().len(), events_before + 1);
+    assert_eq!(env.events().all().len(), 1);
 
     let history = client.get_request_history(&request_id);
     let last = history.get(history.len() - 1).unwrap();
@@ -594,6 +594,8 @@ fn test_cancel_request_by_contract_rejects_inprogress() {
         &String::from_str(&env, "Approved"),
     );
     client.set_reservation_id(&admin, &request_id, &77u64);
+    // `admin` stands in for the trusted payments contract in these tests.
+    client.set_payments_contract(&admin);
 
     let rider = Address::generate(&env);
     client.authorize_rider(&rider);
@@ -630,6 +632,8 @@ fn test_cancel_request_by_contract_allows_approved() {
         &String::from_str(&env, "Approved"),
     );
     client.set_reservation_id(&admin, &request_id, &88u64);
+    // `admin` stands in for the trusted payments contract in these tests.
+    client.set_payments_contract(&admin);
 
     client.cancel_request_by_contract(
         &admin,

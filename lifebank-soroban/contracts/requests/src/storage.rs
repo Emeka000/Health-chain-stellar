@@ -226,7 +226,7 @@ pub fn default_metadata(env: &Env) -> ContractMetadata {
     }
 }
 
-/// Append a request ID to a hospital's request index.
+/// Append a request ID to a hospital's open-request index.
 pub fn append_to_hospital_requests(env: &Env, hospital: &Address, request_id: u64) {
     let key = DataKey::HospitalRequestIds(hospital.clone());
     let mut ids: soroban_sdk::Vec<u64> = env
@@ -262,7 +262,39 @@ pub fn remove_from_hospital_requests(env: &Env, hospital: &Address, request_id: 
         .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
-/// Retrieve all request IDs for a hospital.
+/// Record a request in the hospital's append-only history index. Unlike the
+/// open-request index, entries are never removed on terminal transitions.
+pub fn append_to_hospital_history(env: &Env, hospital: &Address, request_id: u64) {
+    let count = get_hospital_history_count(env, hospital);
+    let entry_key = DataKey::HospitalRequestAt(hospital.clone(), count);
+    env.storage().persistent().set(&entry_key, &request_id);
+    env.storage()
+        .persistent()
+        .extend_ttl(&entry_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+
+    let count_key = DataKey::HospitalRequestCount(hospital.clone());
+    env.storage().persistent().set(&count_key, &(count + 1));
+    env.storage()
+        .persistent()
+        .extend_ttl(&count_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+}
+
+/// Number of requests ever created by a hospital.
+pub fn get_hospital_history_count(env: &Env, hospital: &Address) -> u32 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::HospitalRequestCount(hospital.clone()))
+        .unwrap_or(0)
+}
+
+/// Request ID at `position` in a hospital's append-only history index.
+pub fn get_hospital_history_entry(env: &Env, hospital: &Address, position: u32) -> Option<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::HospitalRequestAt(hospital.clone(), position))
+}
+
+/// Retrieve the open (non-terminal) request IDs for a hospital.
 pub fn get_hospital_request_ids(env: &Env, hospital: &Address) -> soroban_sdk::Vec<u64> {
     let key = DataKey::HospitalRequestIds(hospital.clone());
     env.storage()
