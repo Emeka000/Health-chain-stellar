@@ -101,7 +101,7 @@ pub struct BloodRequest {
     /// Organization (blood bank) that fulfilled this request, if any.
     pub fulfilled_by: Option<Address>,
     /// Request lifecycle transitions.
-    pub history: Vec<RequestHistoryEntry>,
+    pub history_len: u32,
 }
 
 /// Mirrors `request_contract::types::RequestHistoryEntry`. A struct is decoded

@@ -132,7 +132,7 @@ pub struct BloodRequest {
     pub fulfilled_quantity_ml: u32,
     pub reservation_id: Option<u64>,
     pub fulfilled_by: Option<Address>,
-    pub history: Vec<RequestHistoryEntry>,
+    pub history_len: u32,
 }
 
 #[contracttype]

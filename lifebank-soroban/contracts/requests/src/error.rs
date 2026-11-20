@@ -29,6 +29,16 @@ pub enum ContractError {
     FulfillingOrgAlreadySet = 316,
     /// No trusted payments contract has been configured.
     PaymentsContractNotSet = 317,
+    /// Contract is paused; state-mutating entrypoints are disabled.
+    ContractPaused = 318,
+    /// The inventory reservation does not exist.
+    ReservationNotFound = 319,
+    /// The inventory reservation was created for a different request.
+    ReservationRequestMismatch = 320,
+    /// The reservation's requester does not match the fulfilling org.
+    ReservationOwnerMismatch = 321,
+    /// A blood bank may only claim a request whose reservation it owns.
+    ReservationRequired = 322,
 }
 
 #[cfg(test)]
@@ -58,6 +68,11 @@ mod tests {
             ContractError::BatchTooLarge,
             ContractError::FulfillingOrgAlreadySet,
             ContractError::PaymentsContractNotSet,
+            ContractError::ContractPaused,
+            ContractError::ReservationNotFound,
+            ContractError::ReservationRequestMismatch,
+            ContractError::ReservationOwnerMismatch,
+            ContractError::ReservationRequired,
         ];
 
         for i in 0..all.len() {
