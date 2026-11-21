@@ -204,7 +204,7 @@ Before opening a PR, ensure:
 - [ ] Tests pass (`npm run test` for backend, `cargo test` for contracts)
 - [ ] Linting passes (`npm run lint` for backend)
 - [ ] New features have accompanying tests
-- [ ] Database schema changes include migration files
+- [ ] Database schema changes include migration files (see [Writing a Migration](backend/MIGRATION_POLICY.md#writing-a-migration))
 - [ ] Commit messages follow the conventional format
 - [ ] PR description explains what changed and why
 
