@@ -187,13 +187,38 @@ export class TrackingGateway
   }
 
   /**
-   * Returns true if the client is allowed to PUBLISH events for a delivery.
-   * Only the assigned rider (riderId claim matches) or admins/dispatchers may publish.
+   * Resolves the rider assigned to a delivery server-side (cached).
+   * Never trusts client-supplied riderId for authorization.
    */
-  private canPublish(ctx: ClientContext, deliveryRiderId: string | undefined): boolean {
+  private async resolveAssignedRider(deliveryId: string): Promise<string | undefined> {
+    const cached = this.assignedRiderCache.get(deliveryId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.riderId;
+    }
+
+    const dispatch = await this.dispatchRepo.findOne({
+      where: { orderId: deliveryId },
+    });
+
+    const riderId = dispatch?.riderId ?? undefined;
+    this.assignedRiderCache.set(deliveryId, {
+      riderId,
+      expiresAt: Date.now() + ASSIGNED_RIDER_CACHE_TTL_MS,
+    });
+    return riderId;
+  }
+
+  /**
+   * Returns true if the client is allowed to PUBLISH events for a delivery.
+   * Only the assigned rider (resolved server-side) or admins/dispatchers may publish.
+   * The client-supplied riderId is ignored for authorization.
+   */
+  private async canPublish(ctx: ClientContext, deliveryId: string): Promise<boolean> {
     if (['admin', 'super_admin', 'dispatcher'].includes(ctx.role)) return true;
-    if (ctx.role === 'rider' && ctx.riderId && ctx.riderId === deliveryRiderId) return true;
-    return false;
+    if (ctx.role !== 'rider' || !ctx.riderId) return false;
+
+    const assignedRiderId = await this.resolveAssignedRider(deliveryId);
+    return !!assignedRiderId && ctx.riderId === assignedRiderId;
   }
 
   private getContext(client: Socket): ClientContext | null {
@@ -267,7 +292,7 @@ export class TrackingGateway
     });
   }
 
-  private emitEtaPayload(payload: ETAPayload): void {
+  private emitETAPayload(payload: ETAPayload): void {
     const room = `delivery:${payload.deliveryId}`;
     this.server.to(room).emit('delivery.eta.updated', {
       deliveryId: payload.deliveryId,
@@ -278,189 +303,130 @@ export class TrackingGateway
     });
   }
 
-  private handleLocationStream(payload: LocationUpdatePayload): void {
-    const streamKey = this.getStreamKey(payload.deliveryId, payload.riderId);
-    const state = this.getStreamState(streamKey);
-    const eventId = payload.eventId ?? this.buildEventId('location', payload);
-
-    if (this.isDuplicateEvent(state, eventId)) {
-      this.logger.debug(
-        `Duplicate location event suppressed: stream=${streamKey} eventId=${eventId}`,
-      );
-      return;
-    }
-
-    if (typeof payload.sequenceNumber !== 'number') {
-      this.emitLocationPayload({ ...payload, eventId });
-      return;
-    }
-
-    if (payload.sequenceNumber <= state.lastSequenceNumber) {
-      this.logger.debug(
-        `Late location event dropped: stream=${streamKey} seq=${payload.sequenceNumber} last=${state.lastSequenceNumber}`,
-      );
-      return;
-    }
-
-    state.bufferedLocationEvents.set(payload.sequenceNumber, { ...payload, eventId });
-
-    while (state.bufferedLocationEvents.has(state.lastSequenceNumber + 1)) {
-      const nextSequence = state.lastSequenceNumber + 1;
-      const nextPayload = state.bufferedLocationEvents.get(nextSequence)!;
-      state.bufferedLocationEvents.delete(nextSequence);
-      state.lastSequenceNumber = nextSequence;
-      this.emitLocationPayload(nextPayload);
-    }
-  }
-
-  private rejectUnauthorized(client: Socket, action: string, deliveryId: string): void {
-    this.logger.warn(
-      `Unauthorized ${action} attempt: socket=${client.id} deliveryId=${deliveryId}`,
-    );
-    client.emit('error', { reason: `Not authorized to ${action} for delivery ${deliveryId}` });
-  }
-
-  // ---------------------------------------------------------------------------
-  // Subscribe / Unsubscribe
-  // ---------------------------------------------------------------------------
-
-  @SubscribeMessage('delivery.subscribe')
-  async handleDeliverySubscribe(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { deliveryId: string },
-  ) {
-    if (!data?.deliveryId) {
-      client.emit('error', { message: 'Missing deliveryId' });
-      return;
-    }
-
-    const ctx = this.getContext(client);
-    if (!ctx) {
-      client.emit('error', { reason: 'Client not authenticated' });
-      return;
-    }
-
-    if (!(await this.canSubscribe(ctx, data.deliveryId))) {
-      this.rejectUnauthorized(client, 'subscribe', data.deliveryId);
-      return;
-    }
-
-    const room = `delivery:${data.deliveryId}`;
-    client.join(room);
-    ctx.rooms.add(room);
-
-    this.logger.debug(`Client ${client.id} (user=${ctx.userId}) joined ${room}`);
-    client.emit('delivery.subscribed', {
-      deliveryId: data.deliveryId,
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  @SubscribeMessage('delivery.unsubscribe')
-  handleDeliveryUnsubscribe(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { deliveryId: string },
-  ) {
-    if (!data?.deliveryId) {
-      client.emit('error', { message: 'Missing deliveryId' });
-      return;
-    }
-
-    const ctx = this.getContext(client);
-    if (!ctx) {
-      client.emit('error', { reason: 'Client not authenticated' });
-      return;
-    }
-
-    const room = `delivery:${data.deliveryId}`;
-    client.leave(room);
-    ctx.rooms.delete(room);
-
-    client.emit('delivery.unsubscribed', {
-      deliveryId: data.deliveryId,
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  // ---------------------------------------------------------------------------
-  // Publish events — delivery-level authorization + schema validation
-  // ---------------------------------------------------------------------------
-
   @SubscribeMessage('rider.location')
-  handleRiderLocation(
-    @ConnectedSocket() client: Socket,
+  async handleLocationUpdate(
     @MessageBody() data: LocationUpdatePayload,
-  ) {
-    if (!data?.deliveryId || !data?.riderId) return;
-
+    @ConnectedSocket() client: Socket,
+  ): Promise<void> {
     const ctx = this.getContext(client);
-    if (!ctx) return;
-
-    // Only the rider assigned to this delivery (or admin/dispatcher) may publish location
-    if (!this.canPublish(ctx, data.riderId)) {
-      this.rejectUnauthorized(client, 'publish location', data.deliveryId);
+    if (!ctx) {
+      client.emit('error', { reason: 'Not authenticated' });
       return;
     }
 
-    // Coordinate range validation
+    if (!data?.deliveryId) {
+      client.emit('error', { reason: 'deliveryId is required' });
+      return;
+    }
+
+    if (!(await this.canPublish(ctx, data.deliveryId))) {
+      this.logger.warn(
+        `Publish denied (location): deliveryId=${data.deliveryId} user=${ctx.userId} role=${ctx.role}`,
+      );
+      client.emit('error', { reason: 'Not authorized to publish for this delivery' });
+      return;
+    }
+
     if (
       typeof data.latitude !== 'number' ||
       typeof data.longitude !== 'number' ||
-      data.latitude < LAT_MIN || data.latitude > LAT_MAX ||
-      data.longitude < LON_MIN || data.longitude > LON_MAX
+      data.latitude < LAT_MIN ||
+      data.latitude > LAT_MAX ||
+      data.longitude < LON_MIN ||
+      data.longitude > LON_MAX
     ) {
       client.emit('error', { reason: 'Invalid coordinates' });
       return;
     }
 
-    this.handleLocationStream(data);
+    const streamKey = this.getStreamKey(data.deliveryId, ctx.riderId);
+    const state = this.getStreamState(streamKey);
+
+    const eventId =
+      data.eventId ?? this.buildEventId('location', data as unknown as Record<string, unknown>);
+
+    if (this.isDuplicateEvent(state, eventId)) {
+      return;
+    }
+
+    const sequenceNumber = data.sequenceNumber ?? state.lastSequenceNumber + 1;
+    state.lastSequenceNumber = Math.max(state.lastSequenceNumber, sequenceNumber);
+
+    this.emitLocationPayload({
+      ...data,
+      riderId: ctx.riderId ?? data.riderId,
+      eventId,
+      sequenceNumber,
+    });
   }
 
   @SubscribeMessage('delivery.status')
-  handleDeliveryStatus(
-    @ConnectedSocket() client: Socket,
+  async handleDeliveryStatus(
     @MessageBody() data: DeliveryStatusPayload,
-  ) {
-    if (!data?.deliveryId || !data?.status) return;
-
+    @ConnectedSocket() client: Socket,
+  ): Promise<void> {
     const ctx = this.getContext(client);
-    if (!ctx) return;
-
-    if (!this.canPublish(ctx, data.riderId)) {
-      this.rejectUnauthorized(client, 'publish status', data.deliveryId);
+    if (!ctx) {
+      client.emit('error', { reason: 'Not authenticated' });
       return;
     }
 
-    // Status enum validation
-    if (!VALID_DELIVERY_STATUSES.has(data.status)) {
-      client.emit('error', { reason: `Invalid status value: ${data.status}` });
+    if (!data?.deliveryId) {
+      client.emit('error', { reason: 'deliveryId is required' });
       return;
     }
 
-    const state = this.getStreamState(this.getStreamKey(data.deliveryId, data.riderId));
-    const eventId = data.eventId ?? this.buildEventId('status', data);
+    if (!(await this.canPublish(ctx, data.deliveryId))) {
+      this.logger.warn(
+        `Publish denied (status): deliveryId=${data.deliveryId} user=${ctx.userId} role=${ctx.role}`,
+      );
+      client.emit('error', { reason: 'Not authorized to publish for this delivery' });
+      return;
+    }
+
+    if (!data.status || !VALID_DELIVERY_STATUSES.has(data.status)) {
+      client.emit('error', { reason: 'Invalid delivery status' });
+      return;
+    }
+
+    const streamKey = this.getStreamKey(data.deliveryId, ctx.riderId);
+    const state = this.getStreamState(streamKey);
+
+    const eventId =
+      data.eventId ?? this.buildEventId('status', data as unknown as Record<string, unknown>);
+
     if (this.isDuplicateEvent(state, eventId)) {
-      this.logger.debug(`Duplicate status event suppressed: ${eventId}`);
       return;
     }
 
-    this.emitStatusPayload({ ...data, eventId });
-
-    this.logger.log(`Delivery ${data.deliveryId} status → ${data.status} by user=${ctx.userId}`);
+    this.emitStatusPayload({
+      ...data,
+      riderId: ctx.riderId ?? data.riderId,
+      eventId,
+    });
   }
 
   @SubscribeMessage('delivery.eta')
-  handleETABroadcast(
-    @ConnectedSocket() client: Socket,
+  async handleDeliveryETA(
     @MessageBody() data: ETAPayload,
-  ) {
-    if (!data?.deliveryId) return;
-
+    @ConnectedSocket() client: Socket,
+  ): Promise<void> {
     const ctx = this.getContext(client);
-    if (!ctx) return;
+    if (!ctx) {
+      client.emit('error', { reason: 'Not authenticated' });
+      return;
+    }
 
-    if (!this.canPublish(ctx, undefined)) {
-      this.rejectUnauthorized(client, 'publish ETA', data.deliveryId);
+    if (!data?.deliveryId) {
+      client.emit('error', { reason: 'deliveryId is required' });
+      return;
+    }
+
+    if (!(await this.canPublish(ctx, data.deliveryId))) {
+      this.logger.warn(
+        `Publish denied (eta): deliveryId=${data.deliveryId} user=${ctx.userId} role=${ctx.role}`,
+      );
+      client.emit('error', { reason: 'Not authorized to publish for this delivery' });
       return;
     }
 
@@ -469,39 +435,75 @@ export class TrackingGateway
       return;
     }
 
-    const state = this.getStreamState(this.getStreamKey(data.deliveryId));
-    const eventId = data.eventId ?? this.buildEventId('eta', data);
-    if (this.isDuplicateEvent(state, eventId)) {
-      this.logger.debug(`Duplicate ETA event suppressed: ${eventId}`);
-      return;
-    }
+    const streamKey = this.getStreamKey(data.deliveryId, ctx.riderId);
+    const state = this.getStreamState(streamKey);
 
-    this.emitEtaPayload({ ...data, eventId });
-  }
+    const eventId =
+      data.eventId ?? this.buildEventId('eta', data as unknown as Record<string, unknown>);
 
-  // ---------------------------------------------------------------------------
-  // Server-side emit helpers (called by services)
-  // ---------------------------------------------------------------------------
-
-  emitLocationUpdate(payload: LocationUpdatePayload): void {
-    this.handleLocationStream(payload);
-  }
-
-  emitDeliveryStatusUpdate(payload: DeliveryStatusPayload): void {
-    const state = this.getStreamState(this.getStreamKey(payload.deliveryId, payload.riderId));
-    const eventId = payload.eventId ?? this.buildEventId('status', payload);
     if (this.isDuplicateEvent(state, eventId)) {
       return;
     }
-    this.emitStatusPayload({ ...payload, eventId });
+
+    this.emitETAPayload({
+      ...data,
+      eventId,
+    });
   }
 
-  emitETAUpdate(payload: ETAPayload): void {
-    const state = this.getStreamState(this.getStreamKey(payload.deliveryId));
-    const eventId = payload.eventId ?? this.buildEventId('eta', payload);
-    if (this.isDuplicateEvent(state, eventId)) {
+  @SubscribeMessage('delivery.subscribe')
+  async handleSubscribe(
+    @MessageBody() data: { deliveryId: string },
+    @ConnectedSocket() client: Socket,
+  ): Promise<void> {
+    const ctx = this.getContext(client);
+    if (!ctx) {
+      client.emit('error', { reason: 'Not authenticated' });
       return;
     }
-    this.emitEtaPayload({ ...payload, eventId });
+
+    if (!data?.deliveryId) {
+      client.emit('error', { reason: 'deliveryId is required' });
+      return;
+    }
+
+    if (!(await this.canSubscribe(ctx, data.deliveryId))) {
+      this.logger.warn(
+        `Subscribe denied: deliveryId=${data.deliveryId} user=${ctx.userId} role=${ctx.role}`,
+      );
+      client.emit('error', { reason: 'Not authorized to subscribe to this delivery' });
+      return;
+    }
+
+    const room = `delivery:${data.deliveryId}`;
+    await client.join(room);
+    ctx.rooms.add(room);
+
+    client.emit('subscribed', { deliveryId: data.deliveryId, room });
+    this.logger.log(`Tracking WS subscribed: ${client.id} -> ${room}`);
+  }
+
+  @SubscribeMessage('delivery.unsubscribe')
+  async handleUnsubscribe(
+    @MessageBody() data: { deliveryId: string },
+    @ConnectedSocket() client: Socket,
+  ): Promise<void> {
+    const ctx = this.getContext(client);
+    if (!ctx) {
+      client.emit('error', { reason: 'Not authenticated' });
+      return;
+    }
+
+    if (!data?.deliveryId) {
+      client.emit('error', { reason: 'deliveryId is required' });
+      return;
+    }
+
+    const room = `delivery:${data.deliveryId}`;
+    await client.leave(room);
+    ctx.rooms.delete(room);
+
+    client.emit('unsubscribed', { deliveryId: data.deliveryId, room });
+    this.logger.log(`Tracking WS unsubscribed: ${client.id} <- ${room}`);
   }
 }
