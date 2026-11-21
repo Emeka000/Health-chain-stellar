@@ -160,15 +160,121 @@ git add src/migrations/1708000001000-AddUserPhoneColumn.ts
 git commit -m "feat: add phone column to users table"
 ```
 
+## Writing a Migration
+
+This section describes the **only** approved way to create migration files. New contributors must follow these rules.
+
+### Step 1: Use the npm Script (Required)
+
+**Never hand-pick timestamps.** Always use the `migration:create` npm script:
+
+```bash
+cd backend
+npm run migration:create -- -n DescribeYourChange
+```
+
+This generates a migration file with a unique, monotonically increasing timestamp:
+
+```
+src/migrations/1708012345678-DescribeYourChange.ts
+```
+
+Timestamps are managed by TypeORM and are guaranteed to be unique and sequentially ordered.
+
+### Step 2: Implement `up()` and `down()`
+
+Complete both the `up()` and `down()` methods. The migration must:
+
+- **Only alter or create tables that existed in earlier migrations** — do not reference tables created by later migrations
+- **Be reversible** — `down()` must undo every change made by `up()`
+- **Include comments** explaining the purpose of the change
+- **Follow existing patterns** in `src/migrations/`
+
+**Example:**
+
+```typescript
+import { MigrationInterface, QueryRunner, TableColumn } from 'typeorm';
+
+export class AddPhoneToUsers1708012345678 implements MigrationInterface {
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    // Add phone column to users table (created in 1708000003000-CreateUserTable.ts)
+    await queryRunner.addColumn(
+      'users',
+      new TableColumn({
+        name: 'phone',
+        type: 'varchar',
+        isNullable: true,
+      }),
+    );
+  }
+
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    // Drop the phone column
+    await queryRunner.dropColumn('users', 'phone');
+  }
+}
+```
+
+### Step 3: Test on a Fresh Database (Required)
+
+Before opening a PR, test the migration on an empty database:
+
+```bash
+# Drop and recreate the database (development only)
+npm run typeorm query "DROP DATABASE health_chain"
+npm run typeorm query "CREATE DATABASE health_chain"
+
+# Run all migrations
+npm run migration:run
+
+# Verify all migrations succeeded
+npm run typeorm migration:show
+```
+
+**Troubleshooting:** If the migration fails, it likely violates one of the rules above (referencing a non-existent table, incorrect `down()` method, etc.). Fix it before opening a PR.
+
+### Step 4: Reference Other Migrations Correctly
+
+When your migration depends on a table created by another migration, verify that migration runs first:
+
+```typescript
+// ✅ CORRECT: Reference a table created in an earlier migration
+// (1708000003000-CreateUserTable.ts created 'users')
+export class AddPhoneToUsers1708012345678 implements MigrationInterface {
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.addColumn('users', ...);
+  }
+}
+
+// ❌ WRONG: Reference a table created in a later migration
+// (1780000000000-CreateAuthSessionTable.ts does not exist yet when
+// this migration runs)
+export class UpdateAuthSession1708012000000 implements MigrationInterface {
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.addColumn('auth_sessions', ...); // FAILS if not yet created
+  }
+}
+```
+
+### Timestamp Uniqueness
+
+The npm script generates timestamps that are **always unique and monotonically increasing**. You will never encounter duplicate timestamps if you follow this process.
+
+**Why timestamps matter:**
+- TypeORM executes migrations in timestamp order
+- Timestamps determine which table exists when your migration runs
+- Hand-picked timestamps cause conflicts and unpredictable behavior
+
 ## Best Practices
 
 ### For Developers
 
 1. **Keep migrations simple**: One logical change per migration
-2. **Test migrations**: Always test in staging before production
-3. **Document changes**: Add comments explaining schema changes
-4. **Reversibility**: Always implement `down()` method
+2. **Test migrations on an empty database**: Always run `migration:run` on a clean database before opening a PR
+3. **Document changes**: Add comments explaining the purpose of changes
+4. **Reversibility**: Always implement `down()` method that fully reverses `up()`
 5. **Naming**: Use descriptive migration names (e.g., `AddUserPhoneColumn`)
+6. **Never hand-pick timestamps**: Use `npm run migration:create` — it generates unique timestamps automatically
 
 ### For Code Review
 
