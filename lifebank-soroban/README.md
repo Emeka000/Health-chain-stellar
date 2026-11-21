@@ -21,6 +21,17 @@ Ten contracts that together manage the full blood donation lifecycle — from re
 
 The coordinator is the integration point. It holds references to inventory, payments, and requests, and enforces the canonical three-step workflow: `allocate_units → confirm_delivery → settle_payment`.
 
+## Understanding Contract Authorization
+
+**Before deploying to mainnet, read [docs/authority-model.md](docs/authority-model.md)** to understand:
+- Which contract trusts which (trust graph)
+- All privileged entrypoints and who can call them
+- Critical authorization challenges (e.g., why coordinator admin locks out dispute resolution)
+- Recommended key setup for mainnet (multisig, scoped operator pattern)
+- How to validate deployment addresses match the trust model
+
+This model is **not enforced by code; it's a system design**. Misconfiguration at deployment time breaks the entire workflow.
+
 ## Prerequisites
 
 - Rust toolchain with `wasm32-unknown-unknown` target
@@ -29,7 +40,7 @@ The coordinator is the integration point. It holds references to inventory, paym
 
 ```bash
 # Add the WASM target if you haven't already
-rustup target add wasm32-unknown-unknown
+rustup target target add wasm32-unknown-unknown
 ```
 
 ## Build

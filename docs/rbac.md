@@ -191,11 +191,13 @@ listed permissions; missing any one returns `403 Forbidden`.
 
 > Never edit existing migration files. Always write a new migration.
 
-1. **Generate the migration file:**
+**For complete migration guidelines, see [Writing a Migration](../backend/MIGRATION_POLICY.md#writing-a-migration) in MIGRATION_POLICY.md.**
+
+1. **Generate the migration file (required — do not hand-pick timestamps):**
 
    ```bash
    cd backend
-   npm run migration:generate -- src/migrations/$(date +%s%3N)-DescribeChange
+   npm run migration:create -- -n AddPermissionToRider
    ```
 
 2. **Fill in `up` and `down`:**
