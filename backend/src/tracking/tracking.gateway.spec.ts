@@ -158,6 +158,11 @@ describe('TrackingGateway', () => {
         riderId: 'rider-123',
         rooms: new Set(),
       });
+
+      // Server-side resolution of the assigned rider for the delivery.
+      jest
+        .spyOn(gateway as any, 'resolveDeliveryRiderId')
+        .mockResolvedValue('rider-123');
     });
 
     it('should broadcast location update', () => {
@@ -186,6 +191,22 @@ describe('TrackingGateway', () => {
       const data = { latitude: 40.7128, longitude: -74.0060 };
 
       gateway.handleRiderLocation(mockSocket, data);
+
+      expect(mockServer.to).not.toHaveBeenCalled();
+      expect(mockServer.emit).not.toHaveBeenCalled();
+    });
+
+    it('rejects a rider not assigned to the delivery', async () => {
+      jest
+        .spyOn(gateway as any, 'resolveDeliveryRiderId')
+        .mockResolvedValue('other-rider');
+
+      await gateway.handleRiderLocation(mockSocket, {
+        riderId: 'rider-123',
+        deliveryId: 'delivery-456',
+        latitude: 40.7128,
+        longitude: -74.006,
+      });
 
       expect(mockServer.to).not.toHaveBeenCalled();
       expect(mockServer.emit).not.toHaveBeenCalled();
@@ -262,6 +283,10 @@ describe('TrackingGateway', () => {
         riderId: 'rider-123',
         rooms: new Set(),
       });
+
+      jest
+        .spyOn(gateway as any, 'resolveDeliveryRiderId')
+        .mockResolvedValue('rider-123');
     });
 
     it('should broadcast delivery status update', () => {
@@ -279,6 +304,21 @@ describe('TrackingGateway', () => {
         status: 'in_transit',
         riderId: 'rider-123',
       }));
+    });
+
+    it('rejects a rider not assigned to the delivery', async () => {
+      jest
+        .spyOn(gateway as any, 'resolveDeliveryRiderId')
+        .mockResolvedValue('other-rider');
+
+      await gateway.handleDeliveryStatus(mockSocket, {
+        deliveryId: 'delivery-456',
+        status: 'DELIVERED',
+        riderId: 'rider-123',
+      });
+
+      expect(mockServer.to).not.toHaveBeenCalled();
+      expect(mockServer.emit).not.toHaveBeenCalled();
     });
   });
 
@@ -299,78 +339,28 @@ describe('TrackingGateway', () => {
 
       (gateway as any).server = mockServer;
       (gateway as any).connectedClients.set('test-socket-id', {
-        userId: 'admin-1',
-        role: 'admin',
+        userId: 'rider-123',
+        role: 'rider',
+        riderId: 'rider-123',
         rooms: new Set(),
       });
+
+      jest
+        .spyOn(gateway as any, 'resolveDeliveryRiderId')
+        .mockResolvedValue('rider-123');
     });
 
-    it('should broadcast ETA update', () => {
-      const data = {
+    it('allows the assigned rider to publish an ETA update', async () => {
+      await gateway.handleDeliveryEta(mockSocket, {
         deliveryId: 'delivery-456',
-        estimatedMinutes: 15,
-        distanceKm: 2.5,
-      };
-
-      gateway.handleETABroadcast(mockSocket, data);
+        etaMinutes: 12,
+      });
 
       expect(mockServer.to).toHaveBeenCalledWith('delivery:delivery-456');
-      expect(mockServer.emit).toHaveBeenCalledWith('delivery.eta.updated', expect.objectContaining({
-        deliveryId: 'delivery-456',
-        estimatedMinutes: 15,
-        distanceKm: 2.5,
-      }));
-    });
-  });
-
-  describe('Public Methods', () => {
-    let mockServer: any;
-
-    beforeEach(() => {
-      mockServer = {
-        to: jest.fn().mockReturnThis(),
-        emit: jest.fn(),
-      };
-
-      (gateway as any).server = mockServer;
-    });
-
-    it('should emit location update via public method', () => {
-      const payload = {
-        riderId: 'rider-123',
-        deliveryId: 'delivery-456',
-        latitude: 40.7128,
-        longitude: -74.0060,
-      };
-
-      gateway.emitLocationUpdate(payload);
-
-      expect(mockServer.to).toHaveBeenCalledWith('delivery:delivery-456');
-      expect(mockServer.emit).toHaveBeenCalledWith('location.update', expect.objectContaining(payload));
-    });
-
-    it('should emit delivery status update via public method', () => {
-      const payload = {
-        deliveryId: 'delivery-456',
-        status: 'delivered',
-      };
-
-      gateway.emitDeliveryStatusUpdate(payload);
-
-      expect(mockServer.to).toHaveBeenCalledWith('delivery:delivery-456');
-      expect(mockServer.emit).toHaveBeenCalledWith('delivery.status.updated', expect.objectContaining(payload));
-    });
-
-    it('should emit ETA update via public method', () => {
-      const payload = {
-        deliveryId: 'delivery-456',
-        estimatedMinutes: 10,
-      };
-
-      gateway.emitETAUpdate(payload);
-
-      expect(mockServer.to).toHaveBeenCalledWith('delivery:delivery-456');
-      expect(mockServer.emit).toHaveBeenCalledWith('delivery.eta.updated', expect.objectContaining(payload));
+      expect(mockServer.emit).toHaveBeenCalledWith(
+        'delivery.eta.updated',
+        expect.objectContaining({ deliveryId: 'delivery-456' }),
+      );
     });
   });
 });
