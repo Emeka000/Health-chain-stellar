@@ -97,11 +97,11 @@ cargo install --locked stellar-cli
 5. **Build and deploy smart contracts to testnet (optional):**
 
    ```bash
-   # Build the main registry contract
+   # Build the legacy registry contract (contracts/)
    cd contracts
    cargo build --target wasm32-unknown-unknown --release
 
-   # Build the lifebank-soroban suite
+   # Build the lifebank-soroban suite (ten deployed contracts)
    cd ../lifebank-soroban
    bash scripts/build-all.sh
 
@@ -151,7 +151,16 @@ cd backend
 npm run test:e2e
 ```
 
-### Contract Tests
+### Lifebank Soroban Contract Tests
+
+The ten deployed contracts live in `lifebank-soroban/` (not `contracts/`). Run their test suite:
+
+```bash
+cd lifebank-soroban
+cargo test --workspace
+```
+
+The legacy `contracts/` crate contains the old healthchain registry contract. To test it:
 
 ```bash
 cd contracts
@@ -160,8 +169,10 @@ cargo test
 
 ### Frontend Type Checking
 
+Type checking requires the correct working directory. The app lives in `frontend/health-chain/`:
+
 ```bash
-cd frontend
+cd frontend/health-chain
 npx tsc --noEmit
 ```
 
@@ -201,8 +212,14 @@ docs: add API endpoint documentation
 
 Before opening a PR, ensure:
 
-- [ ] Tests pass (`npm run test` for backend, `cargo test` for contracts)
-- [ ] Linting passes (`npm run lint` for backend)
+- [ ] Tests pass:
+  - Backend: `cd backend && npm run test`
+  - Lifebank contracts: `cd lifebank-soroban && cargo test --workspace`
+  - Legacy contracts: `cd contracts && cargo test` (if modified)
+- [ ] Linting passes (check-only, no rewrites):
+  - Backend: `cd backend && npm run lint:check`
+  - Contracts: `cd lifebank-soroban && cargo clippy --all-targets --all-features`
+- [ ] Frontend type checking: `cd frontend/health-chain && npx tsc --noEmit`
 - [ ] New features have accompanying tests
 - [ ] Database schema changes include migration files (see [Writing a Migration](backend/MIGRATION_POLICY.md#writing-a-migration))
 - [ ] Commit messages follow the conventional format
@@ -223,20 +240,32 @@ Before opening a PR, ensure:
 
 - Follow the ESLint configuration in `backend/eslint.config.mjs`.
 - Use Prettier for formatting (config in `backend/.prettierrc`).
-- Run linting:
+- Check linting (without modifying files):
+  ```bash
+  cd backend && npm run lint:check
+  ```
+- Auto-fix linting issues:
   ```bash
   cd backend && npm run lint
   ```
 - Follow NestJS conventions: modules, services, controllers, DTOs.
 
-### Frontend
+### Frontend (TypeScript/React)
 
 - Use TypeScript strict mode.
 - Follow existing component patterns.
+- Type check:
+  ```bash
+  cd frontend/health-chain && npx tsc --noEmit
+  ```
 
 ### Contracts (Rust/Soroban)
 
-- Run clippy for linting:
+- Lifebank contracts (recommended):
+  ```bash
+  cd lifebank-soroban && cargo clippy --all-targets --all-features
+  ```
+- Legacy contracts:
   ```bash
   cd contracts && cargo clippy
   ```
