@@ -1,6 +1,6 @@
 # RBAC — Role-to-Permission Matrix
 
-> **Source of truth:** the seed data in
+> **Intended source of truth:** the seed data in
 > [`1708000001000-CreateRbacTables.ts`](../backend/src/migrations/1708000001000-CreateRbacTables.ts)
 > and
 > [`1820000002000-AddFineGrainedPermissionScopes.ts`](../backend/src/migrations/1820000002000-AddFineGrainedPermissionScopes.ts).
@@ -9,6 +9,19 @@
 > [`backend/src/auth/__tests__/rbac-coverage.spec.ts`](../backend/src/auth/__tests__/rbac-coverage.spec.ts)
 > fails whenever a `Permission` enum value is not granted to at least one role,
 > so the table below can never silently drift from the migrations.
+>
+> ⚠️ **Critical known issues:**
+> 1. **Schema mismatch:** The migrations have incorrect column names (`permission` vs `permission_id`)
+>    that prevent permissions from being seeded correctly.
+> 2. **Role discrepancies:** Migrations create `rider`, `driver`, `dispatcher`, `admin` roles,
+>    but this documentation uses `admin`, `hospital`, `donor`, `rider`, `vendor`.
+> 3. **Missing role creation:** The `vendor` role has permissions granted in migrations
+>    but the role itself is never created.
+> 4. **Extra permissions:** `manage:deliveries` is granted in migrations but not in the
+>    `Permission` enum.
+>
+> This documentation reflects the **desired/intended** RBAC model, not what's actually
+> seeded in the database. Actual grants may differ significantly. See issues #1533, #1534.
 
 ---
 
@@ -91,8 +104,8 @@
 | `CREATE_DISPATCH` | `create:dispatch` | Create a new dispatch assignment | ✓ | — | — | — | — |
 | `UPDATE_DISPATCH` | `update:dispatch` | Update dispatch status / routing | ✓ | — | — | ✓ | — |
 | `DELETE_DISPATCH` | `delete:dispatch` | Remove a dispatch record | ✓ | — | — | — | — |
-| `MANAGE_DISPATCH` | `manage:dispatch` | Bulk / supervisory dispatch operations | ✓ | — | — | ✓ | — |
-| `DISPATCH_OVERRIDE` | `dispatch:override` | Force-assign or override a dispatch decision (Issue #374) | ✓ | — | — | ✓ | — |
+| `MANAGE_DISPATCH` | `manage:dispatch` | Bulk / supervisory dispatch operations | ✓ | — | — | — | — |
+| `DISPATCH_OVERRIDE` | `dispatch:override` | Force-assign or override a dispatch decision (Issue #374) | ✓ | — | — | — | — |
 
 ### Location
 
