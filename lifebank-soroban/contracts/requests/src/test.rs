@@ -4,25 +4,11 @@ use crate::{
     RequestStatus, Urgency,
 };
 use soroban_sdk::{
-    contract, contractimpl,
     testutils::{Address as _, Events as _, Ledger as _},
     Address, Env, String,
 };
 
-/// Minimal inventory mock so cross-contract release calls don't panic.
-#[contract]
-struct MockInventory;
-
-#[contractimpl]
-impl MockInventory {
-    pub fn release_reservation(_env: Env, _caller: Address, _reservation_id: u64) {}
-    pub fn release_reservation_by_contract(
-        _env: Env,
-        _authorized_contract: Address,
-        _reservation_id: u64,
-    ) {
-    }
-}
+use crate::test_utils::{seed_reservation, MockInventory};
 
 fn create_uninitialized_contract<'a>() -> (Env, RequestContractClient<'a>, Address) {
     let env = Env::default();
@@ -490,15 +476,14 @@ fn test_assign_rider_emits_event() {
         &9_500u64,
     );
 
-    // A rider can only be assigned to an Approved request.
+    // assign_rider only accepts Approved requests.
     client.update_request_status(
         &admin,
         &request_id,
         &RequestStatus::Approved,
         &String::from_str(&env, "Approved"),
     );
-
-    client.assign_rider(&admin, &request_id, &rider);
+    client.assign_rider(&request_id, &rider);
 
     let events = env.events().all();
     let last = events.last().unwrap();
@@ -527,6 +512,7 @@ fn test_cancel_request_with_reservation_id() {
     );
 
     let reservation_id = 42u64;
+    seed_reservation(&env, &client, reservation_id, request_id, &Address::generate(&env));
     client.set_reservation_id(&admin, &request_id, &reservation_id);
 
     client.cancel_request(

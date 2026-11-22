@@ -792,7 +792,7 @@ mod match_request_integration_tests {
             fulfilled_quantity_ml: 0,
             reservation_id: None,
             fulfilled_by: None,
-            history: soroban_sdk::Vec::new(env),
+            history_len: 0,
         }
     }
 
@@ -986,7 +986,7 @@ mod match_multiple_requests_integration_tests {
             fulfilled_quantity_ml: 0,
             reservation_id: None,
             fulfilled_by: None,
-            history: soroban_sdk::Vec::new(&env),
+            history_len: 0,
         };
         let _ = BloodUnit {
             id: 1,

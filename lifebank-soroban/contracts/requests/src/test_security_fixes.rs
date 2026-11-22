@@ -3,25 +3,11 @@ use crate::{
     RequestStatus, Urgency,
 };
 use soroban_sdk::{
-    contract, contractimpl,
     testutils::{Address as _, Events as _, Ledger as _},
     Address, Env, String, Vec,
 };
 
-/// Minimal inventory mock so cross-contract release calls succeed in tests.
-#[contract]
-struct MockInventory;
-
-#[contractimpl]
-impl MockInventory {
-    pub fn release_reservation(_env: Env, _caller: Address, _reservation_id: u64) {}
-    pub fn release_reservation_by_contract(
-        _env: Env,
-        _authorized_contract: Address,
-        _reservation_id: u64,
-    ) {
-    }
-}
+use crate::test_utils::{seed_reservation, MockInventory};
 
 fn setup_authorized_hospital<'a>() -> (Env, RequestContractClient<'a>, Address, Address) {
     let env = Env::default();
@@ -152,6 +138,7 @@ fn test_set_reservation_id_rejects_overwrite() {
         &String::from_str(&env, "Approved"),
     );
 
+    seed_reservation(&env, &client, 11u64, request_id, &Address::generate(&env));
     client.set_reservation_id(&admin, &request_id, &11u64);
 
     let result = client.try_set_reservation_id(&admin, &request_id, &22u64);
@@ -174,6 +161,7 @@ fn test_set_reservation_id_records_history_and_event() {
         &String::from_str(&env, "Approved"),
     );
 
+    seed_reservation(&env, &client, 42u64, request_id, &Address::generate(&env));
     client.set_reservation_id(&admin, &request_id, &42u64);
 
     // Client-mode events show last invocation only; verify exactly 1 event emitted.
@@ -264,6 +252,8 @@ fn test_set_fulfilling_org_authorized_blood_bank_succeeds() {
         &String::from_str(&env, "Approved"),
     );
 
+    seed_reservation(&env, &client, 5u64, request_id, &blood_bank);
+    client.set_reservation_id(&admin, &request_id, &5u64);
     client.set_fulfilling_org(&blood_bank, &request_id, &blood_bank);
 
     let request = client.get_request(&request_id);
@@ -398,6 +388,8 @@ fn test_set_fulfilling_org_rejects_overwrite() {
 
     let blood_bank = Address::generate(&env);
     client.authorize_blood_bank(&blood_bank);
+    seed_reservation(&env, &client, 5u64, request_id, &blood_bank);
+    client.set_reservation_id(&admin, &request_id, &5u64);
     client.set_fulfilling_org(&blood_bank, &request_id, &blood_bank);
 
     let result = client.try_set_fulfilling_org(&admin, &request_id, &blood_bank);
@@ -420,8 +412,10 @@ fn test_set_fulfilling_org_records_history_and_event() {
     let blood_bank = Address::generate(&env);
     client.authorize_blood_bank(&blood_bank);
 
-    // `env.events().all()` only holds the events of the last invocation.
+    seed_reservation(&env, &client, 5u64, request_id, &blood_bank);
+    client.set_reservation_id(&admin, &request_id, &5u64);
     client.set_fulfilling_org(&blood_bank, &request_id, &blood_bank);
+    // Client-mode events show the last invocation only.
     assert_eq!(env.events().all().len(), 1);
 
     let history = client.get_request_history(&request_id);
@@ -451,7 +445,7 @@ fn test_authorized_rider_can_set_inprogress() {
     client.authorize_rider(&rider);
 
     // #1626: the rider must be assigned to the request before pickup.
-    client.assign_rider(&admin, &request_id, &rider);
+    client.assign_rider(&request_id, &rider);
 
     client.update_request_status(
         &rider,
@@ -593,13 +587,14 @@ fn test_cancel_request_by_contract_rejects_inprogress() {
         &RequestStatus::Approved,
         &String::from_str(&env, "Approved"),
     );
+    seed_reservation(&env, &client, 77u64, request_id, &Address::generate(&env));
     client.set_reservation_id(&admin, &request_id, &77u64);
-    // `admin` stands in for the trusted payments contract in these tests.
+    // The test acts as the trusted payments contract.
     client.set_payments_contract(&admin);
 
     let rider = Address::generate(&env);
     client.authorize_rider(&rider);
-    client.assign_rider(&admin, &request_id, &rider);
+    client.assign_rider(&request_id, &rider);
     client.update_request_status(
         &rider,
         &request_id,
@@ -631,8 +626,9 @@ fn test_cancel_request_by_contract_allows_approved() {
         &RequestStatus::Approved,
         &String::from_str(&env, "Approved"),
     );
+    seed_reservation(&env, &client, 88u64, request_id, &Address::generate(&env));
     client.set_reservation_id(&admin, &request_id, &88u64);
-    // `admin` stands in for the trusted payments contract in these tests.
+    // The test acts as the trusted payments contract.
     client.set_payments_contract(&admin);
 
     client.cancel_request_by_contract(

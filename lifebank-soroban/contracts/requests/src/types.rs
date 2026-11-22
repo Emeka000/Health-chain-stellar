@@ -23,12 +23,8 @@ pub enum DataKey {
     HospitalRequestIds(Address), // Maps hospital to Vec<u64> of request IDs
     PaymentsContract,            // Trusted payments contract allowed to cancel requests
     RequestRider(u64),           // Rider dispatched to pick up a request
-    /// Number of requests ever created by a hospital (append-only history index).
-    HospitalRequestCount(Address),
-    /// `(hospital, position)` -> request ID in the append-only history index.
-    /// One entry per request keeps every storage entry small, so the history
-    /// can grow without hitting the per-entry size limit.
-    HospitalRequestAt(Address, u32),
+    Paused,                      // Circuit breaker flag (instance storage)
+    RequestHistoryPage(u64, u32), // (request_id, page) -> Vec<RequestHistoryEntry>
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -123,8 +119,10 @@ pub struct BloodRequest {
     pub reservation_id: Option<u64>,
     /// Organization (blood bank) that fulfilled this request, if any.
     pub fulfilled_by: Option<Address>,
-    /// Request lifecycle transitions with rationale and accounting details.
-    pub history: Vec<RequestHistoryEntry>,
+    /// Number of lifecycle history entries. The entries themselves live in
+    /// paginated persistent pages (`DataKey::RequestHistoryPage`) so reading a
+    /// request does not decode its full, growing history.
+    pub history_len: u32,
 }
 
 #[contractevent(topics = ["request_created"])]

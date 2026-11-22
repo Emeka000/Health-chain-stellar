@@ -8,6 +8,10 @@ mod types;
 
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod test_utils;
+#[cfg(test)]
+mod test_issues_1807_1810;
 
 pub use crate::error::ContractError;
 pub use crate::types::{
@@ -20,11 +24,24 @@ mod validation;
 use soroban_sdk::{contract, contractimpl, Address, Env, String};
 
 mod inventory_client {
-    use soroban_sdk::{contractclient, Address, Env};
+    use soroban_sdk::{contractclient, contracttype, Address, Env, Vec};
+
+    /// Mirrors inventory's `Reservation` (decoded field-for-field by name).
+    #[contracttype]
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct InventoryReservation {
+        pub unit_ids: Vec<u64>,
+        pub requester: Address,
+        pub reserved_by: Address,
+        pub created_timestamp: u64,
+        pub expiration_timestamp: u64,
+        pub request_id: u64,
+    }
 
     #[contractclient(name = "InventoryContractClient")]
     #[allow(dead_code)]
     pub trait InventoryContractInterface {
+        fn get_reservation(env: Env, reservation_id: u64) -> InventoryReservation;
         fn release_reservation(env: Env, caller: Address, reservation_id: u64);
         fn release_reservation_by_contract(
             env: Env,
@@ -34,7 +51,7 @@ mod inventory_client {
     }
 }
 
-use inventory_client::InventoryContractClient;
+use inventory_client::{InventoryContractClient, InventoryReservation};
 
 const CONTRACT_VERSION: u32 = 1;
 
@@ -63,16 +80,42 @@ impl RequestContract {
         fulfilled_delta_ml: u32,
         released_reservation: bool,
     ) {
-        request.history.push_back(RequestHistoryEntry {
-            previous_status,
-            is_initial_transition,
-            new_status,
-            actor: actor.clone(),
-            reason,
-            fulfilled_delta_ml,
-            released_reservation,
-            timestamp: env.ledger().timestamp(),
-        });
+        storage::append_history_entry(
+            env,
+            request,
+            RequestHistoryEntry {
+                previous_status,
+                is_initial_transition,
+                new_status,
+                actor: actor.clone(),
+                reason,
+                fulfilled_delta_ml,
+                released_reservation,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
+    }
+
+    /// Fetch a reservation from inventory, mapping any failure to
+    /// `ReservationNotFound`.
+    fn fetch_reservation(
+        env: &Env,
+        reservation_id: u64,
+    ) -> Result<InventoryReservation, ContractError> {
+        let inventory_addr = storage::get_inventory_contract(env);
+        let inv_client = InventoryContractClient::new(env, &inventory_addr);
+        match inv_client.try_get_reservation(&reservation_id) {
+            Ok(Ok(reservation)) => Ok(reservation),
+            _ => Err(ContractError::ReservationNotFound),
+        }
+    }
+
+    fn require_admin(env: &Env, admin: &Address) -> Result<(), ContractError> {
+        admin.require_auth();
+        if *admin != storage::get_admin(env) {
+            return Err(ContractError::Unauthorized);
+        }
+        Ok(())
     }
 
     fn ensure_non_empty_reason(reason: &String) -> Result<(), ContractError> {
@@ -165,6 +208,32 @@ impl RequestContract {
         CONTRACT_VERSION
     }
 
+    /// Pause the contract (admin only). Every request-state-mutating
+    /// entrypoint returns `ContractPaused` while paused, including
+    /// `cancel_request` / `cancel_request_by_contract`: cancelling releases
+    /// inventory reservations, which is exactly the kind of cross-contract
+    /// side effect an incident freeze must stop. Admin configuration
+    /// (authorizations, payments contract, upgrade) stays available so the
+    /// incident can be remediated.
+    pub fn pause(env: Env, admin: Address) -> Result<(), ContractError> {
+        storage::require_initialized(&env)?;
+        Self::require_admin(&env, &admin)?;
+        storage::set_paused(&env, true);
+        Ok(())
+    }
+
+    /// Unpause the contract (admin only).
+    pub fn unpause(env: Env, admin: Address) -> Result<(), ContractError> {
+        storage::require_initialized(&env)?;
+        Self::require_admin(&env, &admin)?;
+        storage::set_paused(&env, false);
+        Ok(())
+    }
+
+    pub fn is_paused(env: Env) -> bool {
+        storage::is_paused(&env)
+    }
+
     pub fn authorize_hospital(env: Env, hospital: Address) -> Result<(), ContractError> {
         storage::require_initialized(&env)?;
         let admin = storage::get_admin(&env);
@@ -229,6 +298,7 @@ impl RequestContract {
     ) -> Result<(), ContractError> {
         caller.require_auth();
         storage::require_initialized(&env)?;
+        storage::require_not_paused(&env)?;
         let admin = storage::get_admin(&env);
         if caller != admin {
             return Err(ContractError::Unauthorized);
@@ -260,6 +330,7 @@ impl RequestContract {
     ) -> Result<u64, ContractError> {
         hospital.require_auth();
         storage::require_initialized(&env)?;
+        storage::require_not_paused(&env)?;
 
         if !storage::is_hospital_authorized(&env, &hospital) {
             return Err(ContractError::NotAuthorizedHospital);
@@ -283,7 +354,7 @@ impl RequestContract {
             fulfilled_quantity_ml: 0,
             reservation_id: None,
             fulfilled_by: None,
-            history: soroban_sdk::Vec::new(&env),
+            history_len: 0,
         };
         let mut request = request;
         Self::append_history(
@@ -318,6 +389,7 @@ impl RequestContract {
     ) -> Result<soroban_sdk::Vec<u64>, ContractError> {
         hospital.require_auth();
         storage::require_initialized(&env)?;
+        storage::require_not_paused(&env)?;
 
         if entries.len() > MAX_BATCH_SIZE {
             return Err(ContractError::BatchTooLarge);
@@ -353,7 +425,7 @@ impl RequestContract {
                 fulfilled_quantity_ml: 0,
                 reservation_id: None,
                 fulfilled_by: None,
-                history: soroban_sdk::Vec::new(&env),
+                history_len: 0,
             };
             let mut request = request;
             Self::append_history(
@@ -386,6 +458,7 @@ impl RequestContract {
     ) -> Result<(), ContractError> {
         caller.require_auth();
         storage::require_initialized(&env)?;
+        storage::require_not_paused(&env)?;
         Self::ensure_non_empty_reason(&reason)?;
 
         let mut request =
@@ -430,6 +503,7 @@ impl RequestContract {
         reason: String,
     ) -> Result<(), ContractError> {
         storage::require_initialized(&env)?;
+        storage::require_not_paused(&env)?;
         caller_contract.require_auth();
 
         match storage::get_payments_contract(&env) {
@@ -553,6 +627,7 @@ impl RequestContract {
     ) -> Result<(), ContractError> {
         caller.require_auth();
         storage::require_initialized(&env)?;
+        storage::require_not_paused(&env)?;
 
         let admin = storage::get_admin(&env);
         let is_admin = caller == admin;
@@ -646,6 +721,7 @@ impl RequestContract {
     ) -> Result<(), ContractError> {
         caller.require_auth();
         storage::require_initialized(&env)?;
+        storage::require_not_paused(&env)?;
         Self::ensure_non_empty_reason(&reason)?;
         validation::validate_quantity(fulfilled_delta_ml)?;
 
@@ -715,6 +791,7 @@ impl RequestContract {
     ) -> Result<(), ContractError> {
         caller.require_auth();
         storage::require_initialized(&env)?;
+        storage::require_not_paused(&env)?;
 
         let admin = storage::get_admin(&env);
         if caller != admin {
@@ -731,6 +808,18 @@ impl RequestContract {
 
         if request.reservation_id.is_some() {
             return Err(ContractError::ReservationAlreadySet);
+        }
+
+        // #1809: the reservation must exist, be for this request, and (once a
+        // fulfilling org is recorded) belong to that org.
+        let reservation = Self::fetch_reservation(&env, reservation_id)?;
+        if reservation.request_id != request_id {
+            return Err(ContractError::ReservationRequestMismatch);
+        }
+        if let Some(ref org) = request.fulfilled_by {
+            if reservation.requester != *org {
+                return Err(ContractError::ReservationOwnerMismatch);
+            }
         }
 
         request.reservation_id = Some(reservation_id);
@@ -769,6 +858,7 @@ impl RequestContract {
     ) -> Result<(), ContractError> {
         caller.require_auth();
         storage::require_initialized(&env)?;
+        storage::require_not_paused(&env)?;
 
         let admin = storage::get_admin(&env);
         let is_admin = caller == admin;
@@ -793,6 +883,18 @@ impl RequestContract {
 
         if request.fulfilled_by.is_some() {
             return Err(ContractError::FulfillingOrgAlreadySet);
+        }
+
+        // #1808: a blood bank may only claim a request whose inventory
+        // reservation it owns, so a competing bank cannot front-run it.
+        if !is_admin {
+            let reservation_id = request
+                .reservation_id
+                .ok_or(ContractError::ReservationRequired)?;
+            let reservation = Self::fetch_reservation(&env, reservation_id)?;
+            if reservation.requester != org_id {
+                return Err(ContractError::ReservationOwnerMismatch);
+            }
         }
 
         request.fulfilled_by = Some(org_id.clone());
@@ -821,6 +923,47 @@ impl RequestContract {
         Ok(())
     }
 
+    /// Admin correction of `fulfilled_by` (#1808). Overwrites any existing
+    /// value; the reason and the change are recorded in the request history.
+    pub fn reassign_fulfilling_org(
+        env: Env,
+        request_id: u64,
+        org_id: Address,
+        reason: String,
+    ) -> Result<(), ContractError> {
+        storage::require_initialized(&env)?;
+        storage::require_not_paused(&env)?;
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
+        Self::ensure_non_empty_reason(&reason)?;
+
+        let mut request =
+            storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
+
+        match request.status {
+            RequestStatus::Approved | RequestStatus::InProgress | RequestStatus::Fulfilled => {}
+            _ => return Err(ContractError::InvalidRequestStatus),
+        }
+
+        request.fulfilled_by = Some(org_id.clone());
+        let status = request.status;
+        Self::append_history(
+            &env, &mut request, &admin, status, false, status, reason, 0, false,
+        );
+        storage::set_request(&env, &request);
+
+        events::emit_fulfilling_org_set(
+            &env,
+            request_id,
+            &admin,
+            &org_id,
+            env.ledger().timestamp(),
+        );
+        Ok(())
+    }
+
+    /// Full history for a request, assembled from its persistent pages.
+    /// Prefer `get_request_history_page` for long histories.
     pub fn get_request_history(
         env: Env,
         request_id: u64,
@@ -828,7 +971,26 @@ impl RequestContract {
         storage::require_initialized(&env)?;
         let request =
             storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
-        Ok(request.history)
+        let mut all = soroban_sdk::Vec::new(&env);
+        let pages = request.history_len.div_ceil(storage::HISTORY_PAGE_SIZE);
+        for page in 0..pages {
+            all.append(&storage::get_history_page(&env, request_id, page));
+        }
+        Ok(all)
+    }
+
+    /// One page (zero-indexed, `HISTORY_PAGE_SIZE` entries) of a request's
+    /// history. Returns an empty Vec past the last page.
+    pub fn get_request_history_page(
+        env: Env,
+        request_id: u64,
+        page: u32,
+    ) -> Result<soroban_sdk::Vec<RequestHistoryEntry>, ContractError> {
+        storage::require_initialized(&env)?;
+        if storage::get_request(&env, request_id).is_none() {
+            return Err(ContractError::RequestNotFound);
+        }
+        Ok(storage::get_history_page(&env, request_id, page))
     }
 
     pub fn get_request(env: Env, request_id: u64) -> Result<BloodRequest, ContractError> {
