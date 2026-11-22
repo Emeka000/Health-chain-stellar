@@ -89,11 +89,15 @@ mod security_tests {
 
         let cid = env.register(PaymentContract, ());
         let client = PaymentContractClient::new(&env, &cid);
-        client.initialize(&Address::generate(&env), &Some(requests_id));
+        let admin = Address::generate(&env);
+        client.initialize(&admin, &Some(requests_id));
+        // The token must be allowlisted so the payer check is what rejects the call.
+        let token = Address::generate(&env);
+        client.add_allowed_token(&admin, &token);
 
         let impostor = Address::generate(&env);
         let payee = Address::generate(&env);
-        let result = client.try_create_escrow(&request_id, &impostor, &payee, &100i128);
+        let result = client.try_create_escrow(&request_id, &impostor, &payee, &100i128, &token);
 
         assert_eq!(result, Err(Ok(Error::Unauthorized)));
     }

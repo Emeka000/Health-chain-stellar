@@ -23,6 +23,12 @@ pub enum DataKey {
     HospitalRequestIds(Address), // Maps hospital to Vec<u64> of request IDs
     PaymentsContract,            // Trusted payments contract allowed to cancel requests
     RequestRider(u64),           // Rider dispatched to pick up a request
+    /// Number of requests ever created by a hospital (append-only history index).
+    HospitalRequestCount(Address),
+    /// `(hospital, position)` -> request ID in the append-only history index.
+    /// One entry per request keeps every storage entry small, so the history
+    /// can grow without hitting the per-entry size limit.
+    HospitalRequestAt(Address, u32),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

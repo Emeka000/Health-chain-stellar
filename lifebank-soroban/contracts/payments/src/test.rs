@@ -319,8 +319,7 @@ fn test_create_escrow_rejects_non_hospital_payer() {
     // The request is still free: the real hospital can escrow against it.
     let hospital_token = deploy_token_with_balance(&env, &admin, &hospital, 5_000);
     client.add_allowed_token(&admin, &hospital_token);
-    let id =
-        client.create_escrow(&request_id, &hospital, &payee, &1_000i128, &hospital_token);
+    let id = client.create_escrow(&request_id, &hospital, &payee, &1_000i128, &hospital_token);
     assert_eq!(client.get_payment(&id).status, PaymentStatus::Locked);
 }
 
@@ -757,7 +756,7 @@ fn test_update_status_changes_payment_status() {
     let client = PaymentContractClient::new(&env, &cid);
     let admin = Address::generate(&env);
     client.initialize(&admin, &None);
-    
+
     let request_id = requests_client.create_request(
         &hospital,
         &BloodType::OPositive,
@@ -935,6 +934,32 @@ fn test_non_admin_cannot_pause_payments() {
 
 // ── Vesting schedule tests ─────────────────────────────────────────────────────
 
+/// Create a Pending request owned by `hospital` that the payment contract
+/// `cid` can fund. Escrow creation validates the request against the requests
+/// contract, so this wires one in (reusing it on later calls) and authorizes
+/// the hospital before creating the request.
+fn open_request(env: &Env, cid: &Address, hospital: &Address) -> u64 {
+    let existing: Option<Address> =
+        env.as_contract(cid, || env.storage().instance().get(&REQ_CONTRACT));
+    let requests_id = existing.unwrap_or_else(|| {
+        let id = env.register(RequestContract, ());
+        RequestContractClient::new(env, &id)
+            .initialize(&Address::generate(env), &Address::generate(env));
+        env.as_contract(cid, || env.storage().instance().set(&REQ_CONTRACT, &id));
+        id
+    });
+    let requests = RequestContractClient::new(env, &requests_id);
+    requests.authorize_hospital(hospital);
+    requests.create_request(
+        hospital,
+        &BloodType::OPositive,
+        &BloodComponent::WholeBlood,
+        &250u32,
+        &Urgency::Routine,
+        &(env.ledger().timestamp() + 30 * 86_400),
+    )
+}
+
 fn setup_with_admin() -> (Env, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
@@ -1087,7 +1112,13 @@ fn test_process_expired_disputes_refunds_after_timeout() {
     client.add_allowed_token(&admin, &token_id);
 
     env.ledger().with_mut(|l| l.timestamp = 1_000);
-    let pid = client.create_escrow(&1u64, &hospital, &payee, &1_000i128, &token_id);
+    let pid = client.create_escrow(
+        &open_request(&env, &cid, &hospital),
+        &hospital,
+        &payee,
+        &1_000i128,
+        &token_id,
+    );
 
     // Record dispute at t=1000; updated_at becomes 1000.
     client.record_dispute(
@@ -1124,7 +1155,13 @@ fn test_process_expired_disputes_skips_non_expired() {
     client.add_allowed_token(&admin, &token_id);
 
     env.ledger().with_mut(|l| l.timestamp = 1_000);
-    let pid = client.create_escrow(&2u64, &hospital, &payee, &500i128, &token_id);
+    let pid = client.create_escrow(
+        &open_request(&env, &cid, &hospital),
+        &hospital,
+        &payee,
+        &500i128,
+        &token_id,
+    );
     client.record_dispute(
         &pid,
         &DisputeReason::Other,
@@ -1178,7 +1215,13 @@ fn test_resolve_dispute_releases_escrow_to_payee() {
     client.add_allowed_token(&admin, &token_id);
 
     // Create escrow payment: hospital deposits 1_000 tokens
-    let pid = client.create_escrow(&1u64, &hospital, &payee, &1_000i128, &token_id);
+    let pid = client.create_escrow(
+        &open_request(&env, &cid, &hospital),
+        &hospital,
+        &payee,
+        &1_000i128,
+        &token_id,
+    );
 
     // Verify tokens moved from hospital to contract
     let token_client = soroban_sdk::token::Client::new(&env, &token_id);
@@ -1224,7 +1267,13 @@ fn test_resolve_dispute_refunds_escrow_to_payer() {
     client.add_allowed_token(&admin, &token_id);
 
     // Create escrow payment: hospital deposits 1_000 tokens
-    let pid = client.create_escrow(&2u64, &hospital, &payee, &1_000i128, &token_id);
+    let pid = client.create_escrow(
+        &open_request(&env, &cid, &hospital),
+        &hospital,
+        &payee,
+        &1_000i128,
+        &token_id,
+    );
 
     // Record a dispute
     client.record_dispute(
@@ -1260,7 +1309,13 @@ fn test_resolve_dispute_rejects_non_disputed_payment() {
     client.add_allowed_token(&admin, &token_id);
 
     // Create escrow payment (Locked, not Disputed)
-    let pid = client.create_escrow(&3u64, &hospital, &payee, &500i128, &token_id);
+    let pid = client.create_escrow(
+        &open_request(&env, &cid, &hospital),
+        &hospital,
+        &payee,
+        &500i128,
+        &token_id,
+    );
 
     // Try to resolve a non-disputed payment -> must fail
     let result = client.try_resolve_dispute(&pid, &DisputeResolution::ReleaseToPayee, &admin);
@@ -1699,7 +1754,13 @@ fn test_update_status_cannot_cancel_escrow() {
     let payee = Address::generate(&env);
     let token_id = deploy_token_with_balance(&env, &admin, &hospital, 1_000);
     client.add_allowed_token(&admin, &token_id);
-    let pid = client.create_escrow(&1u64, &hospital, &payee, &1_000i128, &token_id);
+    let pid = client.create_escrow(
+        &open_request(&env, &cid, &hospital),
+        &hospital,
+        &payee,
+        &1_000i128,
+        &token_id,
+    );
 
     let result = client.try_update_status(&pid, &PaymentStatus::Cancelled, &admin);
     assert_eq!(result, Err(Ok(Error::EscrowSettlementRequired)));
@@ -1802,7 +1863,13 @@ fn test_vesting_claim_cannot_spend_escrowed_funds() {
     client.add_allowed_token(&admin, &token_id);
 
     env.ledger().with_mut(|l| l.timestamp = 1_000);
-    client.create_escrow(&1u64, &hospital, &payee, &1_000i128, &token_id);
+    client.create_escrow(
+        &open_request(&env, &cid, &hospital),
+        &hospital,
+        &payee,
+        &1_000i128,
+        &token_id,
+    );
     client.create_vesting(&admin, &donor, &token_id, &500i128, &0u64, &100u64);
     assert_eq!(client.get_escrow_reserve(&token_id), 1_000);
     assert_eq!(client.get_vesting_reserve(&token_id), 500);
@@ -1832,7 +1899,13 @@ fn test_reserves_track_settlement() {
     client.add_allowed_token(&admin, &token_id);
 
     env.ledger().with_mut(|l| l.timestamp = 1_000);
-    let pid = client.create_escrow(&1u64, &hospital, &payee, &1_000i128, &token_id);
+    let pid = client.create_escrow(
+        &open_request(&env, &cid, &hospital),
+        &hospital,
+        &payee,
+        &1_000i128,
+        &token_id,
+    );
     client.create_vesting(&admin, &donor, &token_id, &500i128, &0u64, &100u64);
 
     client.refund_escrow(&admin, &pid);
@@ -1841,4 +1914,43 @@ fn test_reserves_track_settlement() {
     env.ledger().with_mut(|l| l.timestamp = 2_000);
     assert_eq!(client.claim_vested(&donor), 500);
     assert_eq!(client.get_vesting_reserve(&token_id), 0);
+}
+
+// ── #1806: requests past required_by_timestamp are not payable ───────────────
+
+#[test]
+fn test_create_payment_rejects_overdue_request() {
+    let (env, cid, requests_client, hospital) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    client.initialize(&Address::generate(&env), &None);
+
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    let request_id = requests_client.create_request(
+        &hospital,
+        &BloodType::OPositive,
+        &BloodComponent::WholeBlood,
+        &250u32,
+        &Urgency::Routine,
+        &2_000u64,
+    );
+    let payee = Address::generate(&env);
+
+    // Still payable at the deadline itself.
+    env.ledger().with_mut(|l| l.timestamp = 2_000);
+    let ok = client.try_create_payment(&request_id, &hospital, &payee, &100i128);
+    assert!(ok.is_ok());
+
+    // A second request past its deadline is rejected even though it is Pending.
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    let overdue_id = requests_client.create_request(
+        &hospital,
+        &BloodType::OPositive,
+        &BloodComponent::WholeBlood,
+        &250u32,
+        &Urgency::Routine,
+        &1_500u64,
+    );
+    env.ledger().with_mut(|l| l.timestamp = 1_501);
+    let result = client.try_create_payment(&overdue_id, &hospital, &payee, &100i128);
+    assert_eq!(result, Err(Ok(Error::RequestNotPayable)));
 }

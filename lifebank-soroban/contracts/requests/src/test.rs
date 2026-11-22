@@ -476,7 +476,7 @@ fn test_revoke_rider_emits_event() {
 
 #[test]
 fn test_assign_rider_emits_event() {
-    let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
+    let (env, client, _contract_id, admin, _inventory_contract) = create_initialized_contract();
     let hospital = authorize_hospital(&env, &client);
     let rider = Address::generate(&env);
     client.authorize_rider(&rider);
@@ -490,7 +490,15 @@ fn test_assign_rider_emits_event() {
         &9_500u64,
     );
 
-    client.assign_rider(&rider, &request_id);
+    // A rider can only be assigned to an Approved request.
+    client.update_request_status(
+        &admin,
+        &request_id,
+        &RequestStatus::Approved,
+        &String::from_str(&env, "Approved"),
+    );
+
+    client.assign_rider(&admin, &request_id, &rider);
 
     let events = env.events().all();
     let last = events.last().unwrap();
