@@ -582,7 +582,7 @@ impl IdentityContract {
         // Grant the Admin role to the new admin and drop it from the previous
         // admin so the role set stays consistent with the primary admin key.
         Self::grant_role_internal(&env, new_admin.clone(), Role::Admin);
-        Self::revoke_admin_role_internal(&env, &previous_admin);
+        Self::revoke_role_internal(&env, &previous_admin, &Role::Admin);
 
         AdminTransferred {
             previous_admin,
@@ -731,12 +731,7 @@ impl IdentityContract {
             .persistent()
             .extend_ttl(&docs_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
-        // Assign role
-        let role = match org_type.clone() {
-            OrgType::BloodBank => Role::BloodBank,
-            OrgType::Hospital => Role::Hospital,
-        };
-        Self::grant_role_internal(&env, org_id.clone(), role);
+        // Operational role is granted on verification, not here (see verification.rs).
 
         // Add to type index
         let type_key = DataKey::OrgTypeList(org_type.clone());
@@ -920,15 +915,23 @@ impl IdentityContract {
             .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
-    /// Internal helper to drop the `Admin` role from an address (no auth check).
-    fn revoke_admin_role_internal(env: &Env, address: &Address) {
+    /// The operational role an organization type receives once verified.
+    fn org_role(org_type: &OrgType) -> Role {
+        match org_type {
+            OrgType::BloodBank => Role::BloodBank,
+            OrgType::Hospital => Role::Hospital,
+        }
+    }
+
+    /// Internal helper to drop a role from an address (no auth check).
+    fn revoke_role_internal(env: &Env, address: &Address, role: &Role) {
         let key = DataKey::AddressRoles(address.clone());
         if let Some(roles) = env
             .storage()
             .persistent()
             .get::<DataKey, Vec<RoleGrant>>(&key)
         {
-            let roles = Self::remove_role_from_vec(env, roles, &Role::Admin);
+            let roles = Self::remove_role_from_vec(env, roles, role);
             if roles.is_empty() {
                 env.storage().persistent().remove(&key);
             } else {
