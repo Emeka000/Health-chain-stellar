@@ -104,6 +104,7 @@ pub trait CoordinatorContractInterface {
 #[contractimpl]
 impl TemperatureContract {
     pub fn initialize(env: Env, admin: Address) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
 
         if env.storage().instance().has(&DataKey::Admin) {
@@ -114,7 +115,8 @@ impl TemperatureContract {
         Ok(())
     }
 
-    pub fn version(_env: Env) -> u32 {
+    pub fn version(env: Env) -> u32 {
+        storage::bump_instance_ttl(&env);
         CONTRACT_VERSION
     }
 
@@ -140,6 +142,7 @@ impl TemperatureContract {
         min_celsius_x100: i32,
         max_celsius_x100: i32,
     ) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_not_paused(&env)?;
         // Verify the caller is the stored admin, not just that they signed
@@ -192,6 +195,7 @@ impl TemperatureContract {
 
     /// Pause all state-mutating functions. Admin only.
     pub fn pause(env: Env, admin: Address) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {
@@ -215,6 +219,7 @@ impl TemperatureContract {
     /// - `ChangeNotReady`: Time-lock period has not elapsed yet
     /// - `InvalidThreshold`: The pending change is outside the allowed band
     pub fn apply_threshold_change(env: Env, unit_id: u64) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         Self::require_not_paused(&env)?;
         let pending_change: PendingThresholdChange = env
             .storage()
@@ -258,6 +263,7 @@ impl TemperatureContract {
 
     /// Get pending threshold change for a unit (if any)
     pub fn get_pending_threshold_change(env: Env, unit_id: u64) -> Option<PendingThresholdChange> {
+        storage::bump_instance_ttl(&env);
         env.storage()
             .persistent()
             .get(&DataKey::PendingThresholdChange(unit_id))
@@ -265,6 +271,7 @@ impl TemperatureContract {
 
     /// Unpause the contract. Admin only.
     pub fn unpause(env: Env, admin: Address) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {
@@ -276,6 +283,7 @@ impl TemperatureContract {
 
     /// Returns whether the contract is currently paused.
     pub fn is_paused(env: Env) -> bool {
+        storage::bump_instance_ttl(&env);
         env.storage()
             .instance()
             .get(&DataKey::Paused)
@@ -326,6 +334,7 @@ impl TemperatureContract {
         min_celsius_x100: i32,
         max_celsius_x100: i32,
     ) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_not_paused(&env)?;
 
@@ -361,6 +370,7 @@ impl TemperatureContract {
         unit_id: u64,
         oracle: Address,
     ) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {
@@ -376,6 +386,7 @@ impl TemperatureContract {
 
     /// Return the oracle assigned to `unit_id`, if any.
     pub fn get_assigned_oracle(env: Env, unit_id: u64) -> Option<Address> {
+        storage::bump_instance_ttl(&env);
         env.storage()
             .persistent()
             .get(&DataKey::AssignedOracle(unit_id))
@@ -387,6 +398,7 @@ impl TemperatureContract {
         unit_id: u64,
         temperature_celsius_x100: i32,
     ) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         oracle.require_auth();
         Self::require_not_paused(&env)?;
 
@@ -518,6 +530,7 @@ impl TemperatureContract {
         page: u32,
         page_size: u32,
     ) -> Result<Vec<TemperatureReading>, ContractError> {
+        storage::bump_instance_ttl(&env);
         let page_size = page_size.min(100);
         let mut violations = Vec::new(&env);
         let mut collected = 0u32;
@@ -564,6 +577,7 @@ impl TemperatureContract {
         page: u32,
         page_size: u32,
     ) -> Result<Vec<TemperatureReading>, ContractError> {
+        storage::bump_instance_ttl(&env);
         let page_size = page_size.min(100);
         let mut all_readings = Vec::new(&env);
         let mut collected = 0u32;
@@ -609,6 +623,7 @@ impl TemperatureContract {
         env: Env,
         unit_id: u64,
     ) -> Result<TemperatureSummary, ContractError> {
+        storage::bump_instance_ttl(&env);
         let mut count: u32 = 0;
         let mut sum: i64 = 0; // Use i64 to prevent overflow
         let mut min_temp: i32 = i32::MAX;
@@ -675,6 +690,7 @@ impl TemperatureContract {
     /// # Returns
     /// Current consecutive violation count
     pub fn get_consecutive_violation_streak(env: Env, unit_id: u64) -> u32 {
+        storage::bump_instance_ttl(&env);
         let streak_key = DataKey::ConsecutiveViolationStreak(unit_id);
         let streak = env.storage().persistent().get(&streak_key).unwrap_or(0);
         if streak > 0 {
@@ -695,6 +711,7 @@ impl TemperatureContract {
     /// # Returns
     /// `true` if unit has 3 or more consecutive violations (compromised), `false` otherwise
     pub fn is_compromised(env: Env, unit_id: u64) -> bool {
+        storage::bump_instance_ttl(&env);
         let compromised_key = DataKey::IsCompromised(unit_id);
         let is_compromised = env
             .storage()
@@ -724,6 +741,7 @@ impl TemperatureContract {
         admin: Address,
         unit_id: u64,
     ) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_not_paused(&env)?;
 
@@ -760,6 +778,7 @@ impl TemperatureContract {
         admin: Address,
         coordinator: Address,
     ) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {
@@ -782,6 +801,7 @@ impl TemperatureContract {
     /// without growing instance storage or impacting unrelated contract calls.
     /// Membership checks are O(1) regardless of whitelist size.
     pub fn add_oracle(env: Env, admin: Address, oracle: Address) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {
@@ -809,6 +829,7 @@ impl TemperatureContract {
     /// # Errors
     /// - `Unauthorized` - Caller is not the admin
     pub fn remove_oracle(env: Env, admin: Address, oracle: Address) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {
@@ -827,6 +848,7 @@ impl TemperatureContract {
     ///
     /// O(1) — reads a single persistent() entry regardless of whitelist size.
     pub fn is_oracle(env: Env, address: Address) -> bool {
+        storage::bump_instance_ttl(&env);
         let stored_admin = storage::get_admin(&env);
         if address == stored_admin {
             return true;
@@ -859,6 +881,7 @@ impl TemperatureContract {
         payment_id: u64,
         excursion_summary: ExcursionSummary,
     ) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         caller.require_auth();
         Self::require_not_paused(&env)?;
 
@@ -994,6 +1017,7 @@ impl TemperatureContract {
         admin: Address,
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {
@@ -1964,5 +1988,34 @@ mod tests {
         let pending = client.get_pending_threshold_change(&unit_id).unwrap();
         assert_eq!(pending.new_min_celsius_x100, 200);
         assert_eq!(pending.new_max_celsius_x100, 600);
+    }
+
+    /// Instance storage (admin, paused flag, coordinator) must not archive
+    /// between calls: advance well past the default instance TTL and past the
+    /// bump threshold several times and check the contract still works.
+    #[test]
+    fn test_instance_ttl_extended_across_long_ledger_gaps() {
+        use soroban_sdk::testutils::Ledger as _;
+
+        let (env, admin, _oracle, client) = create_test_contract();
+        let advance = |env: &Env| {
+            env.ledger().with_mut(|li| {
+                li.sequence_number += 600_000;
+                li.timestamp += 600_000 * 5;
+            });
+        };
+
+        advance(&env);
+        assert!(!client.is_paused());
+        client.pause(&admin);
+
+        advance(&env);
+        assert!(client.is_paused());
+        client.unpause(&admin);
+
+        advance(&env);
+        assert!(!client.is_paused());
+        let coordinator = Address::generate(&env);
+        client.set_coordinator(&admin, &coordinator);
     }
 }

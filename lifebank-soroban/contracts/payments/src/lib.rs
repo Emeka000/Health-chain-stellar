@@ -462,10 +462,37 @@ fn index_by_request(env: &Env, request_id: u64, payment_id: u64) {
         .extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
 }
 
+/// Persistent marker recording that a request has been paid out (a payment
+/// for it reached `Released`). Unlike req_idx_key it is never removed, so the
+/// one-payment-per-request guard keeps holding after settlement.
+fn request_settled_key(request_id: u64) -> (u64, &'static str) {
+    (request_id, "rs")
+}
+
 /// Remove the request index entry once the payment reaches a terminal state
 /// (Released, Refunded, Cancelled) to avoid retaining stale entries.
-fn remove_from_request_index(env: &Env, request_id: u64) {
+///
+/// When the terminal state is `Released` the request is also marked settled,
+/// so no further payment can be created for it. After `Refunded` or
+/// `Cancelled` no funds reached the payee, so a new payment may be created
+/// for the same request as long as it is still payable.
+fn remove_from_request_index(env: &Env, request_id: u64, final_status: PaymentStatus) {
     env.storage().persistent().remove(&req_idx_key(request_id));
+    if final_status == PaymentStatus::Released {
+        let key = request_settled_key(request_id);
+        env.storage().persistent().set(&key, &true);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
+    }
+}
+
+/// True when a new payment for `request_id` must be rejected with
+/// `DuplicatePayment`: either a payment is still active for it, or one has
+/// already been released.
+fn request_has_blocking_payment(env: &Env, request_id: u64) -> bool {
+    env.storage().persistent().has(&req_idx_key(request_id))
+        || env.storage().persistent().has(&request_settled_key(request_id))
 }
 
 /// A terminal status is one from which req_idx_key has already been removed;
@@ -980,16 +1007,30 @@ impl PaymentContract {
         amount: i128,
     ) -> Result<u64, Error> {
         Self::require_not_paused(&env)?;
+        payer.require_auth();
+        Self::create_payment_after_auth(env, request_id, payer, payee, amount)
+    }
+
+    /// Body of `create_payment` once `payer` has authorized. Calling
+    /// require_auth twice for the same address in one invocation fails, so
+    /// `batch_create_payments` authorizes each distinct payer once and then
+    /// calls this directly for every entry.
+    fn create_payment_after_auth(
+        env: Env,
+        request_id: u64,
+        payer: Address,
+        payee: Address,
+        amount: i128,
+    ) -> Result<u64, Error> {
         if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
         if payer == payee {
             return Err(Error::SamePayerPayee);
         }
-        payer.require_auth();
 
-        // Reject if a payment for this request already exists.
-        if env.storage().persistent().has(&req_idx_key(request_id)) {
+        // Reject if a payment for this request is active or already released.
+        if request_has_blocking_payment(&env, request_id) {
             return Err(Error::DuplicatePayment);
         }
 
@@ -1036,10 +1077,22 @@ impl PaymentContract {
         if payments.len() > MAX_BATCH_SIZE {
             return Err(Error::BatchTooLarge);
         }
+        // Authorize each distinct payer exactly once: a second require_auth
+        // for the same address in one invocation fails, which would abort any
+        // batch where one hospital funds several requests.
+        let mut authorized: Vec<Address> = Vec::new(&env);
+        for i in 0..payments.len() {
+            let (_, payer, _, _) = payments.get(i).unwrap();
+            if !authorized.contains(&payer) {
+                payer.require_auth();
+                authorized.push_back(payer);
+            }
+        }
         let mut ids: Vec<u64> = Vec::new(&env);
         for i in 0..payments.len() {
             let (request_id, payer, payee, amount) = payments.get(i).unwrap();
-            let id = Self::create_payment(env.clone(), request_id, payer, payee, amount)?;
+            let id =
+                Self::create_payment_after_auth(env.clone(), request_id, payer, payee, amount)?;
             ids.push_back(id);
         }
         Ok(ids)
@@ -1075,8 +1128,8 @@ impl PaymentContract {
             return Err(Error::TokenNotAllowed);
         }
 
-        // Reject if a payment for this request already exists.
-        if env.storage().persistent().has(&req_idx_key(request_id)) {
+        // Reject if a payment for this request is active or already released.
+        if request_has_blocking_payment(&env, request_id) {
             return Err(Error::DuplicatePayment);
         }
 
@@ -1177,7 +1230,7 @@ impl PaymentContract {
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, PaymentStatus::Released, payment_id);
         update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Released)?;
-        remove_from_request_index(&env, payment.request_id);
+        remove_from_request_index(&env, payment.request_id, PaymentStatus::Released);
 
         // Clean up confirmation flags
         clear_confirmations(&env, payment_id);
@@ -1239,7 +1292,7 @@ impl PaymentContract {
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, PaymentStatus::Released, payment_id);
         update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Released)?;
-        remove_from_request_index(&env, payment.request_id);
+        remove_from_request_index(&env, payment.request_id, PaymentStatus::Released);
 
         // Clean up confirmation flags
         clear_confirmations(&env, payment_id);
@@ -1278,7 +1331,7 @@ impl PaymentContract {
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, PaymentStatus::Refunded, payment_id);
         update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Refunded)?;
-        remove_from_request_index(&env, payment.request_id);
+        remove_from_request_index(&env, payment.request_id, PaymentStatus::Refunded);
         clear_confirmations(&env, payment_id);
 
         PaymentRefunded {
@@ -1346,7 +1399,7 @@ impl PaymentContract {
             status,
             PaymentStatus::Released | PaymentStatus::Refunded | PaymentStatus::Cancelled
         ) {
-            remove_from_request_index(&env, payment.request_id);
+            remove_from_request_index(&env, payment.request_id, status);
         }
 
         // Emit event on every status transition so off-chain indexers can stay
@@ -1452,7 +1505,7 @@ impl PaymentContract {
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, new_status, payment_id);
         update_stats_on_transition(&env, payment.amount, old_status, new_status)?;
-        remove_from_request_index(&env, payment.request_id);
+        remove_from_request_index(&env, payment.request_id, new_status);
         clear_confirmations(&env, payment_id);
 
         // ── Emit events ───────────────────────────────────────────────────
@@ -1486,12 +1539,27 @@ impl PaymentContract {
         load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)
     }
 
+    /// Return the payment for `request_id`.
+    ///
+    /// If a payment is still *active* for the request (not yet Released,
+    /// Refunded or Cancelled) that payment is returned. Otherwise this falls
+    /// back to the *latest* payment ever created for the request (the last
+    /// entry of its timeline), so settled payments stay visible for audit and
+    /// reconciliation. Use `get_payment_timeline` to see every payment made
+    /// for a request, e.g. a refunded payment followed by a new one.
     pub fn get_payment_by_request(env: Env, request_id: u64) -> Result<Payment, Error> {
-        let payment_id: u64 = env
-            .storage()
-            .persistent()
-            .get(&req_idx_key(request_id))
-            .ok_or(Error::PaymentNotFound)?;
+        let active: Option<u64> = env.storage().persistent().get(&req_idx_key(request_id));
+        let payment_id = match active {
+            Some(id) => id,
+            None => {
+                let ids: Vec<u64> = env
+                    .storage()
+                    .persistent()
+                    .get(&request_timeline_key(request_id))
+                    .unwrap_or(Vec::new(&env));
+                ids.last().ok_or(Error::PaymentNotFound)?
+            }
+        };
         load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)
     }
 
@@ -1948,7 +2016,7 @@ impl PaymentContract {
             remove_from_status_index(&env, old_status, pid);
             index_by_status(&env, PaymentStatus::Refunded, pid);
             update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Refunded)?;
-            remove_from_request_index(&env, payment.request_id);
+            remove_from_request_index(&env, payment.request_id, PaymentStatus::Refunded);
             clear_confirmations(&env, pid);
 
             let request_cancelled = match req_contract {

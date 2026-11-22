@@ -1954,3 +1954,197 @@ fn test_create_payment_rejects_overdue_request() {
     let result = client.try_create_payment(&overdue_id, &hospital, &payee, &100i128);
     assert_eq!(result, Err(Ok(Error::RequestNotPayable)));
 }
+
+// ── one payment per request survives settlement ───────────────────────────────
+
+/// Initialize the contract, allow a token funded for `hospital`, and lock an
+/// escrow for a fresh request. Returns (admin, token, request_id, payment_id, payee).
+fn escrow_for_new_request(
+    env: &Env,
+    client: &PaymentContractClient,
+    requests_client: &RequestContractClient<'_>,
+    hospital: &Address,
+) -> (Address, Address, u64, u64, Address) {
+    let admin = Address::generate(env);
+    client.initialize(&admin, &None);
+    let token_id = deploy_token_with_balance(env, &admin, hospital, 10_000);
+    client.add_allowed_token(&admin, &token_id);
+    let payee = Address::generate(env);
+    let request_id = new_request(env, requests_client, hospital);
+    let pid = client.create_escrow(&request_id, hospital, &payee, &1_000i128, &token_id);
+    (admin, token_id, request_id, pid, payee)
+}
+
+#[test]
+fn test_no_new_payment_after_escrow_released() {
+    let (env, cid, requests_client, hospital) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let (admin, token_id, request_id, pid, payee) =
+        escrow_for_new_request(&env, &client, &requests_client, &hospital);
+
+    client.release_escrow(&admin, &pid);
+    client.confirm_receipt(&pid, &hospital);
+    assert_eq!(client.get_payment(&pid).status, PaymentStatus::Released);
+
+    // The request is still Pending in the requests contract, so only the
+    // settled marker stops a second payment.
+    assert_eq!(
+        client.try_create_escrow(&request_id, &hospital, &payee, &500i128, &token_id),
+        Err(Ok(Error::DuplicatePayment))
+    );
+    assert_eq!(
+        client.try_create_payment(&request_id, &hospital, &payee, &500i128),
+        Err(Ok(Error::DuplicatePayment))
+    );
+    assert_eq!(client.get_payment_timeline(&request_id, &0u32, &20u32).len(), 1);
+}
+
+#[test]
+fn test_no_new_payment_after_bookkeeping_payment_released() {
+    let (env, cid, requests_client, hospital) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
+    let (pid, request_id, payer, payee) =
+        make_payment(&env, &client, &requests_client, &hospital, 500);
+
+    client.update_status(&pid, &PaymentStatus::Released, &admin);
+
+    assert_eq!(
+        client.try_create_payment(&request_id, &payer, &payee, &500i128),
+        Err(Ok(Error::DuplicatePayment))
+    );
+}
+
+#[test]
+fn test_no_new_payment_after_dispute_released_to_payee() {
+    let (env, cid, requests_client, hospital) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let (admin, token_id, request_id, pid, payee) =
+        escrow_for_new_request(&env, &client, &requests_client, &hospital);
+
+    client.record_dispute(
+        &pid,
+        &DisputeReason::FailedDelivery,
+        &soroban_sdk::String::from_str(&env, "case-1795"),
+        &hospital,
+    );
+    client.resolve_dispute(&pid, &DisputeResolution::ReleaseToPayee, &admin);
+
+    assert_eq!(
+        client.try_create_escrow(&request_id, &hospital, &payee, &500i128, &token_id),
+        Err(Ok(Error::DuplicatePayment))
+    );
+}
+
+/// After a refund no funds reached the payee, so the request may be paid
+/// again while it is still payable. Both payments appear on the timeline.
+#[test]
+fn test_new_payment_allowed_after_escrow_refunded() {
+    let (env, cid, requests_client, hospital) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let (admin, token_id, request_id, pid, payee) =
+        escrow_for_new_request(&env, &client, &requests_client, &hospital);
+
+    client.refund_escrow(&admin, &pid);
+    assert_eq!(client.get_payment(&pid).status, PaymentStatus::Refunded);
+
+    let second = client.create_escrow(&request_id, &hospital, &payee, &500i128, &token_id);
+    assert_ne!(second, pid);
+    assert_eq!(client.get_payment(&second).status, PaymentStatus::Locked);
+
+    // While the new escrow is active, a third payment is still rejected.
+    assert_eq!(
+        client.try_create_payment(&request_id, &hospital, &payee, &500i128),
+        Err(Ok(Error::DuplicatePayment))
+    );
+
+    let timeline = client.get_payment_timeline(&request_id, &0u32, &20u32);
+    assert_eq!(timeline.len(), 2);
+    assert_eq!(timeline.get(0).unwrap().id, pid);
+    assert_eq!(timeline.get(1).unwrap().id, second);
+
+    // Once released, the request is settled for good.
+    client.release_escrow(&admin, &second);
+    client.confirm_receipt(&second, &hospital);
+    assert_eq!(
+        client.try_create_escrow(&request_id, &hospital, &payee, &500i128, &token_id),
+        Err(Ok(Error::DuplicatePayment))
+    );
+}
+
+// ── get_payment_by_request after settlement ───────────────────────────────────
+
+#[test]
+fn test_get_payment_by_request_returns_released_payment() {
+    let (env, cid, requests_client, hospital) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let (admin, _token_id, request_id, pid, _payee) =
+        escrow_for_new_request(&env, &client, &requests_client, &hospital);
+
+    client.release_escrow(&admin, &pid);
+    client.confirm_receipt(&pid, &hospital);
+
+    let p = client.get_payment_by_request(&request_id);
+    assert_eq!(p.id, pid);
+    assert_eq!(p.status, PaymentStatus::Released);
+}
+
+#[test]
+fn test_get_payment_by_request_returns_refunded_payment() {
+    let (env, cid, requests_client, hospital) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let (admin, _token_id, request_id, pid, _payee) =
+        escrow_for_new_request(&env, &client, &requests_client, &hospital);
+
+    client.refund_escrow(&admin, &pid);
+
+    let p = client.get_payment_by_request(&request_id);
+    assert_eq!(p.id, pid);
+    assert_eq!(p.status, PaymentStatus::Refunded);
+}
+
+#[test]
+fn test_get_payment_by_request_prefers_active_payment_after_refund() {
+    let (env, cid, requests_client, hospital) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let (admin, token_id, request_id, pid, payee) =
+        escrow_for_new_request(&env, &client, &requests_client, &hospital);
+
+    client.refund_escrow(&admin, &pid);
+    let second = client.create_escrow(&request_id, &hospital, &payee, &500i128, &token_id);
+
+    let p = client.get_payment_by_request(&request_id);
+    assert_eq!(p.id, second);
+    assert_eq!(p.status, PaymentStatus::Locked);
+}
+
+// ── batch_create_payments with a repeated payer ───────────────────────────────
+
+#[test]
+fn test_batch_create_payments_same_hospital_three_entries() {
+    let (env, cid, requests_client, hospital) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let payee = Address::generate(&env);
+
+    let r1 = new_request(&env, &requests_client, &hospital);
+    let r2 = new_request(&env, &requests_client, &hospital);
+    let r3 = new_request(&env, &requests_client, &hospital);
+
+    let batch = soroban_sdk::vec![
+        &env,
+        (r1, hospital.clone(), payee.clone(), 100i128),
+        (r2, hospital.clone(), payee.clone(), 200i128),
+        (r3, hospital.clone(), payee.clone(), 300i128),
+    ];
+    let ids = client.batch_create_payments(&batch);
+
+    assert_eq!(ids.len(), 3);
+    for (i, request_id) in [r1, r2, r3].iter().enumerate() {
+        let p = client.get_payment(&ids.get(i as u32).unwrap());
+        assert_eq!(p.request_id, *request_id);
+        assert_eq!(p.payer, hospital);
+        assert_eq!(p.status, PaymentStatus::Pending);
+    }
+    assert_eq!(client.get_payment(&ids.get(2).unwrap()).amount, 300);
+}
