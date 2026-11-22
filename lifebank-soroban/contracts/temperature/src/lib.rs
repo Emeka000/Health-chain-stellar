@@ -883,6 +883,12 @@ impl TemperatureContract {
             return Err(ContractError::ExcursionSummaryMismatch);
         }
 
+        // Only an active compromise (live streak >= threshold) may dispute a
+        // payment. Stale violations after a streak reset must not count.
+        if !Self::is_compromised(env.clone(), unit_id) {
+            return Err(ContractError::UnitNotCompromised);
+        }
+
         // Bind the payment to the unit: the coordinator must confirm that
         // `payment_id` actually pays for a request this unit was allocated to,
         // otherwise any oracle could dispute an unrelated payment.
