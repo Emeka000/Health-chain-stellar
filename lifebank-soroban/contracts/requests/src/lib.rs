@@ -647,6 +647,20 @@ impl RequestContract {
             return Err(ContractError::Unauthorized);
         }
 
+        Self::apply_status_transition(&env, &mut request, &caller, new_status, reason)
+    }
+
+    /// Shared body of `update_request_status` and
+    /// `update_status_by_contract`, run once the caller is authorized.
+    fn apply_status_transition(
+        env: &Env,
+        request: &mut BloodRequest,
+        caller: &Address,
+        new_status: RequestStatus,
+        reason: String,
+    ) -> Result<(), ContractError> {
+        let request_id = request.id;
+
         if request.status == new_status {
             return Err(ContractError::InvalidRequestStatus);
         }
@@ -664,7 +678,7 @@ impl RequestContract {
             RequestStatus::Approved | RequestStatus::InProgress => {}
             RequestStatus::Rejected => {
                 Self::ensure_non_empty_reason(&reason)?;
-                released_reservation = Self::release_reservation_if_present(&env, &mut request)?;
+                released_reservation = Self::release_reservation_if_present(env, request)?;
             }
             RequestStatus::Fulfilled => {
                 let remaining = request
@@ -680,9 +694,9 @@ impl RequestContract {
 
         request.status = new_status;
         Self::append_history(
-            &env,
-            &mut request,
-            &caller,
+            env,
+            request,
+            caller,
             old_status,
             false,
             new_status,
@@ -690,24 +704,95 @@ impl RequestContract {
             fulfilled_delta_ml,
             released_reservation,
         );
-        storage::set_request(&env, &request);
+        storage::set_request(env, request);
         if matches!(
             new_status,
             RequestStatus::Rejected | RequestStatus::Fulfilled
         ) {
-            storage::remove_from_hospital_requests(&env, &request.hospital_id, request_id);
+            storage::remove_from_hospital_requests(env, &request.hospital_id, request_id);
         }
 
         events::emit_request_status_updated(
-            &env,
+            env,
             request_id,
-            &caller,
+            caller,
             old_status,
             new_status,
             env.ledger().timestamp(),
         );
 
         Ok(())
+    }
+
+    /// Configure the coordinator contract trusted to drive the request
+    /// lifecycle via `update_status_by_contract`. Admin only; may be
+    /// called again to rotate.
+    pub fn set_coordinator_contract(
+        env: Env,
+        coordinator_contract: Address,
+    ) -> Result<(), ContractError> {
+        storage::require_initialized(&env)?;
+        storage::get_admin(&env).require_auth();
+        storage::set_coordinator_contract(&env, &coordinator_contract);
+        events::emit_coordinator_contract_set(&env, &coordinator_contract);
+        Ok(())
+    }
+
+    pub fn get_coordinator_contract(env: Env) -> Result<Option<Address>, ContractError> {
+        storage::require_initialized(&env)?;
+        Ok(storage::get_coordinator_contract(&env))
+    }
+
+    /// Move a request through its lifecycle on behalf of the trusted
+    /// coordinator contract, which drives the allocate → deliver → settle
+    /// workflow:
+    ///   * allocation:  `Pending → Approved`
+    ///   * delivery:    `Approved → InProgress`
+    ///   * settlement:  `Approved | InProgress → Fulfilled`
+    ///   * rollback / expiry: `Pending | Approved → Cancelled`
+    ///
+    /// Mirrors `cancel_request_by_contract`: `caller_contract` must authorize
+    /// the call (automatic for the direct invoking contract) and must equal
+    /// the coordinator configured via `set_coordinator_contract`. Transitions
+    /// follow the same state machine as `update_request_status`.
+    pub fn update_status_by_contract(
+        env: Env,
+        caller_contract: Address,
+        request_id: u64,
+        new_status: RequestStatus,
+        reason: String,
+    ) -> Result<(), ContractError> {
+        storage::require_initialized(&env)?;
+        storage::require_not_paused(&env)?;
+        caller_contract.require_auth();
+
+        match storage::get_coordinator_contract(&env) {
+            Some(ref trusted) if *trusted == caller_contract => {}
+            Some(_) => return Err(ContractError::Unauthorized),
+            None => return Err(ContractError::CoordinatorContractNotSet),
+        }
+
+        let mut request =
+            storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
+
+        match new_status {
+            RequestStatus::Approved | RequestStatus::InProgress | RequestStatus::Fulfilled => {
+                Self::apply_status_transition(
+                    &env,
+                    &mut request,
+                    &caller_contract,
+                    new_status,
+                    reason,
+                )
+            }
+            RequestStatus::Cancelled => {
+                Self::ensure_non_empty_reason(&reason)?;
+                Self::cancel_internal(&env, &mut request, &caller_contract, reason)
+            }
+            RequestStatus::Pending | RequestStatus::Rejected => {
+                Err(ContractError::InvalidRequestStatus)
+            }
+        }
     }
 
     /// Register partial fulfillment. Admin only.

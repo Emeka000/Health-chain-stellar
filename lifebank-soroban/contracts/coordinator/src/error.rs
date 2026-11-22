@@ -30,6 +30,9 @@ pub enum CoordinatorError {
     InventoryUpdateFailed = 830,
     PaymentUpdateFailed = 831,
     PaymentFlagFailed = 832,
+    /// The requests contract refused a lifecycle transition driven by the
+    /// coordinator (e.g. it is paused or the coordinator is not trusted).
+    RequestUpdateFailed = 833,
 
     // Circuit breaker
     ContractPaused = 840,
@@ -39,4 +42,12 @@ pub enum CoordinatorError {
 
     /// expire_workflow() was called but the deadline has not yet elapsed.
     WorkflowNotExpired = 842,
+
+    // Payment binding checks in allocate_units
+    /// The bound payment is not `Locked` (e.g. still `Pending`, or `Disputed`).
+    PaymentNotLocked = 850,
+    /// The bound payment has no token behind it, so nothing is escrowed.
+    PaymentNotEscrowed = 851,
+    /// The bound payment was not made by the request's hospital.
+    PaymentPayerMismatch = 852,
 }

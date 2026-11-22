@@ -130,6 +130,35 @@ Records a history entry and emits `request_status_updated` event.
 
 ---
 
+### set_coordinator_contract / update_status_by_contract
+
+```rust
+pub fn set_coordinator_contract(env: Env, coordinator_contract: Address) -> Result<(), ContractError>
+pub fn update_status_by_contract(
+    env: Env,
+    caller_contract: Address,
+    request_id: u64,
+    new_status: RequestStatus,
+    reason: String,
+) -> Result<(), ContractError>
+```
+
+`set_coordinator_contract` (admin only) configures the coordinator contract
+trusted to drive the request lifecycle. `update_status_by_contract` is how the
+coordinator does it: `caller_contract` must authorize (automatic for the direct
+invoking contract) and equal the configured coordinator.
+
+- `Approved` (on allocation), `InProgress` (on delivery) and `Fulfilled` (on
+  settlement) follow the same rules as `update_request_status`.
+- `Cancelled` (on rollback/expiry) follows `cancel_request`: only from
+  `Pending` or `Approved`, non-empty reason.
+- `Pending` and `Rejected` are not valid targets.
+
+Errors: `Unauthorized` (another address), `CoordinatorContractNotSet`,
+`RequestNotFound`, `InvalidRequestStatus`, `InvalidReason`, `ContractPaused`.
+
+---
+
 ### expire_request
 
 ```rust
@@ -349,6 +378,7 @@ pub struct RequestHistoryEntry {
 | `DataKey::HospitalRequestIds(Address)` | Persistent | `Vec<u64>` | Hospital's open request IDs (pruned on terminal transitions) |
 | `DataKey::HospitalRequestCount(Address)` | Persistent | `u32` | Number of requests the hospital has ever created |
 | `DataKey::HospitalRequestAt(Address, u32)` | Persistent | `u64` | Request ID at a position in the hospital's append-only history |
+| `DataKey::CoordinatorContract` | Instance | `Address` | Coordinator trusted to call `update_status_by_contract` |
 
 ## Error codes
 
@@ -364,5 +394,6 @@ pub struct RequestHistoryEntry {
 | `InvalidQuantity` | quantity_ml is zero or exceeds remaining |
 | `InvalidReason` | Reason string is empty |
 | `InvalidTimestamp` | required_by_timestamp is in the past |
-| `InventoryReleaseFailed` (318) | Inventory refused to release the request's reservation (e.g. inventory paused); the transition was not applied |
-| `RequestNotExpired` (319) | `expire_request` called before `required_by_timestamp` passed |
+| `InventoryReleaseFailed` (323) | Inventory refused to release the request's reservation (e.g. inventory paused); the transition was not applied |
+| `RequestNotExpired` (324) | `expire_request` called before `required_by_timestamp` passed |
+| `CoordinatorContractNotSet` (325) | `update_status_by_contract` called before `set_coordinator_contract` |

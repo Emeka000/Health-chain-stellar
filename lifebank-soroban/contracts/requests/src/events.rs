@@ -20,6 +20,11 @@ pub struct PaymentsContractSet {
     pub payments_contract: Address,
 }
 
+#[contractevent(topics = ["coordinator_contract_set"], data_format = "single-value")]
+pub struct CoordinatorContractSet {
+    pub coordinator_contract: Address,
+}
+
 #[contractevent(topics = ["request_cancelled"], data_format = "vec")]
 pub struct RequestCancelled {
     pub request_id: u64,
@@ -128,6 +133,13 @@ pub fn emit_request_created(env: &Env, request: &BloodRequest) {
 pub fn emit_payments_contract_set(env: &Env, payments_contract: &Address) {
     PaymentsContractSet {
         payments_contract: payments_contract.clone(),
+    }
+    .publish(env);
+}
+
+pub fn emit_coordinator_contract_set(env: &Env, coordinator_contract: &Address) {
+    CoordinatorContractSet {
+        coordinator_contract: coordinator_contract.clone(),
     }
     .publish(env);
 }

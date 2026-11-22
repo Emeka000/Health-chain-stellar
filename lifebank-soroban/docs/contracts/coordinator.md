@@ -2,6 +2,27 @@
 
 The coordinator is the integration hub. It holds references to the requests, inventory, and payments contracts and enforces the canonical three-step delivery workflow. No blood unit can be delivered and no payment can be released without passing through this contract.
 
+## Deployment wiring
+
+The coordinator authorizes every cross-contract call as itself (a direct
+sub-call satisfies `require_auth` for the invoking contract), so a workflow
+step only needs the coordinator admin's signature and `expire_workflow` needs
+none. For that to work:
+
+- the coordinator must be the payments contract's admin;
+- inventory must trust it: `inventory.set_coordinator_contract(admin, coordinator)`;
+- requests must trust it: `requests.set_coordinator_contract(coordinator)`.
+
+The coordinator drives the request lifecycle through
+`requests.update_status_by_contract`:
+
+| Coordinator step | Request status |
+|---|---|
+| `allocate_units` | `Pending → Approved` |
+| `confirm_delivery` | `Approved → InProgress` |
+| `settle_payment` | `→ Fulfilled` |
+| `rollback` / `expire_workflow` | `→ Cancelled` (skipped if already closed) |
+
 ## State machine
 
 ```
@@ -54,23 +75,25 @@ pub fn allocate_units(
     unit_ids: Vec<u64>,
     payment_id: u64,
     caller: Address,
-    blood_type: BloodType,
 ) -> Result<(), CoordinatorError>
 ```
 
 Step 1 of the workflow.
 
 - Requires `caller` auth (must be the admin).
-- Verifies the request exists, is `Pending`, and that `blood_type` matches the
-  request's blood type.
-- Verifies the payment exists and is bound to `request_id`.
-- Verifies each blood unit exists and is `Available` and compatible with
-  `blood_type`, then marks it `Reserved`.
+- Fails with `WorkflowAlreadyStarted` if any workflow (terminal or not) exists
+  for `request_id`.
+- Verifies the request exists and is `Pending`.
+- Verifies the payment is bound to `request_id`, is `Locked`
+  (`PaymentNotLocked`), is token-backed escrow (`PaymentNotEscrowed`) and was
+  paid by the request's hospital (`PaymentPayerMismatch`).
+- Verifies each blood unit exists and is `Available` and ABO/Rh-compatible with
+  the request's blood type, then marks it `Reserved`.
+- Moves the request to `Approved`.
 - Creates a `WorkflowRecord` with status `Allocated`.
 - Emits `(coord, alloc, v1)` with `(request_id, unit_ids, unit_count)`.
 
-Fails if the contract is paused or halted, or a workflow for this `request_id`
-already exists in a non-terminal state.
+Fails if the contract is paused.
 
 ---
 
@@ -89,6 +112,8 @@ Step 2 of the workflow.
 
 - Requires `caller` auth.
 - Workflow must be `Allocated`.
+- The request must still be `Approved` (moved to `InProgress`) or already
+  `InProgress`; otherwise `InvalidRequestState`.
 - Transitions each unit: `Reserved → InTransit`, then `InTransit → Delivered` (via `mark_delivered`).
 - Sets `delivery_confirmed = true` and stores `delivery_location`.
 - Emits `(coord, dlvrd, v1)` with `(request_id, location)`.
@@ -111,7 +136,9 @@ Step 3 of the workflow.
 
 - Requires `caller` auth.
 - Workflow must be `Delivered` with `delivery_confirmed == true`.
-- Payment must be `Locked`; transitions it to `Released`.
+- Payment must be `Locked`; records the coordinator's half of the escrow
+  release (tokens move once the hospital calls `confirm_receipt`).
+- Marks the request `Fulfilled`.
 - Emits `(coord, settld, v1)` with `(request_id, payment_id)`.
 
 Blocked by both `pause()` and `emergency_halt()`.
@@ -124,14 +151,27 @@ Blocked by both `pause()` and `emergency_halt()`.
 pub fn rollback(env: Env, request_id: u64) -> Result<(), CoordinatorError>
 ```
 
-Admin-only. Reverses an in-flight workflow.
+Admin-only. Reverses an `Allocated` workflow.
 
 - Returns all allocated units to `Available`.
-- If the payment is `Locked`, transitions it to `Refunded`. Other payment states are left unchanged.
-- Sets workflow status to `RolledBack`.
+- If the payment is `Locked`, refunds it. Other payment states are left unchanged.
+- Cancels the request unless it is already closed.
+- Sets workflow status to `RolledBack`; the request cannot be allocated again.
 - Emits `(coord, rollbk, v1)` with `request_id`.
 
 Returns `CannotRollbackSettled` if the workflow has already settled.
+
+---
+
+### expire_workflow
+
+```rust
+pub fn expire_workflow(env: Env, request_id: u64) -> Result<(), CoordinatorError>
+```
+
+Permissionless: anyone may call it once `ledger.timestamp() >= expires_at` on
+an `Allocated` workflow. Performs the same unwinding as `rollback` without any
+signature. Emits `(coord, expired, v1)` with `request_id`.
 
 ---
 
@@ -264,7 +304,7 @@ pub struct ExcursionSummary {
 | `NotInitialized` | 801 | Contract not yet initialized |
 | `Unauthorized` | 802 | Caller is not admin |
 | `WorkflowNotFound` | 810 | No workflow for this request_id |
-| `WorkflowAlreadyStarted` | 811 | Workflow exists and is not Pending |
+| `WorkflowAlreadyStarted` | 811 | A workflow (terminal or not) already exists for this request |
 | `InvalidWorkflowState` | 812 | Wrong workflow state for this step |
 | `CannotRollbackSettled` | 813 | Workflow already settled |
 | `RequestNotFound` | 820 | Cross-contract: request not found |
@@ -274,8 +314,16 @@ pub struct ExcursionSummary {
 | `PaymentNotFound` | 824 | Cross-contract: payment not found |
 | `InvalidPaymentState` | 825 | Payment is not in expected state |
 | `DeliveryNotConfirmed` | 826 | settle_payment called before confirm_delivery |
+| `IncompatibleBloodType` | 827 | Unit cannot donate to the request's blood type |
+| `NoUnitsSpecified` | 828 | `unit_ids` is empty |
+| `PaymentRequestMismatch` | 829 | Payment belongs to another request |
 | `InventoryUpdateFailed` | 830 | Cross-contract call to inventory failed |
 | `PaymentUpdateFailed` | 831 | Cross-contract call to payments failed |
 | `PaymentFlagFailed` | 832 | Cross-contract dispute recording failed |
+| `RequestUpdateFailed` | 833 | Requests contract refused a lifecycle transition |
 | `ContractPaused` | 840 | Contract is paused |
 | `EmergencyHalted` | 841 | Emergency halt is active |
+| `WorkflowNotExpired` | 842 | `expire_workflow` called before `expires_at` |
+| `PaymentNotLocked` | 850 | Bound payment is not `Locked` (e.g. `Pending`, `Disputed`) |
+| `PaymentNotEscrowed` | 851 | Bound payment has no token behind it |
+| `PaymentPayerMismatch` | 852 | Bound payment was not paid by the request's hospital |

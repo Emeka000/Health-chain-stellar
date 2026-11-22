@@ -66,6 +66,16 @@ pub fn get_payments_contract(env: &Env) -> Option<Address> {
     env.storage().instance().get(&DataKey::PaymentsContract)
 }
 
+pub fn set_coordinator_contract(env: &Env, coordinator_contract: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::CoordinatorContract, coordinator_contract);
+}
+
+pub fn get_coordinator_contract(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::CoordinatorContract)
+}
+
 pub fn set_request_counter(env: &Env, value: u64) {
     env.storage()
         .instance()
