@@ -80,6 +80,20 @@ pub struct PaymentStats {
     pub count_locked: u32,
     pub count_released: u32,
     pub count_refunded: u32,
+    /// Escrowed funds held by the contract while a dispute is open. Together
+    /// with `total_locked` this equals the summed escrow reserve.
+    pub total_disputed: i128,
+    pub count_disputed: u32,
+}
+
+/// Which party opened a dispute. Recorded by `record_dispute` so the outcome
+/// applied by `process_expired_disputes` can depend on it.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisputeOpener {
+    Payer,
+    Payee,
+    Admin,
 }
 
 #[contracttype]
@@ -174,6 +188,12 @@ pub enum Error {
     /// A disputed payment can only be closed by resolve_dispute or
     /// process_expired_disputes; update_status must not skip the resolution.
     DisputeResolutionRequired = 528,
+    /// The payee is not the organization recorded as fulfilling the request
+    /// (`fulfilled_by` in the requests contract).
+    PayeeNotFulfiller = 529,
+    /// A payment can only enter Disputed through record_dispute, which
+    /// records the reason, case ID and opener and emits `PaymentDisputed`.
+    DisputeRecordRequired = 530,
 }
 
 // ── Storage keys ───────────────────────────────────────────────────────────────
@@ -199,6 +219,9 @@ const DEFAULT_DISPUTE_TIMEOUT_SECS: u64 = 7 * 24 * 3600;
 const MAX_DISPUTE_TIMEOUT_SECS: u64 = 365 * 24 * 3600;
 /// Instance storage key for the dispute timeout override.
 const DISPUTE_TIMEOUT: soroban_sdk::Symbol = symbol_short!("DISP_TO");
+/// Instance storage key prefix for the per-opener default outcome applied when
+/// a dispute times out. Unset means `RefundToPayer`.
+const DISPUTE_DEFAULT: soroban_sdk::Symbol = symbol_short!("DISP_DEF");
 /// Instance storage key for the admin-managed set of allowed token addresses.
 const ALLOWED_TOKENS: soroban_sdk::Symbol = symbol_short!("ALWD_TOK");
 /// Upper bound for a vesting schedule's cliff and duration (10 years). Keeps
@@ -468,15 +491,6 @@ fn remove_from_request_index(env: &Env, request_id: u64) {
     env.storage().persistent().remove(&req_idx_key(request_id));
 }
 
-/// A terminal status is one from which req_idx_key has already been removed;
-/// only Released, Refunded, and Cancelled are terminal.
-fn is_terminal_status(status: PaymentStatus) -> bool {
-    matches!(
-        status,
-        PaymentStatus::Released | PaymentStatus::Refunded | PaymentStatus::Cancelled
-    )
-}
-
 /// Persistent key for the ordered list of payment IDs associated with a request.
 /// Separate from req_idx_key (which maps request → current active payment).
 fn request_timeline_key(request_id: u64) -> (u64, &'static str) {
@@ -541,6 +555,8 @@ fn load_stats(env: &Env) -> PaymentStats {
             count_locked: 0,
             count_released: 0,
             count_refunded: 0,
+            total_disputed: 0,
+            count_disputed: 0,
         })
 }
 
@@ -549,25 +565,48 @@ fn store_stats(env: &Env, stats: &PaymentStats) {
     extend_instance_ttl(env);
 }
 
+/// Move `payment.amount` between the stats buckets for `old` → `new`.
+///
+/// The Disputed bucket tracks escrowed funds only: a disputed bookkeeping
+/// payment holds no tokens, so counting it would break
+/// `total_locked + total_disputed == escrow reserve`.
 fn update_stats_on_transition(
     env: &Env,
-    amount: i128,
+    payment: &Payment,
     old: PaymentStatus,
     new: PaymentStatus,
 ) -> Result<(), Error> {
+    let amount = payment.amount;
+    let escrowed = payment.token.is_some();
     let mut stats = load_stats(env);
     match old {
         PaymentStatus::Locked => {
-            stats.total_locked -= amount;
+            stats.total_locked = stats
+                .total_locked
+                .checked_sub(amount)
+                .ok_or(Error::Overflow)?;
             stats.count_locked = stats.count_locked.saturating_sub(1);
         }
         PaymentStatus::Released => {
-            stats.total_released -= amount;
+            stats.total_released = stats
+                .total_released
+                .checked_sub(amount)
+                .ok_or(Error::Overflow)?;
             stats.count_released = stats.count_released.saturating_sub(1);
         }
         PaymentStatus::Refunded => {
-            stats.total_refunded -= amount;
+            stats.total_refunded = stats
+                .total_refunded
+                .checked_sub(amount)
+                .ok_or(Error::Overflow)?;
             stats.count_refunded = stats.count_refunded.saturating_sub(1);
+        }
+        PaymentStatus::Disputed if escrowed => {
+            stats.total_disputed = stats
+                .total_disputed
+                .checked_sub(amount)
+                .ok_or(Error::Overflow)?;
+            stats.count_disputed = stats.count_disputed.saturating_sub(1);
         }
         _ => {}
     }
@@ -592,6 +631,13 @@ fn update_stats_on_transition(
                 .checked_add(amount)
                 .ok_or(Error::Overflow)?;
             stats.count_refunded += 1;
+        }
+        PaymentStatus::Disputed if escrowed => {
+            stats.total_disputed = stats
+                .total_disputed
+                .checked_add(amount)
+                .ok_or(Error::Overflow)?;
+            stats.count_disputed += 1;
         }
         _ => {}
     }
@@ -695,7 +741,8 @@ mod request_client {
 use request_client::{RequestContractClient, RequestStatus as ReqStatus};
 
 /// Returns the decoded request when `request_id` exists, is in Pending or
-/// Approved status, and is being paid for by the requesting hospital.
+/// Approved status, is being paid for by the requesting hospital and, once a
+/// fulfilling organization is recorded, is being paid to that organization.
 ///
 /// The payer check is what stops a third party from squatting a `request_id`:
 /// both `create_payment` and `create_escrow` take a per-request index, so
@@ -706,6 +753,7 @@ fn validate_request_payable(
     requests_contract: &Address,
     request_id: u64,
     payer: &Address,
+    payee: &Address,
 ) -> Result<request_client::BloodRequest, Error> {
     let client = RequestContractClient::new(env, requests_contract);
     let req = client
@@ -725,6 +773,7 @@ fn validate_request_payable(
     if req.hospital_id != *payer {
         return Err(Error::Unauthorized);
     }
+    check_payee_is_fulfiller(&req, payee)?;
     Ok(req)
 }
 
@@ -750,6 +799,47 @@ fn require_requests_contract(env: &Env) -> Result<Address, Error> {
         .instance()
         .get::<_, Address>(&REQ_CONTRACT)
         .ok_or(Error::RequestsContractNotSet)
+}
+
+/// Persistent key recording which party opened a payment's dispute.
+fn dispute_opener_key(payment_id: u64) -> (u64, &'static str) {
+    (payment_id, "disp_by")
+}
+
+/// Default outcome for an expired dispute opened by `opener`.
+fn dispute_default(env: &Env, opener: DisputeOpener) -> DisputeResolution {
+    env.storage()
+        .instance()
+        .get(&(DISPUTE_DEFAULT, opener))
+        .unwrap_or(DisputeResolution::RefundToPayer)
+}
+
+/// When the request records a fulfilling organization, the payee must be it.
+/// Otherwise a hospital could pay (and the coordinator later release funds
+/// to) an address other than the blood bank that actually fulfilled it.
+fn check_payee_is_fulfiller(
+    req: &request_client::BloodRequest,
+    payee: &Address,
+) -> Result<(), Error> {
+    match req.fulfilled_by {
+        Some(ref org) if org != payee => Err(Error::PayeeNotFulfiller),
+        _ => Ok(()),
+    }
+}
+
+/// Release-time variant of `check_payee_is_fulfiller`: re-reads the request,
+/// since `fulfilled_by` is usually set after the payment was created. A
+/// missing requests contract or request is not treated as a mismatch so that
+/// settlement of existing payments can never be blocked by a lookup failure.
+fn ensure_payee_is_fulfiller(env: &Env, payment: &Payment) -> Result<(), Error> {
+    let rc = match env.storage().instance().get::<_, Address>(&REQ_CONTRACT) {
+        Some(rc) => rc,
+        None => return Ok(()),
+    };
+    match RequestContractClient::new(env, &rc).try_get_request(&payment.request_id) {
+        Ok(Ok(req)) => check_payee_is_fulfiller(&req, &payment.payee),
+        _ => Ok(()),
+    }
 }
 
 fn coord_ok_key(payment_id: u64) -> (u64, &'static str) {
@@ -994,7 +1084,7 @@ impl PaymentContract {
         }
 
         let rc = require_requests_contract(&env)?;
-        validate_request_payable(&env, &rc, request_id, &payer)?;
+        validate_request_payable(&env, &rc, request_id, &payer, &payee)?;
 
         let id = get_counter(&env) + 1;
         set_counter(&env, id);
@@ -1082,7 +1172,7 @@ impl PaymentContract {
 
         // Validate request state; mandatory, same as create_payment.
         let rc = require_requests_contract(&env)?;
-        validate_request_payable(&env, &rc, request_id, &hospital)?;
+        validate_request_payable(&env, &rc, request_id, &hospital, &payee)?;
 
         let id = get_counter(&env) + 1;
         set_counter(&env, id);
@@ -1114,7 +1204,7 @@ impl PaymentContract {
         index_by_status(&env, PaymentStatus::Locked, id);
         index_by_request(&env, request_id, id);
         timeline_append(&env, request_id, id);
-        update_stats_on_transition(&env, amount, PaymentStatus::Pending, PaymentStatus::Locked)?;
+        update_stats_on_transition(&env, &payment, PaymentStatus::Pending, PaymentStatus::Locked)?;
         add_reserve(&env, &escrow_reserve_key(&token), amount)?;
 
         // External call last — any failure here will revert the entire transaction,
@@ -1145,6 +1235,7 @@ impl PaymentContract {
         if payment.status != PaymentStatus::Locked {
             return Err(Error::PaymentNotLocked);
         }
+        ensure_payee_is_fulfiller(&env, &payment)?;
 
         // Mark coordinator confirmation
         let coord_key = coord_ok_key(payment_id);
@@ -1176,7 +1267,7 @@ impl PaymentContract {
 
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, PaymentStatus::Released, payment_id);
-        update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Released)?;
+        update_stats_on_transition(&env, &payment, old_status, PaymentStatus::Released)?;
         remove_from_request_index(&env, payment.request_id);
 
         // Clean up confirmation flags
@@ -1206,6 +1297,7 @@ impl PaymentContract {
         if payment.payer != hospital {
             return Err(Error::Unauthorized);
         }
+        ensure_payee_is_fulfiller(&env, &payment)?;
 
         // Mark hospital confirmation
         let hosp_key = hosp_ok_key(payment_id);
@@ -1238,7 +1330,7 @@ impl PaymentContract {
 
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, PaymentStatus::Released, payment_id);
-        update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Released)?;
+        update_stats_on_transition(&env, &payment, old_status, PaymentStatus::Released)?;
         remove_from_request_index(&env, payment.request_id);
 
         // Clean up confirmation flags
@@ -1277,7 +1369,7 @@ impl PaymentContract {
 
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, PaymentStatus::Refunded, payment_id);
-        update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Refunded)?;
+        update_stats_on_transition(&env, &payment, old_status, PaymentStatus::Refunded)?;
         remove_from_request_index(&env, payment.request_id);
         clear_confirmations(&env, payment_id);
 
@@ -1300,37 +1392,49 @@ impl PaymentContract {
         Self::require_not_paused(&env)?;
         Self::require_admin(&env, &caller)?;
         let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
-
-        // Security fix: prevent escrow bypass via update_status
-        // Released/Refunded require actual token transfer, which must go through
-        // release_escrow/refund_escrow. update_status cannot move funds.
-        // Cancelled is included: cancelling an escrow here would strand the
-        // locked tokens in the contract with no path back to either party.
-        if matches!(
-            status,
-            PaymentStatus::Released | PaymentStatus::Refunded | PaymentStatus::Cancelled
-        ) && payment.token.is_some()
-        {
-            return Err(Error::EscrowSettlementRequired);
-        }
-
         let old_status = payment.status;
 
         // A dispute is closed only by resolve_dispute / process_expired_disputes.
         // Letting update_status move it on would skip the resolution record
         // (dispute_resolved) and, for escrows, the settlement transfer.
-        if old_status == PaymentStatus::Disputed && status != PaymentStatus::Disputed {
+        if old_status == PaymentStatus::Disputed {
             return Err(Error::DisputeResolutionRequired);
         }
 
-        // Security fix: a terminal payment (Released/Refunded/Cancelled) must
-        // never move back to a non-terminal status. remove_from_request_index
-        // is only called when *entering* a terminal status, so resurrecting a
-        // terminal payment would leave req_idx_key deleted while this payment
-        // is live again, letting a fresh create_payment for the same request
-        // slip past the DuplicatePayment guard.
-        if is_terminal_status(old_status) && !is_terminal_status(status) {
+        // A dispute is opened only by record_dispute, which records the reason,
+        // case ID and opener and emits PaymentDisputed. Skipping it would leave
+        // a reason-less dispute that process_expired_disputes later settles.
+        if status == PaymentStatus::Disputed {
+            return Err(Error::DisputeRecordRequired);
+        }
+
+        // Escrow payments move only through the dedicated functions
+        // (release_escrow/confirm_receipt/refund_escrow/record_dispute/
+        // resolve_dispute): update_status cannot move funds, and cancelling an
+        // escrow here would strand the locked tokens in the contract.
+        if payment.token.is_some() {
+            return Err(Error::EscrowSettlementRequired);
+        }
+
+        // Bookkeeping allow-list: Pending → Released | Refunded | Cancelled.
+        // Locked is excluded because a bookkeeping payment holds no tokens to
+        // lock (stats would count phantom funds and release_escrow would fail
+        // with NotEscrowPayment, stranding it). Terminal payments never move
+        // again: req_idx_key is removed on entering a terminal status, so
+        // resurrecting one would let a duplicate payment past the
+        // DuplicatePayment guard.
+        let allowed = old_status == PaymentStatus::Pending
+            && matches!(
+                status,
+                PaymentStatus::Released | PaymentStatus::Refunded | PaymentStatus::Cancelled
+            );
+        if !allowed {
             return Err(Error::InvalidStatusTransition);
+        }
+
+        // Settlement must go to the organization that fulfilled the request.
+        if status == PaymentStatus::Released {
+            ensure_payee_is_fulfiller(&env, &payment)?;
         }
 
         payment.status = status;
@@ -1338,16 +1442,8 @@ impl PaymentContract {
         store_payment(&env, &payment);
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, status, payment_id);
-        update_stats_on_transition(&env, payment.amount, old_status, status)?;
-        if old_status == PaymentStatus::Locked && status != PaymentStatus::Locked {
-            clear_confirmations(&env, payment_id);
-        }
-        if matches!(
-            status,
-            PaymentStatus::Released | PaymentStatus::Refunded | PaymentStatus::Cancelled
-        ) {
-            remove_from_request_index(&env, payment.request_id);
-        }
+        update_stats_on_transition(&env, &payment, old_status, status)?;
+        remove_from_request_index(&env, payment.request_id);
 
         // Emit event on every status transition so off-chain indexers can stay
         // in sync without polling. Topics: ("payment", "status") so indexers can
@@ -1376,9 +1472,15 @@ impl PaymentContract {
         // contract admin (e.g. the coordinator, which has the workflow context
         // needed to attribute a temperature excursion to this payment) may also
         // open a dispute on their behalf.
-        if caller != payment.payer && caller != payment.payee && !Self::is_admin(&env, &caller) {
+        let opener = if caller == payment.payer {
+            DisputeOpener::Payer
+        } else if caller == payment.payee {
+            DisputeOpener::Payee
+        } else if Self::is_admin(&env, &caller) {
+            DisputeOpener::Admin
+        } else {
             return Err(Error::Unauthorized);
-        }
+        };
         // Only Pending or Locked payments may be disputed.  Raising a dispute
         // on an already-Released or Refunded payment has no token backing and
         // would silently corrupt aggregate statistics.
@@ -1395,7 +1497,16 @@ impl PaymentContract {
         store_payment(&env, &payment);
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, PaymentStatus::Disputed, payment_id);
-        update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Disputed)?;
+        update_stats_on_transition(&env, &payment, old_status, PaymentStatus::Disputed)?;
+        // Record who opened the dispute; process_expired_disputes uses it to
+        // pick the default outcome.
+        let opener_key = dispute_opener_key(payment_id);
+        env.storage().persistent().set(&opener_key, &opener);
+        env.storage().persistent().extend_ttl(
+            &opener_key,
+            PERSISTENT_BUMP_THRESHOLD,
+            PERSISTENT_BUMP_TO,
+        );
         // A dispute supersedes any earlier release confirmation.
         clear_confirmations(&env, payment_id);
         PaymentDisputed {
@@ -1427,6 +1538,9 @@ impl PaymentContract {
         if payment.status != PaymentStatus::Disputed {
             return Err(Error::PaymentNotDisputed);
         }
+        if resolution == DisputeResolution::ReleaseToPayee {
+            ensure_payee_is_fulfiller(&env, &payment)?;
+        }
 
         // ── Escrow: execute the token transfer ────────────────────────────
         if let Some(ref token_addr) = payment.token {
@@ -1451,7 +1565,7 @@ impl PaymentContract {
 
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, new_status, payment_id);
-        update_stats_on_transition(&env, payment.amount, old_status, new_status)?;
+        update_stats_on_transition(&env, &payment, old_status, new_status)?;
         remove_from_request_index(&env, payment.request_id);
         clear_confirmations(&env, payment_id);
 
@@ -1546,6 +1660,13 @@ impl PaymentContract {
 
     pub fn get_payment_statistics(env: Env) -> PaymentStats {
         load_stats(&env)
+    }
+
+    /// Which party opened the payment's dispute, if one was ever recorded.
+    pub fn get_dispute_opener(env: Env, payment_id: u64) -> Option<DisputeOpener> {
+        env.storage()
+            .persistent()
+            .get(&dispute_opener_key(payment_id))
     }
 
     /// Returns the ordered payment history for a specific request.
@@ -1828,6 +1949,28 @@ impl PaymentContract {
         Ok(())
     }
 
+    /// Set the outcome `process_expired_disputes` applies when a dispute
+    /// opened by `opener` times out. Defaults to `RefundToPayer`. Admin only.
+    pub fn set_dispute_default(
+        env: Env,
+        admin: Address,
+        opener: DisputeOpener,
+        resolution: DisputeResolution,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        env.storage()
+            .instance()
+            .set(&(DISPUTE_DEFAULT, opener), &resolution);
+        extend_instance_ttl(&env);
+        Ok(())
+    }
+
+    /// The outcome applied when a dispute opened by `opener` times out.
+    pub fn get_dispute_default(env: Env, opener: DisputeOpener) -> DisputeResolution {
+        dispute_default(&env, opener)
+    }
+
     // ── Token allowlist ────────────────────────────────────────────────────────
 
     /// Add a token address to the escrow allowlist. Admin only.
@@ -1892,9 +2035,17 @@ impl PaymentContract {
         false
     }
 
-    /// Refund all Disputed+escrowed payments whose dispute has exceeded the
-    /// timeout window, cancel the linked request, and emit events so off-chain
-    /// projections can reconcile request state. Admin only.
+    /// Close every Disputed payment in `payment_ids` whose dispute has exceeded
+    /// the timeout window. Admin only.
+    ///
+    /// The outcome is the default configured for whoever opened the dispute
+    /// (`set_dispute_default`, `RefundToPayer` unless set). A release falls
+    /// back to a refund when the payee is not the request's fulfilling org.
+    /// Escrow payments transfer the tokens; bookkeeping payments (no token)
+    /// only change status, so their disputes time out too and the request's
+    /// payment slot is freed. On a refund the linked request is cancelled.
+    /// Events are emitted so off-chain projections can reconcile state.
+    /// Returns the IDs of the payments that were closed.
     pub fn process_expired_disputes(
         env: Env,
         admin: Address,
@@ -1916,7 +2067,7 @@ impl PaymentContract {
         let req_contract: Option<Address> =
             env.storage().instance().get::<_, Address>(&REQ_CONTRACT);
 
-        let mut refunded: Vec<u64> = Vec::new(&env);
+        let mut closed: Vec<u64> = Vec::new(&env);
 
         for i in 0..payment_ids.len() {
             let pid = payment_ids.get(i).unwrap();
@@ -1927,9 +2078,6 @@ impl PaymentContract {
             if payment.status != PaymentStatus::Disputed {
                 continue;
             }
-            if payment.token.is_none() {
-                continue;
-            }
             let expires_at = payment
                 .updated_at
                 .checked_add(timeout)
@@ -1938,45 +2086,78 @@ impl PaymentContract {
                 continue;
             }
 
-            let token_addr = payment.token.clone().unwrap();
-            pay_out_escrow(&env, &token_addr, &payment.payer, payment.amount)?;
+            // Disputes recorded before the opener was tracked refund the payer,
+            // as they always did.
+            let mut resolution = match Self::get_dispute_opener(env.clone(), pid) {
+                Some(opener) => dispute_default(&env, opener),
+                None => DisputeResolution::RefundToPayer,
+            };
+            if resolution == DisputeResolution::ReleaseToPayee
+                && ensure_payee_is_fulfiller(&env, &payment).is_err()
+            {
+                resolution = DisputeResolution::RefundToPayer;
+            }
+
+            if let Some(ref token_addr) = payment.token {
+                let to = match resolution {
+                    DisputeResolution::ReleaseToPayee => &payment.payee,
+                    DisputeResolution::RefundToPayer => &payment.payer,
+                };
+                pay_out_escrow(&env, token_addr, to, payment.amount)?;
+            }
 
             let old_status = payment.status;
-            payment.status = PaymentStatus::Refunded;
+            let new_status = match resolution {
+                DisputeResolution::ReleaseToPayee => PaymentStatus::Released,
+                DisputeResolution::RefundToPayer => PaymentStatus::Refunded,
+            };
+            payment.status = new_status;
             payment.updated_at = now;
             store_payment(&env, &payment);
             remove_from_status_index(&env, old_status, pid);
-            index_by_status(&env, PaymentStatus::Refunded, pid);
-            update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Refunded)?;
+            index_by_status(&env, new_status, pid);
+            update_stats_on_transition(&env, &payment, old_status, new_status)?;
             remove_from_request_index(&env, payment.request_id);
             clear_confirmations(&env, pid);
 
-            let request_cancelled = match req_contract {
-                Some(ref rc) => try_cancel_request(&env, rc, payment.request_id),
-                None => false,
-            };
-
-            PaymentRefunded {
-                payment_id: pid,
-                payer: payment.payer.clone(),
-                amount: payment.amount,
-            }
-            .publish(&env);
-            // Only announce the cancellation when the requests contract
-            // actually recorded it, so off-chain projections stay in sync.
-            if request_cancelled {
-                RequestCancelledByPayment {
-                    request_id: payment.request_id,
-                    payment_id: pid,
-                    timestamp: now,
+            match resolution {
+                DisputeResolution::ReleaseToPayee => {
+                    PaymentReleased {
+                        payment_id: pid,
+                        payee: payment.payee.clone(),
+                        amount: payment.amount,
+                    }
+                    .publish(&env);
                 }
-                .publish(&env);
+                DisputeResolution::RefundToPayer => {
+                    let request_cancelled = match req_contract {
+                        Some(ref rc) => try_cancel_request(&env, rc, payment.request_id),
+                        None => false,
+                    };
+
+                    PaymentRefunded {
+                        payment_id: pid,
+                        payer: payment.payer.clone(),
+                        amount: payment.amount,
+                    }
+                    .publish(&env);
+                    // Only announce the cancellation when the requests contract
+                    // actually recorded it, so off-chain projections stay in sync.
+                    if request_cancelled {
+                        RequestCancelledByPayment {
+                            request_id: payment.request_id,
+                            payment_id: pid,
+                            timestamp: now,
+                        }
+                        .publish(&env);
+                    }
+                }
             }
 
-            refunded.push_back(pid);
+            closed.push_back(pid);
         }
 
-        Ok(refunded)
+        Ok(closed)
     }
 
     // ── Internal helpers ───────────────────────────────────────────────────────
