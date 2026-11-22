@@ -1822,3 +1822,325 @@ fn payment_escrow_and_dispute_records_have_extended_ttl() {
         assert!(storage.get_ttl(&crate::DataKey::DisputeMetadata(dispute_id)) >= min_ttl);
     });
 }
+
+// ======================================================
+// Additional Payment System Tests
+// ======================================================
+
+#[test]
+fn test_multiple_payments_can_coexist_with_different_statuses() {
+    let env = Env::default();
+    let (contract_id, client, admin) = setup_dispute_contract(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    // Create three payments with different amounts
+    let payment_id_1 = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &1_000,
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
+    let payment_id_2 = client.create_payment(
+        &2,
+        &payer,
+        &payee,
+        &2_000,
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
+    let payment_id_3 = client.create_payment(
+        &3,
+        &payer,
+        &payee,
+        &3_000,
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
+
+    // Move them to different states
+    assert_eq!(payment_status(&env, &contract_id, payment_id_1), PaymentStatus::Pending);
+    
+    client.fund_escrow(&payment_id_2, &payer);
+    assert_eq!(payment_status(&env, &contract_id, payment_id_2), PaymentStatus::Escrowed);
+    
+    client.fund_escrow(&payment_id_3, &payer);
+    satisfy_escrow_conditions(&env, &contract_id, payment_id_3, &admin);
+    client.propose_release(&payment_id_3, &admin);
+    assert_eq!(payment_status(&env, &contract_id, payment_id_3), PaymentStatus::Completed);
+}
+
+#[test]
+fn test_dispute_resolution_in_favor_of_payee_allows_completion() {
+    let env = Env::default();
+    let (contract_id, client, admin) = setup_dispute_contract(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    let payment_id = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &5_000,
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
+    move_payment_to_disputed_ready_state(&env, &contract_id, payment_id);
+
+    let dispute_id = client.raise_dispute(
+        &payment_id,
+        &payer,
+        &String::from_str(&env, "quality_issue"),
+        &Bytes::from_slice(&env, &[5; 32]),
+        &vec![&env],
+    );
+
+    // Resolve in favor of payee
+    client.resolve_dispute(&dispute_id, &DisputeStatus::ResolvedInFavorOfPayee);
+
+    env.as_contract(&contract_id, || {
+        let dispute = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, Dispute>(&crate::DataKey::Dispute(dispute_id))
+            .unwrap();
+        assert_eq!(dispute.status, DisputeStatus::ResolvedInFavorOfPayee);
+        
+        let payment = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, Payment>(&crate::DataKey::Payment(payment_id))
+            .unwrap();
+        assert_eq!(payment.status, PaymentStatus::Resolved);
+    });
+}
+
+#[test]
+fn test_fixed_fee_is_calculated_correctly_in_total_fees() {
+    let env = Env::default();
+    let fees = FeeStructure {
+        policy_id: Symbol::new(&env, "fixed_fee_policy"),
+        service_fee: 100,
+        network_fee: 50,
+        performance_bonus: 25,
+        fixed_fee: 200,
+    };
+
+    assert_eq!(fees.total(), Ok(375));
+    assert_eq!(fees.calculate_net_amount(1_000).unwrap(), 625);
+}
+
+#[test]
+fn test_payment_cannot_transition_from_completed_to_any_state() {
+    let env = Env::default();
+    let payment = payment_with_status(&env, PaymentStatus::Completed);
+
+    assert!(!payment.can_transition_to(PaymentStatus::Pending));
+    assert!(!payment.can_transition_to(PaymentStatus::Escrowed));
+    assert!(!payment.can_transition_to(PaymentStatus::Disputed));
+    assert!(!payment.can_transition_to(PaymentStatus::Resolved));
+    assert!(!payment.can_transition_to(PaymentStatus::Refunded));
+    assert!(!payment.can_transition_to(PaymentStatus::Cancelled));
+    assert!(payment.is_terminal());
+}
+
+#[test]
+fn test_multisig_with_minimum_threshold_one_requires_single_approval() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(HealthChainContract, ());
+    let client = HealthChainContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    client.initialize(&admin);
+    client.configure_multisig(&vec![&env, signer.clone()], &1);
+    
+    let payment_id = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &HIGH_VALUE_THRESHOLD,
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
+
+    env.as_contract(&contract_id, || {
+        let mut payment = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, Payment>(&crate::DataKey::Payment(payment_id))
+            .unwrap();
+        payment.status = PaymentStatus::Escrowed;
+        env.storage()
+            .persistent()
+            .set(&crate::DataKey::Payment(payment_id), &payment);
+    });
+
+    satisfy_escrow_conditions(&env, &contract_id, payment_id, &signer);
+    assert!(client.propose_release(&payment_id, &signer));
+
+    env.as_contract(&contract_id, || {
+        let payment = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, Payment>(&crate::DataKey::Payment(payment_id))
+            .unwrap();
+        assert_eq!(payment.status, PaymentStatus::Completed);
+    });
+}
+
+#[test]
+fn test_escrow_validates_fails_with_zero_locked_amount() {
+    let env = Env::default();
+    let approver = Address::generate(&env);
+
+    let escrow = EscrowAccount {
+        payment_id: 1,
+        locked_amount: 0,
+        release_conditions: ReleaseConditions {
+            medical_records_verified: true,
+            min_timestamp: 100,
+            authorized_approver: Some(approver.clone()),
+        },
+    };
+
+    assert_eq!(escrow.validate(), Err(PaymentError::InvalidAmount));
+}
+
+#[test]
+fn test_payment_stats_accumulate_correctly_across_multiple_refunds() {
+    let env = Env::default();
+    let (contract_id, client, admin) = setup_dispute_contract(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    client.set_dispute_timeout(&5);
+
+    // Create and dispute multiple payments
+    let payment_id_1 = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &1_000,
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
+    move_payment_to_disputed_ready_state(&env, &contract_id, payment_id_1);
+    let dispute_id_1 = client.raise_dispute(
+        &payment_id_1,
+        &payer,
+        &String::from_str(&env, "case_1"),
+        &Bytes::from_slice(&env, &[10; 32]),
+        &vec![&env],
+    );
+
+    let payment_id_2 = client.create_payment(
+        &2,
+        &payer,
+        &payee,
+        &2_500,
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
+    move_payment_to_disputed_ready_state(&env, &contract_id, payment_id_2);
+    let dispute_id_2 = client.raise_dispute(
+        &payment_id_2,
+        &payer,
+        &String::from_str(&env, "case_2"),
+        &Bytes::from_slice(&env, &[11; 32]),
+        &vec![&env],
+    );
+
+    env.ledger().with_mut(|ledger| {
+        ledger.timestamp += 10;
+    });
+
+    let dispute_ids = vec![&env, dispute_id_1, dispute_id_2];
+    assert_eq!(client.process_expired_disputes(&dispute_ids), 2);
+
+    let stats = client.get_payment_stats();
+    assert_eq!(stats.count_auto_refunded, 2);
+    assert_eq!(stats.total_auto_refunded, 3_500);
+}
+
+#[test]
+fn test_dispute_evidence_chunks_preserve_insertion_order() {
+    let env = Env::default();
+    
+    let mut chunks = vec![&env];
+    chunks.push_back(String::from_str(&env, "chunk_alpha"));
+    chunks.push_back(String::from_str(&env, "chunk_beta"));
+    chunks.push_back(String::from_str(&env, "chunk_gamma"));
+
+    let dispute = Dispute {
+        id: 100,
+        payment_id: 200,
+        raised_by: Address::generate(&env),
+        status: DisputeStatus::Open,
+        reason: String::from_str(&env, "evidence_order_test"),
+        evidence_digest: Bytes::from_slice(&env, &[20; 32]),
+        evidence_ref_chunks: chunks.clone(),
+        raised_at: 5000,
+        resolved_at: None,
+    };
+
+    assert_eq!(dispute.evidence_ref_chunks.len(), 3);
+    assert_eq!(
+        dispute.evidence_ref_chunks.get(0).unwrap(),
+        String::from_str(&env, "chunk_alpha")
+    );
+    assert_eq!(
+        dispute.evidence_ref_chunks.get(1).unwrap(),
+        String::from_str(&env, "chunk_beta")
+    );
+    assert_eq!(
+        dispute.evidence_ref_chunks.get(2).unwrap(),
+        String::from_str(&env, "chunk_gamma")
+    );
+}
+
+#[test]
+fn test_refunded_payment_is_terminal_and_blocks_all_transitions() {
+    let env = Env::default();
+    let payment = payment_with_status(&env, PaymentStatus::Refunded);
+
+    assert!(payment.is_terminal());
+    assert!(!payment.can_transition_to(PaymentStatus::Pending));
+    assert!(!payment.can_transition_to(PaymentStatus::Escrowed));
+    assert!(!payment.can_transition_to(PaymentStatus::Disputed));
+    assert!(!payment.can_transition_to(PaymentStatus::Resolved));
+    assert!(!payment.can_transition_to(PaymentStatus::Completed));
+    assert!(!payment.can_transition_to(PaymentStatus::Cancelled));
+}
+
+#[test]
+fn test_cancelled_payment_is_terminal_and_blocks_all_transitions() {
+    let env = Env::default();
+    let payment = payment_with_status(&env, PaymentStatus::Cancelled);
+
+    assert!(payment.is_terminal());
+    assert!(!payment.can_transition_to(PaymentStatus::Pending));
+    assert!(!payment.can_transition_to(PaymentStatus::Escrowed));
+    assert!(!payment.can_transition_to(PaymentStatus::Disputed));
+    assert!(!payment.can_transition_to(PaymentStatus::Resolved));
+    assert!(!payment.can_transition_to(PaymentStatus::Completed));
+    assert!(!payment.can_transition_to(PaymentStatus::Refunded));
+}
