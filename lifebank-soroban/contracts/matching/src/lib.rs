@@ -211,8 +211,8 @@ impl MatchingContract {
     /// 3. Match each request in that order via `match_request_excluding`,
     ///    passing the unit ids already selected earlier in the batch so they
     ///    cannot be double-allocated.
-    /// 4. Requests that cannot be loaded or are not `Pending` are skipped
-    ///    instead of aborting the whole batch.
+    /// 4. Requests that cannot be loaded, are not `Pending`, or are past their
+    ///    `required_by_timestamp` are skipped instead of aborting the whole batch.
     pub fn match_multiple_requests(
         env: Env,
         request_ids: Vec<u64>,
@@ -231,12 +231,13 @@ impl MatchingContract {
             .unwrap();
         let req_client = RequestsContractClient::new(&env, &req_addr);
 
-        // Load the requests we can, skipping invalid or non-Pending ones.
+        // Load the requests we can, skipping invalid, non-Pending or overdue ones.
+        let now = env.ledger().timestamp();
         let mut pending: Vec<BloodRequest> = Vec::new(&env);
         for i in 0..request_ids.len() {
             let request_id = request_ids.get(i).unwrap();
             if let Ok(Ok(request)) = req_client.try_get_request(&request_id) {
-                if request.status == RequestStatus::Pending {
+                if request.status == RequestStatus::Pending && !is_overdue(&request, now) {
                     pending.push_back(request);
                 }
             }
@@ -270,7 +271,7 @@ impl MatchingContract {
             if let Ok(result) = Self::match_request_excluding(&env, request.id, &excluded) {
                 for k in 0..result.matched_units.len() {
                     let unit = result.matched_units.get(k).unwrap();
-                    excluded.push_back(unit.blood_unit_id);
+                    excluded.push_back(unit.unit_id);
                 }
                 results.push_back(result);
             }
@@ -304,7 +305,11 @@ impl MatchingContract {
             .map_err(|_| MatchingError::RequestNotFound)?
             .map_err(|_| MatchingError::RequestNotFound)?;
 
-        if request.status != RequestStatus::Pending {
+        // An overdue request is matched as invalid even before someone calls the
+        // requests contract's permissionless `expire_request` on it.
+        if request.status != RequestStatus::Pending
+            || is_overdue(&request, env.ledger().timestamp())
+        {
             return Err(MatchingError::InvalidRequest);
         }
 
@@ -346,27 +351,52 @@ impl MatchingContract {
             }
         }
 
-        let selected = select_units(env, &candidates, request.blood_type, request.quantity_ml, now);
+        // `select_units` already filters, orders (exact before compatible, FIFO)
+        // and scores the candidates, returning ready-to-use `MatchedUnit`s.
+        let matched = select_units(
+            env,
+            candidates,
+            request.blood_type,
+            request.urgency,
+            request.quantity_ml,
+            None,
+            now,
+        );
 
-        let mut matched: Vec<MatchedUnit> = Vec::new(env);
         let mut total_ml: u32 = 0;
-        for i in 0..selected.len() {
-            let unit = selected.get(i).unwrap();
-            total_ml = total_ml.saturating_add(unit.quantity_ml);
-            matched.push_back(MatchedUnit {
-                blood_unit_id: unit.id,
-                blood_type: unit.blood_type,
-                quantity_ml: unit.quantity_ml,
-                score: score_unit(&unit, request.blood_type, now),
-            });
+        for i in 0..matched.len() {
+            total_ml = total_ml.saturating_add(matched.get(i).unwrap().quantity_ml);
         }
+        let remaining_ml = request.quantity_ml.saturating_sub(total_ml);
 
         Ok(MatchResult {
             request_id,
             matched_units: matched,
             total_matched_ml: total_ml,
-            is_partial: total_ml < request.quantity_ml,
+            remaining_ml,
+            partial_fulfillment: total_ml > 0 && remaining_ml > 0,
         })
+    }
+
+    // ── Views ────────────────────────────────────────────────────────────────
+
+    /// Donor blood types compatible with `recipient`, exact match first.
+    pub fn get_compatible_types(env: Env, recipient: BloodType) -> Vec<BloodType> {
+        compatible_donor_types(&env, recipient)
+    }
+
+    /// Check whether `donor` can donate to `recipient`.
+    pub fn check_compatibility(_env: Env, donor: BloodType, recipient: BloodType) -> bool {
+        is_compatible(donor, recipient)
+    }
+
+    pub fn get_admin(env: Env) -> Result<Address, MatchingError> {
+        Self::require_initialized(&env)?;
+        Ok(env.storage().instance().get(&DataKey::Admin).unwrap())
+    }
+
+    pub fn is_initialized(env: Env) -> bool {
+        env.storage().instance().has(&DataKey::Initialized)
     }
 
     fn require_initialized(env: &Env) -> Result<(), MatchingError> {
@@ -385,4 +415,10 @@ fn urgency_rank(urgency: Urgency) -> u32 {
         Urgency::Routine => 2,
         Urgency::Scheduled => 3,
     }
+}
+
+/// A request is overdue once the ledger time passes its `required_by_timestamp`
+/// (mirrors the requests contract's `expire_request` condition).
+fn is_overdue(request: &BloodRequest, now: u64) -> bool {
+    now > request.required_by_timestamp
 }

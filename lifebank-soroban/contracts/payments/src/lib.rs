@@ -716,6 +716,11 @@ fn validate_request_payable(
         ReqStatus::Pending | ReqStatus::Approved => {}
         _ => return Err(Error::RequestNotPayable),
     }
+    // A request past its deadline is about to be expired (or already could be)
+    // by the requests contract's `expire_request`; don't take new funds for it.
+    if env.ledger().timestamp() > req.required_by_timestamp {
+        return Err(Error::RequestNotPayable);
+    }
     // Only the hospital that raised the request may fund it.
     if req.hospital_id != *payer {
         return Err(Error::Unauthorized);
