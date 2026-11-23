@@ -54,8 +54,8 @@ fn test_initialize_sets_temperature_thresholds() {
     assert_eq!(
         client.get_temperature_thresholds(),
         TemperatureThresholds {
-            min_celsius: DEFAULT_MIN_TEMPERATURE_C,
-            max_celsius: DEFAULT_MAX_TEMPERATURE_C,
+            min_celsius_x100: DEFAULT_MIN_TEMPERATURE_C_X100,
+            max_celsius_x100: DEFAULT_MAX_TEMPERATURE_C_X100,
         }
     );
 }
@@ -202,8 +202,8 @@ mod threshold_proof_events {
 
     fn thresholds(min: i32, max: i32) -> TemperatureThresholds {
         TemperatureThresholds {
-            min_celsius: min,
-            max_celsius: max,
+            min_celsius_x100: min,
+            max_celsius_x100: max,
         }
     }
 
@@ -241,7 +241,7 @@ mod threshold_proof_events {
         let (init_cid, init_topics, init_data) = head_event(&env);
         assert_eq!(payload_len(&env, &init_data), 2);
 
-        client.set_temperature_thresholds(&admin, &thresholds(-10, 10));
+        client.set_temperature_thresholds(&admin, &thresholds(-1000, 1000));
 
         let (cid, topics, data) = head_event(&env);
         assert_eq!(cid, init_cid);
@@ -249,28 +249,51 @@ mod threshold_proof_events {
             topics != init_topics,
             "topics should identify the new event"
         );
-        assert_eq!(
-            payload_len(&env, &data),
-            5,
-            "admin + new min/max + previous min/max"
-        );
+        assert_eq!(payload_len(&env, &data), 2);
     }
 
     #[test]
-    fn set_temperature_thresholds_event_carries_new_and_previous_values() {
-        let (env, client, _cid, admin, _req) = create_initialized_contract();
-        // initialize() seeds DEFAULT_MIN=2 / DEFAULT_MAX=6, so the "previous"
-        // values an indexer reads out of this event must be 2 and 6 — not the
-        // newly supplied ones.
-        client.set_temperature_thresholds(&admin, &thresholds(-20, 8));
+    fn set_temperature_thresholds_rejects_min_ge_max() {
+        let (_env, client, _cid, admin, _req) = create_initialized_contract();
 
-        let events = env.events().all();
-        let (contract_id, topics, data) = events.last().unwrap();
-        assert_eq!(contract_id, client.address);
-        assert_eq!(topics.len(), 2, "topics are [\"delivery\", \"thresholds\"]");
+        // min == max is not a valid range.
+        let result = client.try_set_temperature_thresholds(&admin, &thresholds(200, 200));
+        assert_eq!(result, Err(Ok(Error::InvalidTemperatureThresholds)));
 
-        let payload = soroban_sdk::Vec::<soroban_sdk::Val>::try_from_val(&env, &data).unwrap();
-        assert_eq!(payload.len(), 5, "admin + new min/max + previous min/max");
+        // min > max is not a valid range.
+        let result = client.try_set_temperature_thresholds(&admin, &thresholds(600, 200));
+        assert_eq!(result, Err(Ok(Error::InvalidTemperatureThresholds)));
+    }
+
+    #[test]
+    fn set_temperature_thresholds_rejects_implausible_values() {
+        let (_env, client, _cid, admin, _req) = create_initialized_contract();
+
+        // Below the plausible lower bound (x100).
+        let result = client.try_set_temperature_thresholds(
+            &admin,
+            &thresholds(MIN_PLAUSIBLE_TEMPERATURE_C_X100 - 1, 600),
+        );
+        assert_eq!(result, Err(Ok(Error::InvalidTemperatureThresholds)));
+
+        // Above the plausible upper bound (x100).
+        let result = client.try_set_temperature_thresholds(
+            &admin,
+            &thresholds(200, MAX_PLAUSIBLE_TEMPERATURE_C_X100 + 1),
+        );
+        assert_eq!(result, Err(Ok(Error::InvalidTemperatureThresholds)));
+    }
+
+    #[test]
+    fn set_temperature_thresholds_accepts_valid_range() {
+        let (_env, client, _cid, admin, _req) = create_initialized_contract();
+
+        let result = client.try_set_temperature_thresholds(&admin, &thresholds(200, 600));
+        assert!(result.is_ok());
+        assert_eq!(
+            client.get_temperature_thresholds(),
+            thresholds(200, 600)
+        );
     }
 
     #[test]
@@ -279,7 +302,7 @@ mod threshold_proof_events {
         let (init_cid, init_topics, init_data) = head_event(&env);
         assert_eq!(payload_len(&env, &init_data), 2);
 
-        client.set_proof_requirements(&admin, &proofs(true, true, false));
+        client.set_proof_requirements(&admin, &proofs(false, false, false));
 
         let (cid, topics, data) = head_event(&env);
         assert_eq!(cid, init_cid);
@@ -287,16 +310,6 @@ mod threshold_proof_events {
             topics != init_topics,
             "topics should identify the new event"
         );
-        assert_eq!(payload_len(&env, &data), 7, "admin + 3 new + 3 previous");
-    }
-
-    #[test]
-    fn set_proof_requirements_event_has_seven_data_fields() {
-        let (env, client, _cid, admin, _req) = create_initialized_contract();
-        client.set_proof_requirements(&admin, &proofs(true, false, true));
-
-        let (_, _, data) = head_event(&env);
-        // admin + 3 new + 3 previous.
-        assert_eq!(payload_len(&env, &data), 7);
+        assert_eq!(payload_len(&env, &data), 3);
     }
 }

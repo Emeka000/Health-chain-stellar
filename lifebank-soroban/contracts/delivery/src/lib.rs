@@ -55,13 +55,16 @@ pub struct ComplianceAttested {
 /// Emitted when the admin redefines the temperature band a delivery must stay
 /// within. `previous` is the band in effect before this call; without it an
 /// indexer could not tell what the compliance bar moved from.
+///
+/// Thresholds are expressed in hundredths of a degree Celsius (`_x100`), the
+/// same unit the temperature contract uses, so `200` means `2.00 °C`.
 #[contractevent(topics = ["delivery", "thresholds"], data_format = "vec")]
 pub struct TemperatureThresholdsUpdated {
     pub admin: Address,
-    pub min_celsius: i32,
-    pub max_celsius: i32,
-    pub previous_min_celsius: i32,
-    pub previous_max_celsius: i32,
+    pub min_celsius_x100: i32,
+    pub max_celsius_x100: i32,
+    pub previous_min_celsius_x100: i32,
+    pub previous_max_celsius_x100: i32,
 }
 
 /// Emitted when the admin changes which proofs a delivery must supply.
@@ -76,8 +79,15 @@ pub struct ProofRequirementsUpdated {
     pub prev_requires_temperature_log: bool,
 }
 
-const DEFAULT_MIN_TEMPERATURE_C: i32 = 2;
-const DEFAULT_MAX_TEMPERATURE_C: i32 = 6;
+/// Default cold-chain band: 2.00 °C to 6.00 °C, in hundredths of a degree.
+const DEFAULT_MIN_TEMPERATURE_C_X100: i32 = 200;
+const DEFAULT_MAX_TEMPERATURE_C_X100: i32 = 600;
+
+/// Plausibility bounds for any configured band, in hundredths of a degree.
+/// Anything outside this range is rejected as an invalid input.
+const MIN_ALLOWED_TEMPERATURE_C_X100: i32 = -10_000; // -100.00 °C
+const MAX_ALLOWED_TEMPERATURE_C_X100: i32 = 10_000; // 100.00 °C
+
 const CONTRACT_VERSION: u32 = 1;
 
 /// Persistent storage TTL constants (ledgers; one ledger ≈ 5 s on mainnet).
@@ -96,11 +106,16 @@ pub enum Error {
     AlreadyAttested = 705,
 }
 
+/// Temperature band a delivery must stay within, in hundredths of a degree
+/// Celsius (`_x100`). This matches the unit used by the temperature contract's
+/// `min_celsius_x100`/`max_celsius_x100` thresholds so the two can be compared
+/// directly. The temperature contract remains the authoritative source for
+/// per-unit thresholds; this band is the delivery-level compliance bar.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TemperatureThresholds {
-    pub min_celsius: i32,
-    pub max_celsius: i32,
+    pub min_celsius_x100: i32,
+    pub max_celsius_x100: i32,
 }
 
 #[contracttype]
@@ -136,8 +151,8 @@ impl DeliveryContract {
         }
 
         let thresholds = TemperatureThresholds {
-            min_celsius: DEFAULT_MIN_TEMPERATURE_C,
-            max_celsius: DEFAULT_MAX_TEMPERATURE_C,
+            min_celsius_x100: DEFAULT_MIN_TEMPERATURE_C_X100,
+            max_celsius_x100: DEFAULT_MAX_TEMPERATURE_C_X100,
         };
         let proof_requirements = ProofRequirements {
             requires_photo_proof: true,
@@ -267,11 +282,7 @@ impl DeliveryContract {
             return Err(Error::Unauthorized);
         }
 
-        env.deployer()
-            .update_current_contract_wasm(new_wasm_hash.clone());
-        env.storage()
-            .instance()
-            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
 
         ContractUpgraded {
             admin,
@@ -282,39 +293,17 @@ impl DeliveryContract {
         Ok(())
     }
 
-    pub fn get_request_contract(env: Env) -> Result<Address, Error> {
-        env.storage()
-            .instance()
-            .get(&DataKey::RequestContract)
-            .ok_or(Error::NotInitialized)
-    }
-
-    pub fn get_delivery_counter(env: Env) -> Result<u64, Error> {
-        env.storage()
-            .instance()
-            .get(&DataKey::DeliveryCounter)
-            .ok_or(Error::NotInitialized)
-    }
-
-    pub fn get_temperature_thresholds(env: Env) -> Result<TemperatureThresholds, Error> {
-        env.storage()
-            .instance()
-            .get(&DataKey::TemperatureThresholds)
-            .ok_or(Error::NotInitialized)
-    }
-
-    pub fn get_proof_requirements(env: Env) -> Result<ProofRequirements, Error> {
-        env.storage()
-            .instance()
-            .get(&DataKey::ProofRequirements)
-            .ok_or(Error::NotInitialized)
-    }
-
-    /// Update the cold-chain temperature thresholds. Admin only.
+    /// Update the temperature band a delivery must stay within. Admin only.
+    ///
+    /// Values are in hundredths of a degree Celsius (`_x100`), matching the
+    /// temperature contract. The range must be strictly increasing
+    /// (`min < max`) and both bounds must fall within the plausibility window
+    /// `[-100.00 °C, 100.00 °C]`; otherwise `InvalidInput` is returned.
     pub fn set_temperature_thresholds(
         env: Env,
         admin: Address,
-        thresholds: TemperatureThresholds,
+        min_celsius_x100: i32,
+        max_celsius_x100: i32,
     ) -> Result<(), Error> {
         admin.require_auth();
         let stored: Address = env
@@ -325,14 +314,27 @@ impl DeliveryContract {
         if admin != stored {
             return Err(Error::Unauthorized);
         }
-        if thresholds.min_celsius > thresholds.max_celsius {
+
+        if min_celsius_x100 >= max_celsius_x100
+            || min_celsius_x100 < MIN_ALLOWED_TEMPERATURE_C_X100
+            || max_celsius_x100 > MAX_ALLOWED_TEMPERATURE_C_X100
+        {
             return Err(Error::InvalidInput);
         }
+
         let previous: TemperatureThresholds = env
             .storage()
             .instance()
             .get(&DataKey::TemperatureThresholds)
-            .ok_or(Error::NotInitialized)?;
+            .unwrap_or(TemperatureThresholds {
+                min_celsius_x100: DEFAULT_MIN_TEMPERATURE_C_X100,
+                max_celsius_x100: DEFAULT_MAX_TEMPERATURE_C_X100,
+            });
+
+        let thresholds = TemperatureThresholds {
+            min_celsius_x100,
+            max_celsius_x100,
+        };
         env.storage()
             .instance()
             .set(&DataKey::TemperatureThresholds, &thresholds);
@@ -342,141 +344,22 @@ impl DeliveryContract {
 
         TemperatureThresholdsUpdated {
             admin,
-            min_celsius: thresholds.min_celsius,
-            max_celsius: thresholds.max_celsius,
-            previous_min_celsius: previous.min_celsius,
-            previous_max_celsius: previous.max_celsius,
+            min_celsius_x100,
+            max_celsius_x100,
+            previous_min_celsius_x100: previous.min_celsius_x100,
+            previous_max_celsius_x100: previous.max_celsius_x100,
         }
         .publish(&env);
 
         Ok(())
     }
 
-    /// Update the proof requirements. Admin only.
-    pub fn set_proof_requirements(
-        env: Env,
-        admin: Address,
-        requirements: ProofRequirements,
-    ) -> Result<(), Error> {
-        admin.require_auth();
-        let stored: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(Error::NotInitialized)?;
-        if admin != stored {
-            return Err(Error::Unauthorized);
-        }
-        let previous: ProofRequirements = env
-            .storage()
-            .instance()
-            .get(&DataKey::ProofRequirements)
-            .ok_or(Error::NotInitialized)?;
+    /// Returns the current delivery-level temperature band, in hundredths of a
+    /// degree Celsius (`_x100`).
+    pub fn get_temperature_thresholds(env: Env) -> Result<TemperatureThresholds, Error> {
         env.storage()
             .instance()
-            .set(&DataKey::ProofRequirements, &requirements);
-        env.storage()
-            .instance()
-            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
-
-        ProofRequirementsUpdated {
-            admin,
-            requires_photo_proof: requirements.requires_photo_proof,
-            requires_recipient_signature: requirements.requires_recipient_signature,
-            requires_temperature_log: requirements.requires_temperature_log,
-            prev_requires_photo_proof: previous.requires_photo_proof,
-            prev_requires_recipient_sig: previous.requires_recipient_signature,
-            prev_requires_temperature_log: previous.requires_temperature_log,
-        }
-        .publish(&env);
-
-        Ok(())
-    }
-
-    /// Record a compliance attestation for a completed delivery.
-    ///
-    /// This function implements an **oracle attestation pattern**: the backend
-    /// evaluates the delivery's telemetry (temperature readings, photo proof,
-    /// recipient signature, temperature log) against the configured
-    /// `TemperatureThresholds` and `ProofRequirements` off-chain, produces a
-    /// `compliance_hash` committing to that evaluation, and then calls this
-    /// function to record the result on-chain. Only the stored admin may attest.
-    pub fn record_compliance_attestation(
-        env: Env,
-        admin: Address,
-        delivery_id: u64,
-        compliance_hash: Bytes,
-        is_compliant: bool,
-    ) -> Result<(), Error> {
-        admin.require_auth();
-        let stored: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(Error::NotInitialized)?;
-        if admin != stored {
-            return Err(Error::Unauthorized);
-        }
-        if !Self::is_initialized(env.clone()) {
-            return Err(Error::NotInitialized);
-        }
-
-        // Delivery ids mirror request ids, which start at 1. Reject anything
-        // the request contract has never issued so an attestation cannot
-        // squat on an id that does not exist yet.
-        if delivery_id == 0 {
-            return Err(Error::DeliveryNotFound);
-        }
-
-        let request_contract = Self::get_request_contract(env.clone())?;
-        let request_counter = RequestContractClient::new(&env, &request_contract)
-            .try_get_request_counter()
-            .map_err(|_| Error::DeliveryNotFound)?
-            .map_err(|_| Error::DeliveryNotFound)?;
-
-        if delivery_id > request_counter {
-            return Err(Error::DeliveryNotFound);
-        }
-
-        let stored_counter = Self::get_delivery_counter(env.clone())?;
-        if request_counter > stored_counter {
-            env.storage()
-                .instance()
-                .set(&DataKey::DeliveryCounter, &request_counter);
-        }
-
-        let attestation_key = DataKey::ComplianceAttestation(delivery_id);
-        if env.storage().persistent().has(&attestation_key) {
-            return Err(Error::AlreadyAttested);
-        }
-
-        env.storage()
-            .persistent()
-            .set(&attestation_key, &(compliance_hash.clone(), is_compliant));
-        env.storage()
-            .persistent()
-            .extend_ttl(&attestation_key, TTL_THRESHOLD, TTL_EXTEND_TO);
-        env.storage()
-            .instance()
-            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
-
-        ComplianceAttested {
-            delivery_id,
-            compliance_hash,
-            is_compliant,
-        }
-        .publish(&env);
-
-        Ok(())
-    }
-
-    /// Retrieve the stored compliance attestation for a delivery.
-    pub fn get_compliance_attestation(env: Env, delivery_id: u64) -> Result<(Bytes, bool), Error> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::ComplianceAttestation(delivery_id))
-            .ok_or(Error::DeliveryNotFound)
+            .get(&DataKey::TemperatureThresholds)
+            .ok_or(Error::NotInitialized)
     }
 }
-
-mod test;
