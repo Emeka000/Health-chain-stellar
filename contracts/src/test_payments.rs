@@ -1822,3 +1822,284 @@ fn payment_escrow_and_dispute_records_have_extended_ttl() {
         assert!(storage.get_ttl(&crate::DataKey::DisputeMetadata(dispute_id)) >= min_ttl);
     });
 }
+
+// ======================================================
+// Additional Comprehensive Tests
+// ======================================================
+
+/// Test 1: Verify that multiple disputes cannot be raised for the same payment
+#[test]
+fn raise_dispute_rejects_duplicate_disputes_on_same_payment() {
+    let env = Env::default();
+    let (contract_id, client, admin) = setup_dispute_contract(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    let payment_id = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &3_000,
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
+    move_payment_to_disputed_ready_state(&env, &contract_id, payment_id);
+
+    // First dispute should succeed
+    let dispute_id = client.raise_dispute(
+        &payment_id,
+        &payer,
+        &String::from_str(&env, "first_dispute"),
+        &Bytes::from_slice(&env, &[1; 32]),
+        &vec![&env],
+    );
+    assert!(dispute_id > 0);
+    assert_eq!(
+        payment_status(&env, &contract_id, payment_id),
+        PaymentStatus::Disputed
+    );
+
+    // Second dispute on same payment should fail
+    let result = client.try_raise_dispute(
+        &payment_id,
+        &payee,
+        &String::from_str(&env, "second_dispute"),
+        &Bytes::from_slice(&env, &[2; 32]),
+        &vec![&env],
+    );
+    assert_eq!(result, Err(Ok(crate::Error::InvalidTransition)));
+}
+
+/// Test 2: Verify complex fee structure with all components calculates correctly
+#[test]
+fn fee_structure_with_all_components_calculates_net_amount_correctly() {
+    let env = Env::default();
+    let complex_fee = FeeStructure {
+        policy_id: Symbol::new(&env, "complex_policy"),
+        service_fee: 100,
+        network_fee: 75,
+        performance_bonus: 50,
+        fixed_fee: 25,
+    };
+
+    // Total fees = 100 + 75 + 50 + 25 = 250
+    assert_eq!(complex_fee.total(), Ok(250));
+    
+    // Net amount for 10,000 payment = 10,000 - 250 = 9,750
+    assert_eq!(complex_fee.calculate_net_amount(10_000), Ok(9_750));
+    
+    // Test edge case where payment equals fees
+    assert_eq!(complex_fee.calculate_net_amount(250), Ok(0));
+    
+    // Test that fees exceeding payment amount are rejected
+    assert_eq!(
+        complex_fee.calculate_net_amount(249),
+        Err(PaymentError::FeesExceedAmount)
+    );
+}
+
+/// Test 3: Verify payment cancellation workflow from Pending state
+#[test]
+fn payment_can_be_cancelled_from_pending_state() {
+    let env = Env::default();
+    let (contract_id, client, admin) = setup_dispute_contract(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    let payment_id = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &2_000,
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
+    
+    // Verify payment starts in Pending state
+    assert_eq!(
+        payment_status(&env, &contract_id, payment_id),
+        PaymentStatus::Pending
+    );
+    
+    // Verify that Pending -> Cancelled is an allowed transition
+    let payment = env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .get::<crate::DataKey, Payment>(&crate::DataKey::Payment(payment_id))
+            .unwrap()
+    });
+    assert!(payment.can_transition_to(PaymentStatus::Cancelled));
+    
+    // After cancellation, payment should not be fundable
+    env.as_contract(&contract_id, || {
+        let mut payment = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, Payment>(&crate::DataKey::Payment(payment_id))
+            .unwrap();
+        payment.status = PaymentStatus::Cancelled;
+        env.storage()
+            .persistent()
+            .set(&crate::DataKey::Payment(payment_id), &payment);
+    });
+    
+    let result = client.try_fund_escrow(&payment_id, &payer);
+    assert_eq!(result, Err(Ok(crate::Error::InvalidPaymentStatus)));
+}
+
+/// Test 4: Verify multisig approval count tracking and execution prevention after threshold
+#[test]
+fn multisig_prevents_additional_approvals_after_execution() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(HealthChainContract, ());
+    let client = HealthChainContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer_one = Address::generate(&env);
+    let signer_two = Address::generate(&env);
+    let signer_three = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    client.initialize(&admin);
+    client.configure_multisig(
+        &vec![&env, signer_one.clone(), signer_two.clone(), signer_three.clone()],
+        &2,
+    );
+    
+    let payment_id = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &HIGH_VALUE_THRESHOLD,
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
+
+    env.as_contract(&contract_id, || {
+        let mut payment = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, Payment>(&crate::DataKey::Payment(payment_id))
+            .unwrap();
+        payment.status = PaymentStatus::Escrowed;
+        env.storage()
+            .persistent()
+            .set(&crate::DataKey::Payment(payment_id), &payment);
+    });
+
+    // First two approvals reach threshold and execute
+    satisfy_escrow_conditions(&env, &contract_id, payment_id, &signer_one);
+    assert!(!client.propose_release(&payment_id, &signer_one));
+    
+    satisfy_escrow_conditions(&env, &contract_id, payment_id, &signer_two);
+    assert!(client.propose_release(&payment_id, &signer_two));
+    
+    // Verify payment is completed
+    assert_eq!(
+        payment_status(&env, &contract_id, payment_id),
+        PaymentStatus::Completed
+    );
+    
+    // Third approval should be rejected since execution already happened
+    satisfy_escrow_conditions(&env, &contract_id, payment_id, &signer_three);
+    let result = client.try_propose_release(&payment_id, &signer_three);
+    assert!(result.is_err());
+}
+
+/// Test 5: Verify dispute resolution transitions payment to correct terminal states
+#[test]
+fn dispute_resolution_correctly_transitions_payment_states() {
+    let env = Env::default();
+    let (contract_id, client, admin) = setup_dispute_contract(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    // Test case 1: Dispute resolved in favor of payee -> payment can complete
+    let payment_id_payee = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &5_000,
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
+    move_payment_to_disputed_ready_state(&env, &contract_id, payment_id_payee);
+    
+    let dispute_id_payee = client.raise_dispute(
+        &payment_id_payee,
+        &payer,
+        &String::from_str(&env, "dispute_payee_wins"),
+        &Bytes::from_slice(&env, &[5; 32]),
+        &vec![&env],
+    );
+    
+    client.resolve_dispute(&dispute_id_payee, &DisputeStatus::ResolvedInFavorOfPayee);
+    
+    env.as_contract(&contract_id, || {
+        let payment = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, Payment>(&crate::DataKey::Payment(payment_id_payee))
+            .unwrap();
+        assert_eq!(payment.status, PaymentStatus::Resolved);
+        assert!(payment.can_transition_to(PaymentStatus::Completed));
+        assert!(payment.can_transition_to(PaymentStatus::Refunded));
+        
+        let dispute = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, Dispute>(&crate::DataKey::Dispute(dispute_id_payee))
+            .unwrap();
+        assert_eq!(dispute.status, DisputeStatus::ResolvedInFavorOfPayee);
+        assert!(dispute.resolved_at.is_some());
+    });
+
+    // Test case 2: Dispute resolved in favor of payer -> payment can be refunded
+    let payment_id_payer = client.create_payment(
+        &2,
+        &payer,
+        &payee,
+        &3_000,
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
+    move_payment_to_disputed_ready_state(&env, &contract_id, payment_id_payer);
+    
+    let dispute_id_payer = client.raise_dispute(
+        &payment_id_payer,
+        &payee,
+        &String::from_str(&env, "dispute_payer_wins"),
+        &Bytes::from_slice(&env, &[6; 32]),
+        &vec![&env],
+    );
+    
+    client.resolve_dispute(&dispute_id_payer, &DisputeStatus::ResolvedInFavorOfPayer);
+    
+    env.as_contract(&contract_id, || {
+        let payment = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, Payment>(&crate::DataKey::Payment(payment_id_payer))
+            .unwrap();
+        assert_eq!(payment.status, PaymentStatus::Resolved);
+        
+        let dispute = env
+            .storage()
+            .persistent()
+            .get::<crate::DataKey, Dispute>(&crate::DataKey::Dispute(dispute_id_payer))
+            .unwrap();
+        assert_eq!(dispute.status, DisputeStatus::ResolvedInFavorOfPayer);
+    });
+}
