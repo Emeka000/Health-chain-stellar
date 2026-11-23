@@ -12,10 +12,23 @@ mod request_client {
     #[allow(dead_code)]
     pub trait RequestContractInterface {
         fn get_request_counter(env: Env) -> u64;
+        fn get_request(env: Env, request_id: u64) -> RequestStatus;
+    }
+
+    /// Mirror of the request contract's status enum, used to gate attestation.
+    #[soroban_sdk::contracttype]
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub enum RequestStatus {
+        Pending,
+        Approved,
+        InProgress,
+        Fulfilled,
+        Cancelled,
+        Rejected,
     }
 }
 
-use request_client::RequestContractClient;
+use request_client::{RequestContractClient, RequestStatus};
 
 #[contractevent(topics = ["delivery", "init"], data_format = "vec")]
 pub struct DeliveryInitialized {
@@ -48,6 +61,18 @@ pub struct ContractUpgraded {
 #[contractevent(topics = ["comply"], data_format = "vec")]
 pub struct ComplianceAttested {
     pub delivery_id: u64,
+    pub compliance_hash: Bytes,
+    pub is_compliant: bool,
+}
+
+/// Emitted when the admin amends an existing compliance attestation. Carries
+/// the previous hash and compliance flag so the correction is auditable.
+#[contractevent(topics = ["delivery", "comply_amended"], data_format = "vec")]
+pub struct ComplianceAmended {
+    pub admin: Address,
+    pub delivery_id: u64,
+    pub previous_compliance_hash: Bytes,
+    pub previous_is_compliant: bool,
     pub compliance_hash: Bytes,
     pub is_compliant: bool,
 }
@@ -88,6 +113,9 @@ const DEFAULT_MAX_TEMPERATURE_C_X100: i32 = 600;
 const MIN_ALLOWED_TEMPERATURE_C_X100: i32 = -10_000; // -100.00 °C
 const MAX_ALLOWED_TEMPERATURE_C_X100: i32 = 10_000; // 100.00 °C
 
+/// Maximum accepted length of a compliance hash, in bytes.
+const MAX_COMPLIANCE_HASH_LEN: u32 = 64;
+
 const CONTRACT_VERSION: u32 = 1;
 
 /// Persistent storage TTL constants (ledgers; one ledger ≈ 5 s on mainnet).
@@ -104,6 +132,8 @@ pub enum Error {
     Unauthorized = 703,
     InvalidInput = 704,
     AlreadyAttested = 705,
+    NotAttested = 706,
+    InvalidStatus = 707,
 }
 
 /// Temperature band a delivery must stay within, in hundredths of a degree
@@ -124,6 +154,13 @@ pub struct ProofRequirements {
     pub requires_photo_proof: bool,
     pub requires_recipient_signature: bool,
     pub requires_temperature_log: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ComplianceAttestation {
+    pub compliance_hash: Bytes,
+    pub is_compliant: bool,
 }
 
 #[contracttype]
@@ -249,6 +286,7 @@ impl DeliveryContract {
         if new_admin != pending {
             return Err(Error::Unauthorized);
         }
+
         let previous: Address = env
             .storage()
             .instance()
@@ -270,40 +308,77 @@ impl DeliveryContract {
         Ok(())
     }
 
-    /// Replace the contract's wasm code. Admin only.
-    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: Bytes) -> Result<(), Error> {
-        admin.require_auth();
-        let stored: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(Error::NotInitialized)?;
-        if admin != stored {
-            return Err(Error::Unauthorized);
+    /// Record a compliance attestation for a delivery. The request must exist
+    /// and be `InProgress` or `Fulfilled`; cancelled, rejected, pending and
+    /// approved requests cannot be attested. The hash is capped at
+    /// `MAX_COMPLIANCE_HASH_LEN` bytes and the first attestation is permanent
+    /// (use `amend_compliance_attestation` to correct it).
+    pub fn record_compliance_attestation(
+        env: Env,
+        delivery_id: u64,
+        compliance_hash: Bytes,
+        is_compliant: bool,
+    ) -> Result<(), Error> {
+        if !Self::is_initialized(env.clone()) {
+            return Err(Error::NotInitialized);
+        }
+        if compliance_hash.len() > MAX_COMPLIANCE_HASH_LEN {
+            return Err(Error::InvalidInput);
         }
 
-        env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
+        let counter: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::DeliveryCounter)
+            .unwrap_or(0);
+        if delivery_id == 0 || delivery_id > counter {
+            return Err(Error::DeliveryNotFound);
+        }
 
-        ContractUpgraded {
-            admin,
-            new_wasm_hash,
+        let request_contract: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::RequestContract)
+            .ok_or(Error::NotInitialized)?;
+        let status = RequestContractClient::new(&env, &request_contract)
+            .get_request(&delivery_id);
+        match status {
+            RequestStatus::InProgress | RequestStatus::Fulfilled => {}
+            _ => return Err(Error::InvalidStatus),
+        }
+
+        let key = DataKey::ComplianceAttestation(delivery_id);
+        if env.storage().persistent().has(&key) {
+            return Err(Error::AlreadyAttested);
+        }
+
+        let attestation = ComplianceAttestation {
+            compliance_hash: compliance_hash.clone(),
+            is_compliant,
+        };
+        env.storage().persistent().set(&key, &attestation);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        ComplianceAttested {
+            delivery_id,
+            compliance_hash,
+            is_compliant,
         }
         .publish(&env);
 
         Ok(())
     }
 
-    /// Update the temperature band a delivery must stay within. Admin only.
-    ///
-    /// Values are in hundredths of a degree Celsius (`_x100`), matching the
-    /// temperature contract. The range must be strictly increasing
-    /// (`min < max`) and both bounds must fall within the plausibility window
-    /// `[-100.00 °C, 100.00 °C]`; otherwise `InvalidInput` is returned.
-    pub fn set_temperature_thresholds(
+    /// Admin-only correction of an existing compliance attestation. Emits the
+    /// previous hash and flag so the amendment is auditable.
+    pub fn amend_compliance_attestation(
         env: Env,
         admin: Address,
-        min_celsius_x100: i32,
-        max_celsius_x100: i32,
+        delivery_id: u64,
+        compliance_hash: Bytes,
+        is_compliant: bool,
     ) -> Result<(), Error> {
         admin.require_auth();
         let stored: Address = env
@@ -314,52 +389,36 @@ impl DeliveryContract {
         if admin != stored {
             return Err(Error::Unauthorized);
         }
-
-        if min_celsius_x100 >= max_celsius_x100
-            || min_celsius_x100 < MIN_ALLOWED_TEMPERATURE_C_X100
-            || max_celsius_x100 > MAX_ALLOWED_TEMPERATURE_C_X100
-        {
+        if compliance_hash.len() > MAX_COMPLIANCE_HASH_LEN {
             return Err(Error::InvalidInput);
         }
 
-        let previous: TemperatureThresholds = env
+        let key = DataKey::ComplianceAttestation(delivery_id);
+        let previous: ComplianceAttestation = env
             .storage()
-            .instance()
-            .get(&DataKey::TemperatureThresholds)
-            .unwrap_or(TemperatureThresholds {
-                min_celsius_x100: DEFAULT_MIN_TEMPERATURE_C_X100,
-                max_celsius_x100: DEFAULT_MAX_TEMPERATURE_C_X100,
-            });
+            .persistent()
+            .get(&key)
+            .ok_or(Error::NotAttested)?;
 
-        let thresholds = TemperatureThresholds {
-            min_celsius_x100,
-            max_celsius_x100,
+        let attestation = ComplianceAttestation {
+            compliance_hash: compliance_hash.clone(),
+            is_compliant,
         };
+        env.storage().persistent().set(&key, &attestation);
         env.storage()
-            .instance()
-            .set(&DataKey::TemperatureThresholds, &thresholds);
-        env.storage()
-            .instance()
-            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
-        TemperatureThresholdsUpdated {
+        ComplianceAmended {
             admin,
-            min_celsius_x100,
-            max_celsius_x100,
-            previous_min_celsius_x100: previous.min_celsius_x100,
-            previous_max_celsius_x100: previous.max_celsius_x100,
+            delivery_id,
+            previous_compliance_hash: previous.compliance_hash,
+            previous_is_compliant: previous.is_compliant,
+            compliance_hash,
+            is_compliant,
         }
         .publish(&env);
 
         Ok(())
-    }
-
-    /// Returns the current delivery-level temperature band, in hundredths of a
-    /// degree Celsius (`_x100`).
-    pub fn get_temperature_thresholds(env: Env) -> Result<TemperatureThresholds, Error> {
-        env.storage()
-            .instance()
-            .get(&DataKey::TemperatureThresholds)
-            .ok_or(Error::NotInitialized)
     }
 }
