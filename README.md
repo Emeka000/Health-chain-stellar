@@ -104,4 +104,7 @@ For contract deployment, full environment variable reference, and contributor gu
 | `lifebank-soroban/docs/contracts/` | [Contract Reference Docs](./lifebank-soroban/docs/contracts/) |
 | `docs/architecture.md` | [Architecture Diagram](./docs/architecture.md) |
 
+## Handsoff notes
 
+<!-- handsoff-issue-1831 -->
+- #1831: [lifebank/identity] PermissionScope grants are stored and emitted but never enforced by any contract
