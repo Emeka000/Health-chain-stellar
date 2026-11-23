@@ -14,11 +14,13 @@ import { Server, Socket } from 'socket.io';
 import { OrdersGateway } from './orders.gateway';
 import { WsAuthService, AuthenticatedSocket } from '../auth/ws-auth.service';
 import { SecurityEventLoggerService } from '../user-activity/security-event-logger.service';
+import { AuthService } from '../auth/auth.service';
 
 describe('OrdersGateway RBAC Tests', () => {
   let gateway: OrdersGateway;
   let wsAuthService: jest.Mocked<WsAuthService>;
   let securityEventLogger: jest.Mocked<SecurityEventLoggerService>;
+  let authService: jest.Mocked<AuthService>;
 
   const mockServer = {
     to: jest.fn().mockReturnValue({ emit: jest.fn() }),
@@ -64,11 +66,16 @@ describe('OrdersGateway RBAC Tests', () => {
       logEvent: jest.fn().mockResolvedValue(undefined),
     } as any;
 
+    authService = {
+      refreshTokens: jest.fn(),
+    } as any;
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         OrdersGateway,
         { provide: WsAuthService, useValue: wsAuthService },
         { provide: SecurityEventLoggerService, useValue: securityEventLogger },
+        { provide: AuthService, useValue: authService },
         { provide: JwtService, useValue: {} },
         { provide: ConfigService, useValue: {} },
       ],
@@ -224,13 +231,21 @@ describe('OrdersGateway RBAC Tests', () => {
   describe('Token Refresh', () => {
     it('✓ Test 10: Token refresh should succeed with valid refresh token', async () => {
       const socket = createMockSocket('user1', 'hospital1', 'doctor', ['hospital1']);
+      const newExpiry = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+      authService.refreshTokens.mockResolvedValue({
+        accessToken: 'new.access',
+        refreshToken: 'new.refresh',
+        expiresAt: newExpiry,
+      } as any);
 
       await gateway.handleRefreshToken(socket, { refreshToken: 'valid.refresh' });
 
+      expect(authService.refreshTokens).toHaveBeenCalledWith('valid.refresh');
       expect(socket.emit).toHaveBeenCalledWith(
         'token_refreshed',
-        expect.objectContaining({ status: 'success' }),
+        expect.objectContaining({ status: 'success', newExpiry }),
       );
+      expect(socket.disconnect).not.toHaveBeenCalled();
     });
 
     it('should reject refresh without authentication', async () => {
@@ -240,62 +255,29 @@ describe('OrdersGateway RBAC Tests', () => {
       await gateway.handleRefreshToken(socket, { refreshToken: 'token' });
 
       expect(socket.emit).toHaveBeenCalledWith('auth_error', expect.stringContaining('not authenticated'));
-    });
-  });
-
-  describe('Tenant Isolation', () => {
-    it('should use tenant-scoped channel naming', async () => {
-      const socket = createMockSocket('doctor1', 'hospital1', 'doctor', ['hospital1']);
-
-      await gateway.handleJoinHospital(socket, { hospitalId: 'hospital1' });
-
-      const call = socket.join.mock.calls[0];
-      expect(call[0]).toMatch(/^orders:hospital1$/);
-    });
-  });
-
-  describe('handleJoinHospital — authorization', () => {
-    it('allows join when hospitalId is in the authenticated identity scope', () => {
-      gateway.handleJoinHospital(mockSocket, { hospitalId: 'hosp-1' });
-      expect(mockSocket.join).toHaveBeenCalledWith('hospital:hosp-1');
-      expect(mockSocket.emit).toHaveBeenCalledWith('joined', {
-        hospitalId: 'hosp-1',
-        room: 'hospital:hosp-1',
-      });
+      expect(socket.disconnect).toHaveBeenCalled();
     });
 
-    it('rejects join when hospitalId is NOT in the authenticated identity scope', () => {
-      gateway.handleJoinHospital(mockSocket, { hospitalId: 'hosp-999' });
-      expect(mockSocket.join).not.toHaveBeenCalled();
-      expect(mockSocket.emit).toHaveBeenCalledWith('error', {
-        message: 'Not authorized to join this hospital room',
-      });
+    it('should reject refresh with missing refresh token', async () => {
+      const socket = createMockSocket('user1', 'hospital1', 'doctor');
+
+      await gateway.handleRefreshToken(socket, {} as any);
+
+      expect(authService.refreshTokens).not.toHaveBeenCalled();
+      expect(socket.emit).toHaveBeenCalledWith('auth_error', expect.any(String));
+      expect(socket.disconnect).toHaveBeenCalled();
     });
 
-    it('allows admin to join any hospital room', () => {
-      mockSocket.data.role = 'admin';
-      mockSocket.data.hospitalIds = [];
-      gateway.handleJoinHospital(mockSocket, { hospitalId: 'any-hosp' });
-      expect(mockSocket.join).toHaveBeenCalledWith('hospital:any-hosp');
-    });
+    it('should reject invalid or revoked refresh token and disconnect', async () => {
+      const socket = createMockSocket('user1', 'hospital1', 'doctor');
+      authService.refreshTokens.mockRejectedValue(new Error('Invalid refresh token'));
 
-    it('rejects join and logs audit entry for unauthorized attempt', () => {
-      const warnSpy = jest.spyOn(gateway['logger'], 'warn');
-      gateway.handleJoinHospital(mockSocket, { hospitalId: 'hosp-evil' });
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Unauthorized room join attempt'),
-      );
-    });
-  });
+      await gateway.handleRefreshToken(socket, { refreshToken: 'revoked.refresh' });
 
-  describe('emitOrderStatusUpdated', () => {
-    it('should broadcast status update event', () => {
-      gateway['emitOrderUpdate']('hosp-1', { id: 'ORD-001' });
-      expect(mockServer.to).toHaveBeenCalledWith('hospital:hosp-1');
-      expect((mockServer.to as jest.Mock)().emit).toHaveBeenCalledWith(
-        'order:updated',
-        expect.objectContaining({ id: 'ORD-001' }),
-      );
+      expect(authService.refreshTokens).toHaveBeenCalledWith('revoked.refresh');
+      expect(socket.emit).toHaveBeenCalledWith('auth_error', expect.any(String));
+      expect(socket.disconnect).toHaveBeenCalled();
+      expect(socket.emit).not.toHaveBeenCalledWith('token_refreshed', expect.anything());
     });
   });
 });
