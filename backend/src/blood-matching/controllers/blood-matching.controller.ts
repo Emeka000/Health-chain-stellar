@@ -55,16 +55,16 @@ export class MatchRequestDto implements MatchingRequest {
 
   @IsOptional()
   @IsString()
-  bloodType?: string;
+  bloodType?: MatchingRequest['bloodType'];
 
   @IsOptional()
   @IsEnum(['low', 'medium', 'high', 'critical'])
-  urgency?: 'low' | 'medium' | 'high' | 'critical';
+  urgency?: MatchingRequest['urgency'];
 
   @IsOptional()
   @IsNumber()
   @Min(0)
-  quantityMl?: number;
+  quantityMl?: MatchingRequest['quantityMl'];
 
   @IsOptional()
   @IsInt()
