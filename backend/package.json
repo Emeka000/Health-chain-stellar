@@ -7,6 +7,7 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
+    "build:packages": "tsc -p ../packages/base-sdk/tsconfig.json && tsc -p ../packages/inventory-sdk/tsconfig.json && tsc -p ../packages/coordinator-sdk/tsconfig.json && tsc -p ../packages/payments-sdk/tsconfig.json && tsc -p ../packages/requests-sdk/tsconfig.json && tsc -p ../packages/temperature-sdk/tsconfig.json",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
