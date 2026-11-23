@@ -11,7 +11,7 @@ import { IndexerStateEntity } from './entities/indexer-state.entity';
 import { ReconciliationLogEntity } from './entities/reconciliation-log.entity';
 import { BlockchainAdminController } from './blockchain-admin.controller';
 import { SorobanIndexerService } from './soroban-indexer.service';
-import { SorobanService } from './soroban.service';
+import { SorobanRpcClient } from './soroban.service';
 
 @Module({
   imports: [
@@ -26,7 +26,7 @@ import { SorobanService } from './soroban.service';
     ContractEventIndexerModule,
   ],
   controllers: [BlockchainAdminController],
-  providers: [SorobanService, SorobanIndexerService],
-  exports: [SorobanService, SorobanIndexerService],
+  providers: [SorobanRpcClient, SorobanIndexerService],
+  exports: [SorobanRpcClient, SorobanIndexerService],
 })
 export class SorobanModule {}
