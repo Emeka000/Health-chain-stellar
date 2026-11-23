@@ -108,3 +108,6 @@ For contract deployment, full environment variable reference, and contributor gu
 
 <!-- handsoff-issue-1834 -->
 - #1834: [lifebank/reputation] appeal_penalty is admin-only, so a penalized entity can't appeal
+
+<!-- handsoff-issue-1835 -->
+- #1835: [lifebank/reputation] Ratings accept arbitrarily old timestamps, and the extra `init` entrypoint panics instead of returning an error
