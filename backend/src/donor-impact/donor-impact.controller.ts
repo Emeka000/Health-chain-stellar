@@ -1,6 +1,8 @@
 import { Controller, Get, Param, ParseUUIDPipe } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 
+import { Public } from '../auth/decorators/public.decorator';
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
 
@@ -33,6 +35,8 @@ export class DonorImpactController {
     return this.donorImpactService.getDrillDownEvidence(correlationId);
   }
 
+  @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Get('public/:organizationId')
   @ApiOperation({ summary: 'Get public impact summary for an organization' })
   getPublicImpact(@Param('organizationId') organizationId: string) {
