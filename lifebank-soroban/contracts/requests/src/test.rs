@@ -132,6 +132,32 @@ fn test_create_request_success() {
 }
 
 #[test]
+fn test_is_request_approved_checks_existence_and_status() {
+    let (env, client, _contract_id, admin, _inventory_contract) = create_initialized_contract();
+    let hospital = authorize_hospital(&env, &client);
+    env.ledger().set_timestamp(1_000);
+
+    assert!(!client.is_request_approved(&999));
+    let request_id = client.create_request(
+        &hospital,
+        &BloodType::APositive,
+        &BloodComponent::WholeBlood,
+        &450u32,
+        &Urgency::Urgent,
+        &1_600u64,
+    );
+    assert!(!client.is_request_approved(&request_id));
+
+    client.update_request_status(
+        &admin,
+        &request_id,
+        &RequestStatus::Approved,
+        &String::from_str(&env, "Approved for reservation"),
+    );
+    assert!(client.is_request_approved(&request_id));
+}
+
+#[test]
 fn test_create_request_generates_unique_ids() {
     let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
     let hospital = authorize_hospital(&env, &client);

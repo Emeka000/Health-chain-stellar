@@ -3,11 +3,36 @@ use crate::types::{BloodStatus, BloodType, BloodUnit, Role};
 use crate::{ContractError, InventoryContract, InventoryContractClient};
 use soroban_sdk::{
     testutils::{Address as _, Events as _, Ledger},
-    vec, Address, Env, IntoVal, Map, String, Symbol, TryFromVal,
+    contract, contractimpl, contracttype, vec, Address, Env, IntoVal, Map, String, Symbol, TryFromVal,
 };
 
 /// Standard shelf life used by register_blood (35 days in seconds).
 const SHELF_LIFE_SECS: u64 = 35 * 86400;
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum MockRequestKey {
+    Approved(u64),
+}
+
+#[contract]
+struct MockRequestsContract;
+
+#[contractimpl]
+impl MockRequestsContract {
+    pub fn set_request_approved(env: Env, request_id: u64, approved: bool) {
+        env.storage()
+            .instance()
+            .set(&MockRequestKey::Approved(request_id), &approved);
+    }
+
+    pub fn is_request_approved(env: Env, request_id: u64) -> bool {
+        env.storage()
+            .instance()
+            .get(&MockRequestKey::Approved(request_id))
+            .unwrap_or(false)
+    }
+}
 
 fn create_test_contract<'a>() -> (Env, Address, InventoryContractClient<'a>, Address) {
     let env = Env::default();
@@ -34,6 +59,62 @@ fn test_initialize_success() {
 }
 
 #[test]
+fn test_reserve_blood_rejects_zero_duration_with_specific_error() {
+    let (env, bank, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-RESERVE-ZERO-DURATION"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
+
+    let result = client
+        .try_reserve_blood(&bank, &bank, &vec![&env, unit_id], &1, &0)
+        .err();
+    assert_eq!(
+        result,
+        Some(Ok(ContractError::ReservationDurationTooShort))
+    );
+}
+
+#[test]
+fn test_reserve_blood_rejects_empty_unit_list_with_specific_error() {
+    let (env, bank, client, _) = create_test_contract();
+
+    let result = client
+        .try_reserve_blood(&bank, &bank, &soroban_sdk::Vec::new(&env), &1, &60)
+        .err();
+    assert_eq!(result, Some(Ok(ContractError::EmptyReservation)));
+}
+
+#[test]
+fn test_reserve_blood_requires_approved_request_when_configured() {
+    let (env, bank, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-RESERVE-REQUEST"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
+    let requests_id = env.register(MockRequestsContract, ());
+    let requests = MockRequestsContractClient::new(&env, &requests_id);
+    client.set_requests_contract(&bank, &requests_id);
+
+    let result = client
+        .try_reserve_blood(&bank, &bank, &vec![&env, unit_id], &99, &60)
+        .err();
+    assert_eq!(result, Some(Ok(ContractError::RequestNotApproved)));
+
+    requests.set_request_approved(&99, &true);
+    let reservation = client.try_reserve_blood(&bank, &bank, &vec![&env, unit_id], &99, &60);
+    assert!(reservation.is_ok());
+}
+
+#[test]
 fn test_matching_input_cost_is_independent_of_historical_units() {
     let (env, bank, client, contract_id) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
@@ -51,6 +132,7 @@ fn test_matching_input_cost_is_independent_of_historical_units() {
             let historical_unit = BloodUnit {
                 id,
                 blood_type: BloodType::APositive,
+                component: crate::types::BloodComponent::WholeBlood,
                 quantity_ml: 450,
                 bank_id: bank.clone(),
                 donor_id: None,
@@ -545,6 +627,7 @@ fn test_duplicate_registration_prevented() {
         let rogue_unit = BloodUnit {
             id: 3,
             blood_type: BloodType::ONegative,
+            component: crate::types::BloodComponent::WholeBlood,
             quantity_ml: 450,
             bank_id: bank.clone(),
             donor_id: None,

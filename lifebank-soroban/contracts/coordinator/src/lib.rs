@@ -61,7 +61,28 @@ pub enum BloodType {
 }
 
 impl BloodType {
-    pub fn can_donate_to(&self, recipient: &BloodType) -> bool {
+    pub fn can_donate_to(
+        &self,
+        recipient: &BloodType,
+        component: BloodComponent,
+    ) -> bool {
+        let donor_group = self.abo_group();
+        let recipient_group = recipient.abo_group();
+        match component {
+            BloodComponent::WholeBlood | BloodComponent::RedCells => {
+                self.can_donate_red_cells_to(recipient)
+            }
+            BloodComponent::Plasma | BloodComponent::Cryoprecipitate => match recipient_group {
+                3 => donor_group == 3,
+                1 => matches!(donor_group, 1 | 3),
+                2 => matches!(donor_group, 2 | 3),
+                _ => true,
+            },
+            BloodComponent::Platelets => donor_group == recipient_group,
+        }
+    }
+
+    fn can_donate_red_cells_to(&self, recipient: &BloodType) -> bool {
         use BloodType::*;
         matches!(
             (self, recipient),
@@ -74,6 +95,15 @@ impl BloodType {
                 | (ABNegative, ABPositive | ABNegative)
                 | (ABPositive, ABPositive)
         )
+    }
+
+    fn abo_group(&self) -> u8 {
+        match self {
+            BloodType::OPositive | BloodType::ONegative => 0,
+            BloodType::APositive | BloodType::ANegative => 1,
+            BloodType::BPositive | BloodType::BNegative => 2,
+            BloodType::ABPositive | BloodType::ABNegative => 3,
+        }
     }
 }
 
@@ -127,6 +157,7 @@ pub struct BloodRequest {
     pub id: u64,
     /// Recipient blood type; every allocated unit must be able to donate to it.
     pub blood_type: BloodType,
+    pub component: BloodComponent,
     pub status: RequestStatus,
     pub assigned_units: Vec<u64>,
     pub fulfilled_quantity_ml: u32,
@@ -147,12 +178,13 @@ pub enum BloodStatus {
     Disposed,
 }
 
-/// Mirrors `inventory::types::BloodUnit` (9 fields).
+/// Mirrors `inventory::types::BloodUnit` (10 fields).
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct BloodUnit {
     pub id: u64,
     pub blood_type: BloodType,
+    pub component: BloodComponent,
     pub quantity_ml: u32,
     pub bank_id: Address,
     pub donor_id: Option<Address>,
@@ -715,7 +747,11 @@ impl CoordinatorContract {
                 return Err(CoordinatorError::UnitNotAvailable);
             }
 
-            if !unit.blood_type.can_donate_to(&request.blood_type) {
+            if unit.component != request.component
+                || !unit
+                    .blood_type
+                    .can_donate_to(&request.blood_type, request.component)
+            {
                 return Err(CoordinatorError::IncompatibleBloodType);
             }
 

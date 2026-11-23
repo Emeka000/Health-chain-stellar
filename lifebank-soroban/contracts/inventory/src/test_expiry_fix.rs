@@ -147,9 +147,8 @@ mod expiry_tests {
         );
     }
 
-    /// Edge case: a minimum-duration reservation (1 second) must also survive.
-    /// The RESERVATION_TTL_MIN_LEDGERS floor ensures the entry is not created
-    /// and immediately garbage-collected before the caller can act on it.
+    /// A reservation at the minimum allowed duration must remain readable.
+    /// The RESERVATION_TTL_MIN_LEDGERS floor keeps it live for the caller.
     #[test]
     fn test_reservation_ttl_minimum_floor_applied() {
         let env = Env::default();
@@ -170,8 +169,7 @@ mod expiry_tests {
         let mut unit_ids = soroban_sdk::Vec::new(&env);
         unit_ids.push_back(unit_id);
 
-        // 1-second duration — degenerate case
-        let reservation_id = client.reserve_blood(&bank, &bank, &unit_ids, &42u64, &1u64);
+        let reservation_id = client.reserve_blood(&bank, &bank, &unit_ids, &42u64, &60u64);
 
         // Must be immediately readable without advancing the ledger at all.
         let reservation = client.get_reservation(&reservation_id);
@@ -211,7 +209,7 @@ mod expiry_tests {
         let mut unit_ids = soroban_sdk::Vec::new(&env);
         unit_ids.push_back(unit_id);
 
-        let result = client.try_reserve_blood(&bank, &bank, &unit_ids, &1u64, &1u64);
+        let result = client.try_reserve_blood(&bank, &bank, &unit_ids, &1u64, &60u64);
         assert!(
             result.is_ok(),
             "Unit must be reservable 1 second before expiry"
@@ -245,7 +243,7 @@ mod expiry_tests {
         let mut unit_ids = soroban_sdk::Vec::new(&env);
         unit_ids.push_back(unit_id);
 
-        let result = client.try_reserve_blood(&bank, &bank, &unit_ids, &1u64, &1u64);
+        let result = client.try_reserve_blood(&bank, &bank, &unit_ids, &1u64, &60u64);
         assert!(
             result.is_err(),
             "Unit must be rejected at expiration_timestamp"

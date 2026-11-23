@@ -10,7 +10,9 @@ mod test;
 
 pub use error::MatchingError;
 pub use matching::{
-    compatible_donor_types, is_compatible, score_unit, select_units, sort_by_expiration,
+    compatible_donor_types, compatible_donor_types_for_component, is_compatible,
+    is_compatible_for_component, score_unit, select_units, select_units_for_component,
+    sort_by_expiration,
 };
 pub use types::{
     BloodComponent, BloodRequest, BloodStatus, BloodType, BloodUnit, DataKey, MatchKind,
@@ -326,7 +328,8 @@ impl MatchingContract {
             .unwrap();
         let inv_client = InventoryContractClient::new(env, &inv_addr);
 
-        let compatible_types = compatible_donor_types(env, request.blood_type);
+        let compatible_types =
+            compatible_donor_types_for_component(env, request.blood_type, request.component);
         let now = env.ledger().timestamp();
 
         let mut candidates: Vec<BloodUnit> = Vec::new(env);
@@ -358,7 +361,9 @@ impl MatchingContract {
                         continue;
                     }
                     if let Ok(Ok(unit)) = inv_client.try_get_blood_unit(&uid) {
-                        if unit.status == BloodStatus::Available {
+                        if unit.status == BloodStatus::Available
+                            && unit.component == request.component
+                        {
                             candidates.push_back(unit);
                         }
                     }
@@ -368,10 +373,11 @@ impl MatchingContract {
 
         // `select_units` already filters, orders (exact before compatible, FIFO)
         // and scores the candidates, returning ready-to-use `MatchedUnit`s.
-        let matched = select_units(
+        let matched = select_units_for_component(
             env,
             candidates,
             request.blood_type,
+            request.component,
             request.urgency,
             request.quantity_ml,
             None,

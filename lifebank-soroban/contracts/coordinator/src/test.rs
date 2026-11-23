@@ -14,11 +14,45 @@ use soroban_sdk::{
 };
 
 use super::{
-    BloodRequest, BloodStatus, BloodType, BloodUnit, CoordinatorContract, CoordinatorContractClient,
-    CoordinatorError, ExcursionSummary, Payment, PaymentStatus, RequestStatus, WorkflowStatus,
+    BloodComponent, BloodRequest, BloodStatus, BloodType, BloodUnit, CoordinatorContract,
+    CoordinatorContractClient, CoordinatorError, ExcursionSummary, Payment, PaymentStatus,
+    RequestStatus, WorkflowStatus,
 };
 
-
+#[test]
+fn component_compatibility_matches_matching_contract_rules() {
+    assert!(BloodType::ABPositive.can_donate_to(
+        &BloodType::ABPositive,
+        BloodComponent::Plasma
+    ));
+    assert!(!BloodType::OPositive.can_donate_to(
+        &BloodType::ABPositive,
+        BloodComponent::Plasma
+    ));
+    for donor in [
+        BloodType::ONegative,
+        BloodType::OPositive,
+        BloodType::ANegative,
+        BloodType::APositive,
+        BloodType::BNegative,
+        BloodType::BPositive,
+        BloodType::ABNegative,
+        BloodType::ABPositive,
+    ] {
+        assert!(donor.can_donate_to(
+            &BloodType::ONegative,
+            BloodComponent::Plasma
+        ));
+    }
+    assert!(BloodType::ONegative.can_donate_to(
+        &BloodType::ABPositive,
+        BloodComponent::RedCells
+    ));
+    assert!(!BloodType::ABPositive.can_donate_to(
+        &BloodType::ONegative,
+        BloodComponent::RedCells
+    ));
+}
 
 // ── Mock: Requests contract ───────────────────────────────────────────────────
 
@@ -43,6 +77,7 @@ impl MockRequestContract {
             &BloodRequest {
                 id,
                 blood_type,
+                component: BloodComponent::WholeBlood,
                 status,
             },
         );
@@ -60,6 +95,7 @@ impl MockRequestContract {
             &BloodRequest {
                 id,
                 blood_type,
+                component: BloodComponent::WholeBlood,
                 status,
             },
         );
@@ -124,6 +160,7 @@ impl MockInventoryContract {
                 id,
                 status: BloodStatus::Available,
                 blood_type,
+                component: BloodComponent::WholeBlood,
             },
         );
         id
@@ -143,6 +180,7 @@ impl MockInventoryContract {
                 id,
                 status,
                 blood_type,
+                component: BloodComponent::WholeBlood,
             },
         );
         id
