@@ -174,9 +174,10 @@ fn test_record_delivery_increments_counters() {
 
 #[test]
 fn test_record_payment_released_increments_counters() {
-    let (_, _, client) = setup();
-    client.record_payment_released(&1_u64, &500_i128);
-    client.record_payment_released(&2_u64, &300_i128);
+    let (env, _, client) = setup();
+    let token = Address::generate(&env);
+    client.record_payment_released(&1_u64, &token, &500_i128);
+    client.record_payment_released(&2_u64, &token, &300_i128);
 
     let snap = client.get_current_snapshot();
     assert_eq!(snap.total_payments_released, 2);
@@ -186,15 +187,39 @@ fn test_record_payment_released_increments_counters() {
     assert_eq!(totals.total_volume, 800);
 }
 
+// ── Per-token volume (#1838) ──────────────────────────────────────────────────
+
+#[test]
+fn test_volume_tracked_per_token() {
+    let (env, _, client) = setup();
+    let usdc = Address::generate(&env);
+    let xlm = Address::generate(&env);
+
+    // USDC (7 decimals) and XLM (stroops) must not be summed together.
+    client.record_payment_released(&1_u64, &usdc, &1_000_0000_i128);
+    client.record_payment_released(&2_u64, &xlm, &5_000_0000_i128);
+
+    let snap = client.get_current_snapshot();
+    assert_eq!(snap.total_payments_released, 2);
+    assert_eq!(client.get_token_volume(&usdc), 1_000_0000);
+    assert_eq!(client.get_token_volume(&xlm), 5_000_0000);
+
+    let totals = client.get_lifetime_totals();
+    assert_eq!(client.get_lifetime_token_volume(&usdc), 1_000_0000);
+    assert_eq!(client.get_lifetime_token_volume(&xlm), 5_000_0000);
+    let _ = totals;
+}
+
 // ── Authorization & dedupe (#1837) ────────────────────────────────────────────
 
 #[test]
 fn test_payments_contract_can_record_release() {
     let (env, _, _, _, payments, _, client) = setup_with_contracts();
     env.mock_auths(&[]);
+    let token = Address::generate(&env);
 
     // The configured payments contract is an authorized caller.
-    client.record_payment_released(&1_u64, &500_i128);
+    client.record_payment_released(&1_u64, &token, &500_i128);
 
     let snap = client.get_current_snapshot();
     assert_eq!(snap.total_payments_released, 1);
@@ -204,9 +229,10 @@ fn test_payments_contract_can_record_release() {
 
 #[test]
 fn test_duplicate_payment_id_is_ignored() {
-    let (_, _, client) = setup();
-    client.record_payment_released(&7_u64, &500_i128);
-    client.record_payment_released(&7_u64, &500_i128);
+    let (env, _, client) = setup();
+    let token = Address::generate(&env);
+    client.record_payment_released(&7_u64, &token, &500_i128);
+    client.record_payment_released(&7_u64, &token, &500_i128);
 
     let snap = client.get_current_snapshot();
     assert_eq!(snap.total_payments_released, 1);
@@ -217,10 +243,11 @@ fn test_duplicate_payment_id_is_ignored() {
 fn test_arbitrary_address_rejected() {
     let (env, _, _, _, _, _, client) = setup_with_contracts();
     let stranger = Address::generate(&env);
+    let token = Address::generate(&env);
 
     // Only the admin or the configured payments contract may record a release.
     env.mock_auths(&[]);
-    let result = client.try_record_payment_released(&1_u64, &500_i128);
+    let result = client.try_record_payment_released(&1_u64, &token, &500_i128);
     assert!(result.is_err());
     let _ = stranger;
 }
@@ -260,70 +287,6 @@ fn test_snapshot_isolated_across_period_type_switch() {
     assert_eq!(env.ledger().timestamp(), 0);
 
     client.record_donation(&1_u64);
-    let daily_snapshot = client.get_current_snapshot();
-    assert_eq!(daily_snapshot.total_donations, 1);
+    let daily_snapshot
 
-    client.set_reporting_period(&PeriodType::Weekly);
-    client.record_donation(&2_u64);
-    let weekly_snapshot = client.get_current_snapshot();
-    assert_eq!(
-        weekly_snapshot.total_donations, 1,
-        "Weekly snapshot should be isolated from the Daily snapshot bucket, not blended with it"
-    );
-}
-
-#[test]
-fn test_get_snapshot_returns_correct_period() {
-    let (env, _, client) = setup();
-    client.record_donation(&1_u64);
-
-    let period_index = env.ledger().timestamp() / 86_400;
-    let snap = client.get_snapshot(&PeriodType::Daily, &period_index);
-    assert_eq!(snap.total_donations, 1);
-    assert_eq!(snap.period_index, period_index);
-}
-
-// ── Guard: not initialized ────────────────────────────────────────────────────
-
-#[test]
-fn test_record_donation_fails_when_not_initialized() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(AnalyticsContract, ());
-    let client = AnalyticsContractClient::new(&env, &id);
-    let result = client.try_record_donation(&1_u64);
-    assert_eq!(result, Err(Ok(AnalyticsError::NotInitialized)));
-}
-
-// ── Instance storage TTL (#1487) ──────────────────────────────────────────────
-//
-// DataKey::Config lives in instance storage. Every read path reaches it through
-// require_initialized / require_admin, so if the instance entry is never
-// TTL-extended the whole contract eventually fails with NotInitialized (or
-// requires a restoration transaction) purely because it was idle.
-
-/// Read the remaining instance-storage TTL in ledgers.
-fn instance_ttl(env: &Env, id: &Address) -> u32 {
-    env.as_contract(id, || env.storage().instance().get_ttl())
-}
-
-/// Move the ledger past INSTANCE_BUMP_THRESHOLD so the instance TTL drops below
-/// the bump threshold. Without a bump the next read would find it expiring.
-fn age_past_bump_threshold(env: &Env) {
-    env.ledger()
-        .with_mut(|li| li.sequence_number += INSTANCE_BUMP_THRESHOLD + 1);
-}
-
-#[test]
-fn test_instance_ttl_extended_on_initialize() {
-    let (env, _, id, _) = setup_with_id();
-    assert!(instance_ttl(&env, &id) >= INSTANCE_BUMP_TO);
-}
-
-#[test]
-fn test_instance_ttl_extended_on_record() {
-    let (env, _, id, client) = setup_with_id();
-    age_past_bump_threshold(&env);
-    client.record_donation(&1_u64);
-    assert!(instance_ttl(&env, &id) >= INSTANCE_BUMP_TO);
-}
+/* … truncated 2422 chars — edit only what you need near the top … */

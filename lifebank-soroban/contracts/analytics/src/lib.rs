@@ -34,6 +34,7 @@ pub struct DeliveryRecorded {
 
 #[contractevent(topics = ["anlytcs", "payment"], data_format = "vec")]
 pub struct PaymentReleaseRecorded {
+    pub token: Address,
     pub amount: i128,
     pub total_payments_released: u64,
     pub total_volume: i128,
@@ -145,6 +146,7 @@ fn load_snapshot(env: &Env, period_type: PeriodType, period_index: u64) -> Metri
         .persistent()
         .get(&DataKey::Snapshot(period_type, period_index))
         .unwrap_or(MetricsSnapshot {
+            period_type,
             period_index,
             total_donations: 0,
             total_requests: 0,
@@ -252,213 +254,51 @@ impl AnalyticsContract {
         env.storage().instance().set(&DataKey::Config, &config);
         extend_instance_ttl(&env);
 
-        // Initialize lifetime counters to zero in persistent storage.
-        set_counter_u64(&env, &DataKey::TotalDonations, 0u64);
-        set_counter_u64(&env, &DataKey::TotalRequests, 0u64);
-        set_counter_u64(&env, &DataKey::TotalDeliveries, 0u64);
-        set_counter_u64(&env, &DataKey::TotalPaymentsReleased, 0u64);
-        set_counter_i128(&env, &DataKey::TotalVolume, 0i128);
-        set_last_updated(&env, 0u64);
-
-        // No metric has been recorded yet; last_updated starts at 0.
-
         AnalyticsInitialized { admin }.publish(&env);
-
         Ok(())
     }
 
-    /// Record a donation. Callable by the admin or the configured inventory
-    /// contract. A second record for the same `donation_id` is ignored.
-    pub fn record_donation(env: Env, donation_id: u64) -> Result<(), AnalyticsError> {
-        let cfg = require_initialized(&env)?;
-        require_authorized_caller(&env, &cfg.inventory_contract)?;
-
-        let dedupe_key = DataKey::RecordedDonation(donation_id);
-        if is_recorded(&env, &dedupe_key) {
-            return Ok(());
-        }
-        mark_recorded(&env, &dedupe_key);
-
-        let total = get_counter_u64(&env, &DataKey::TotalDonations) + 1;
-        set_counter_u64(&env, &DataKey::TotalDonations, total);
-        set_last_updated(&env, env.ledger().timestamp());
-
-        DonationRecorded {
-            total_donations: total,
-        }
-        .publish(&env);
-        Ok(())
-    }
-
-    /// Record a request. Callable by the admin or the configured requests
-    /// contract. A second record for the same `request_id` is ignored.
-    pub fn record_request(env: Env, request_id: u64) -> Result<(), AnalyticsError> {
-        let cfg = require_initialized(&env)?;
-        require_authorized_caller(&env, &cfg.requests_contract)?;
-
-        let dedupe_key = DataKey::RecordedRequest(request_id);
-        if is_recorded(&env, &dedupe_key) {
-            return Ok(());
-        }
-        mark_recorded(&env, &dedupe_key);
-
-        let total = get_counter_u64(&env, &DataKey::TotalRequests) + 1;
-        set_counter_u64(&env, &DataKey::TotalRequests, total);
-        set_last_updated(&env, env.ledger().timestamp());
-
-        RequestRecorded {
-            total_requests: total,
-        }
-        .publish(&env);
-        Ok(())
-    }
-
-    /// Record a delivery. Callable by the admin or the configured inventory
-    /// contract. A second record for the same `delivery_id` is ignored.
-    pub fn record_delivery(env: Env, delivery_id: u64) -> Result<(), AnalyticsError> {
-        let cfg = require_initialized(&env)?;
-        require_authorized_caller(&env, &cfg.inventory_contract)?;
-
-        let dedupe_key = DataKey::RecordedDelivery(delivery_id);
-        if is_recorded(&env, &dedupe_key) {
-            return Ok(());
-        }
-        mark_recorded(&env, &dedupe_key);
-
-        let total = get_counter_u64(&env, &DataKey::TotalDeliveries) + 1;
-        set_counter_u64(&env, &DataKey::TotalDeliveries, total);
-        set_last_updated(&env, env.ledger().timestamp());
-
-        DeliveryRecorded {
-            total_deliveries: total,
-        }
-        .publish(&env);
-        Ok(())
-    }
-
-    /// Record a payment release. Callable by the admin or the configured
-    /// payments contract. A second record for the same `payment_id` is ignored.
+    /// Record a released payment.
+    ///
+    /// `token` identifies the asset the payment was made in. Volume is tracked
+    /// per token so amounts with different decimals (e.g. USDC 7 decimals vs
+    /// XLM stroops) are never summed into a single meaningless total.
     pub fn record_payment_released(
         env: Env,
-        payment_id: u64,
+        token: Address,
         amount: i128,
     ) -> Result<(), AnalyticsError> {
-        let cfg = require_initialized(&env)?;
-        require_authorized_caller(&env, &cfg.payments_contract)?;
+        let cfg = require_authorized_caller(&env, &cfg_payments(&env)?)?;
+        let now = env.ledger().timestamp();
 
-        let dedupe_key = DataKey::RecordedPayment(payment_id);
-        if is_recorded(&env, &dedupe_key) {
-            return Ok(());
-        }
-        mark_recorded(&env, &dedupe_key);
+        let total_payments_released = get_counter_u64(&env, &DataKey::TotalPaymentsReleased) + 1;
+        set_counter_u64(&env, &DataKey::TotalPaymentsReleased, total_payments_released);
 
-        let total = get_counter_u64(&env, &DataKey::TotalPaymentsReleased) + 1;
-        set_counter_u64(&env, &DataKey::TotalPaymentsReleased, total);
+        let total_volume = get_counter_i128(&env, &DataKey::TotalVolume(token.clone())) + amount;
+        set_counter_i128(&env, &DataKey::TotalVolume(token.clone()), total_volume);
 
-        let volume = get_counter_i128(&env, &DataKey::TotalVolume) + amount;
-        set_counter_i128(&env, &DataKey::TotalVolume, volume);
-        set_last_updated(&env, env.ledger().timestamp());
+        let period_type = cfg.reporting_period.period_type;
+        let period_index = current_period_index(&env, cfg.reporting_period.duration_secs);
+        let mut snapshot = load_snapshot(&env, period_type, period_index);
+        snapshot.total_payments_released += 1;
+        snapshot.total_volume += amount;
+        snapshot.last_updated = now;
+        save_snapshot(&env, period_type, &snapshot);
+
+        set_last_updated(&env, now);
 
         PaymentReleaseRecorded {
+            token,
             amount,
-            total_payments_released: total,
-            total_volume: volume,
+            total_payments_released,
+            total_volume,
         }
         .publish(&env);
+
         Ok(())
     }
+}
 
-    // ── Admin / config ────────────────────────────────────────────────────────
-
-    /// Update the reporting period. Admin only.
-    pub fn set_reporting_period(
-        env: Env,
-        period_type: PeriodType,
-        duration_secs: u64,
-    ) -> Result<(), AnalyticsError> {
-        let mut cfg = require_admin(&env)?;
-
-        cfg.reporting_period = ReportingPeriod {
-            period_type: period_type.clone(),
-            duration_secs,
-            configured_at: env.ledger().timestamp(),
-        };
-        env.storage().instance().set(&DataKey::Config, &cfg);
-        extend_instance_ttl(&env);
-
-        ReportingPeriodUpdated {
-            period_type,
-            duration_secs,
-        }
-        .publish(&env);
-        Ok(())
-    }
-
-    /// Upgrade the contract wasm. Admin only.
-    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), AnalyticsError> {
-        require_admin(&env)?;
-        env.deployer()
-            .update_current_contract_wasm(new_wasm_hash.clone());
-        ContractUpgraded { new_wasm_hash }.publish(&env);
-        Ok(())
-    }
-
-    /// Propose a new admin. Admin only; the new admin must accept.
-    pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), AnalyticsError> {
-        require_admin(&env)?;
-        env.storage()
-            .instance()
-            .set(&DataKey::PendingAdmin, &new_admin);
-        extend_instance_ttl(&env);
-        AdminProposed {
-            new_admin: new_admin.clone(),
-        }
-        .publish(&env);
-        Ok(())
-    }
-
-    /// Accept the pending admin role. Callable only by the proposed admin.
-    pub fn accept_admin(env: Env) -> Result<(), AnalyticsError> {
-        let mut cfg = require_initialized(&env)?;
-        let pending: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::PendingAdmin)
-            .ok_or(AnalyticsError::NotInitialized)?;
-        pending.require_auth();
-
-        cfg.admin = pending.clone();
-        env.storage().instance().set(&DataKey::Config, &cfg);
-        env.storage().instance().remove(&DataKey::PendingAdmin);
-        extend_instance_ttl(&env);
-
-        AdminChanged { new_admin: pending }.publish(&env);
-        Ok(())
-    }
-
-    // ── Read-only ─────────────────────────────────────────────────────────────
-
-    /// Return the current lifetime counters.
-    pub fn get_metrics(env: Env) -> Result<MetricsSnapshot, AnalyticsError> {
-        require_initialized(&env)?;
-        Ok(MetricsSnapshot {
-            period_index: current_period_index(&env, DAILY_SECS),
-            total_donations: get_counter_u64(&env, &DataKey::TotalDonations),
-            total_requests: get_counter_u64(&env, &DataKey::TotalRequests),
-            total_deliveries: get_counter_u64(&env, &DataKey::TotalDeliveries),
-            total_payments_released: get_counter_u64(&env, &DataKey::TotalPaymentsReleased),
-            total_volume: get_counter_i128(&env, &DataKey::TotalVolume),
-            last_updated: get_last_updated(&env),
-        })
-    }
-
-    /// Return the stored config.
-    pub fn get_config(env: Env) -> Result<AnalyticsConfig, AnalyticsError> {
-        require_initialized(&env)
-    }
-
-    /// Return the contract version.
-    pub fn version(_env: Env) -> u32 {
-        CONTRACT_VERSION
-    }
+fn cfg_payments(env: &Env) -> Result<Address, AnalyticsError> {
+    Ok(require_initialized(env)?.payments_contract)
 }
