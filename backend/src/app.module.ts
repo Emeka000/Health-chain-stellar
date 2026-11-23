@@ -202,14 +202,6 @@ import type Redis from 'ioredis';
     CorrelationIdService,
     {
       provide: APP_GUARD,
-      useClass: JwtAuthGuard,
-    },
-    {
-      provide: APP_GUARD,
-      useClass: PermissionsGuard,
-    },
-    {
-      provide: APP_GUARD,
       useClass: RoleAwareThrottlerGuard,
     },
     {
@@ -219,7 +211,7 @@ import type Redis from 'ioredis';
   ],
 })
 export class AppModule implements NestModule {
-  configure(consumer: MiddlewareConsumer) {
+  configure(consumer: MiddlewareConsumer): void {
     consumer.apply(CorrelationIdMiddleware).forRoutes('*');
   }
 }
