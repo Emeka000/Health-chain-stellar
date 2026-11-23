@@ -6,6 +6,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { CompensationModule } from '../common/compensation/compensation.module';
+import { RedisModule } from '../common/redis/redis.module';
 import { SorobanModule } from '../soroban/soroban.module';
 
 import { BlockchainController } from './controllers/blockchain.controller';
@@ -38,6 +39,7 @@ import { SorobanService } from './services/soroban.service';
       }),
     }),
     CompensationModule,
+    RedisModule,
     forwardRef(() => SorobanModule),
     EventEmitterModule.forRoot(),
     TypeOrmModule.forFeature([
