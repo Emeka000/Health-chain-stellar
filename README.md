@@ -108,3 +108,6 @@ For contract deployment, full environment variable reference, and contributor gu
 
 <!-- handsoff-issue-1829 -->
 - #1829: [lifebank/identity] get_role ignores role expiry, and has_role (a read) writes storage
+
+<!-- handsoff-issue-1842 -->
+- #1842: [lifebank/coordinator] Workflow expiry is a fixed 6 hours for every request, and isn't configurable
