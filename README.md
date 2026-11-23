@@ -104,4 +104,7 @@ For contract deployment, full environment variable reference, and contributor gu
 | `lifebank-soroban/docs/contracts/` | [Contract Reference Docs](./lifebank-soroban/docs/contracts/) |
 | `docs/architecture.md` | [Architecture Diagram](./docs/architecture.md) |
 
+## Handsoff notes
 
+<!-- handsoff-issue-1829 -->
+- #1829: [lifebank/identity] get_role ignores role expiry, and has_role (a read) writes storage
