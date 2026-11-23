@@ -201,6 +201,13 @@ const MAX_DISPUTE_TIMEOUT_SECS: u64 = 365 * 24 * 3600;
 const DISPUTE_TIMEOUT: soroban_sdk::Symbol = symbol_short!("DISP_TO");
 /// Instance storage key for the admin-managed set of allowed token addresses.
 const ALLOWED_TOKENS: soroban_sdk::Symbol = symbol_short!("ALWD_TOK");
+/// Instance storage key for the settlement coordinator (the coordinator
+/// contract). It is a narrower role than the admin: it may only drive escrow
+/// settlement (`release_escrow` / `refund_escrow`), open disputes and settle
+/// Locked bookkeeping payments, so the admin key can stay with a human or
+/// governance account that keeps configuration, upgrades and dispute
+/// resolution.
+const COORDINATOR_KEY: soroban_sdk::Symbol = symbol_short!("COORD");
 /// Upper bound for a vesting schedule's cliff and duration (10 years). Keeps
 /// `now + duration` far from u64::MAX and rejects schedules that would lock
 /// reward tokens effectively forever.
@@ -847,6 +854,11 @@ pub struct RequestsContractSet {
     pub requests_contract: Address,
 }
 
+#[contractevent(topics = ["payment", "coord"], data_format = "single-value")]
+pub struct CoordinatorSet {
+    pub coordinator: Address,
+}
+
 #[contractevent(topics = ["request", "cancelled"], data_format = "vec")]
 pub struct RequestCancelledByPayment {
     pub request_id: u64,
@@ -907,6 +919,28 @@ impl PaymentContract {
         env.storage().instance().get::<_, Address>(&REQ_CONTRACT)
     }
 
+    /// Set or rotate the settlement coordinator (the coordinator contract).
+    /// Admin only.
+    ///
+    /// The coordinator may call `release_escrow`, `refund_escrow` and
+    /// `record_dispute`, and may move a Locked bookkeeping payment to Released
+    /// or Refunded through `update_status`. Every other admin entrypoint
+    /// (dispute resolution, the token allowlist, timeouts, vesting, pause,
+    /// upgrade) stays with the admin, so wiring the coordinator in no longer
+    /// requires handing it the admin key.
+    pub fn set_coordinator(env: Env, admin: Address, coordinator: Address) -> Result<(), Error> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        env.storage().instance().set(&COORDINATOR_KEY, &coordinator);
+        CoordinatorSet { coordinator }.publish(&env);
+        Ok(())
+    }
+
+    /// Returns the configured settlement coordinator, if any.
+    pub fn get_coordinator(env: Env) -> Option<Address> {
+        env.storage().instance().get::<_, Address>(&COORDINATOR_KEY)
+    }
+
     pub fn pause(env: Env, admin: Address) -> Result<(), Error> {
         admin.require_auth();
         let stored: Address = env
@@ -961,6 +995,24 @@ impl PaymentContract {
             return Err(Error::Unauthorized);
         }
         Ok(())
+    }
+
+    fn is_coordinator(env: &Env, caller: &Address) -> bool {
+        env.storage()
+            .instance()
+            .get::<_, Address>(&COORDINATOR_KEY)
+            .map(|c| c == *caller)
+            .unwrap_or(false)
+    }
+
+    /// Settlement entrypoints accept either the admin or the configured
+    /// settlement coordinator.
+    fn require_settlement_operator(env: &Env, caller: &Address) -> Result<(), Error> {
+        extend_instance_ttl(env);
+        if Self::is_admin(env, caller) || Self::is_coordinator(env, caller) {
+            return Ok(());
+        }
+        Err(Error::Unauthorized)
     }
 
     #[allow(dead_code)]
@@ -1132,13 +1184,13 @@ impl PaymentContract {
     /// the payment as Released.
     ///
     /// Issue #848 fix: Two-step confirmation process
-    /// - Coordinator (admin) confirms delivery via release_escrow
+    /// - Coordinator (settlement coordinator or admin) confirms delivery via release_escrow
     /// - Hospital (payer) confirms receipt via confirm_receipt
     /// - Payment only releases when both parties have confirmed
     pub fn release_escrow(env: Env, caller: Address, payment_id: u64) -> Result<(), Error> {
         caller.require_auth();
         Self::require_not_paused(&env)?;
-        Self::require_admin(&env, &caller)?;
+        Self::require_settlement_operator(&env, &caller)?;
 
         let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
 
@@ -1253,13 +1305,13 @@ impl PaymentContract {
         Ok(())
     }
 
-    /// Refund escrowed funds to the payer. Admin only.
+    /// Refund escrowed funds to the payer. Admin or settlement coordinator.
     /// Transfers the locked amount from the contract back to the payer and
     /// marks the payment as Refunded.
     pub fn refund_escrow(env: Env, caller: Address, payment_id: u64) -> Result<(), Error> {
         caller.require_auth();
         Self::require_not_paused(&env)?;
-        Self::require_admin(&env, &caller)?;
+        Self::require_settlement_operator(&env, &caller)?;
 
         let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
 
@@ -1298,8 +1350,20 @@ impl PaymentContract {
     ) -> Result<(), Error> {
         caller.require_auth();
         Self::require_not_paused(&env)?;
-        Self::require_admin(&env, &caller)?;
+        let is_admin = Self::is_admin(&env, &caller);
+        if !is_admin && !Self::is_coordinator(&env, &caller) {
+            return Err(Error::Unauthorized);
+        }
         let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
+
+        // The settlement coordinator may only settle a Locked payment
+        // (Locked → Released / Refunded); any other transition stays admin-only.
+        if !is_admin
+            && !(payment.status == PaymentStatus::Locked
+                && matches!(status, PaymentStatus::Released | PaymentStatus::Refunded))
+        {
+            return Err(Error::Unauthorized);
+        }
 
         // Security fix: prevent escrow bypass via update_status
         // Released/Refunded require actual token transfer, which must go through
@@ -1373,10 +1437,14 @@ impl PaymentContract {
         Self::require_not_paused(&env)?;
         let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
         // The payer and payee may dispute a payment they are party to; the
-        // contract admin (e.g. the coordinator, which has the workflow context
-        // needed to attribute a temperature excursion to this payment) may also
-        // open a dispute on their behalf.
-        if caller != payment.payer && caller != payment.payee && !Self::is_admin(&env, &caller) {
+        // contract admin and the settlement coordinator (which has the workflow
+        // context needed to attribute a temperature excursion to this payment)
+        // may also open a dispute on their behalf.
+        if caller != payment.payer
+            && caller != payment.payee
+            && !Self::is_admin(&env, &caller)
+            && !Self::is_coordinator(&env, &caller)
+        {
             return Err(Error::Unauthorized);
         }
         // Only Pending or Locked payments may be disputed.  Raising a dispute

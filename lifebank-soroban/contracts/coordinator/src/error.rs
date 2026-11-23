@@ -39,4 +39,19 @@ pub enum CoordinatorError {
 
     /// expire_workflow() was called but the deadline has not yet elapsed.
     WorkflowNotExpired = 842,
+
+    // Allocation, cold-chain and settlement checks
+    /// The allocated units' total volume is below the request's remaining quantity.
+    InsufficientQuantity = 850,
+    /// Allocated units belong to more than one blood bank; a single inventory
+    /// reservation can only cover one bank's units.
+    MixedBloodBanks = 851,
+    /// The temperature contract reports at least one unit as compromised.
+    UnitCompromised = 852,
+    /// The cross-contract `is_compromised` query failed.
+    TemperatureCheckFailed = 853,
+    /// A cross-contract call to the requests contract failed.
+    RequestUpdateFailed = 854,
+    /// finalize_settlement was called before the hospital confirmed receipt.
+    ReceiptNotConfirmed = 855,
 }
