@@ -4,4 +4,5 @@ export enum UserRole {
   DONOR = 'donor',
   RIDER = 'rider',
   VENDOR = 'vendor',
+  REGIONAL_ADMIN = 'regional_admin',
 }
