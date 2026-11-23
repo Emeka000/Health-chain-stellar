@@ -349,6 +349,11 @@ pub enum DataKey {
     /// `release_reservation_by_contract`. Only this address is permitted;
     /// any other address is rejected regardless of `require_auth`.
     RequestsContractId,
+
+    AvailableBloodTypeIndexMeta(BloodType),
+    AvailableBloodTypeIndexPage(BloodType, u32),
+    AvailableBloodTypeIndexSlot(u64),
+    TemperatureContractId,
 }
 
 /// Reservation record for blood units locked for a specific requester

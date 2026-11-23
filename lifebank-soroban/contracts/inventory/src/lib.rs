@@ -410,6 +410,7 @@ impl InventoryContract {
 
         // Update indexes for efficient querying
         storage::add_to_blood_type_index(&env, &blood_unit);
+        storage::add_to_available_blood_type_index(&env, &blood_unit);
         storage::add_to_bank_index(&env, &blood_unit);
         storage::add_to_status_index(&env, &blood_unit);
         storage::add_to_donor_index(&env, &blood_unit);
@@ -443,7 +444,10 @@ impl InventoryContract {
         storage::get_blood_unit(&env, blood_unit_id).ok_or(ContractError::NotFound)
     }
 
-    /// Return all blood unit IDs indexed under `blood_type`, across all index pages.
+    /// Deprecated: returns every blood unit ID across all index pages and can
+    /// exceed ledger resource limits as registrations grow. Prefer the
+    /// `get_units_by_blood_type_page` API for bounded reads.
+    ///
     ///
     /// Fixes #1318: the matching contract's `InventoryContractInterface` declares
     /// this function but it was never exposed as a public entrypoint, causing every
@@ -509,6 +513,65 @@ impl InventoryContract {
     pub fn get_blood_type_page_count(env: Env, blood_type: BloodType) -> u32 {
         let meta_key = DataKey::BloodTypeIndexMeta(blood_type);
         env.storage().persistent().get(&meta_key).unwrap_or(0u32)
+    }
+
+    /// Return one page of currently available units for matching.
+    pub fn get_available_units_by_blood_type_page(
+        env: Env,
+        blood_type: BloodType,
+        page: u32,
+    ) -> Vec<u64> {
+        let page_key = DataKey::AvailableBloodTypeIndexPage(blood_type, page);
+        env.storage()
+            .persistent()
+            .get(&page_key)
+            .unwrap_or(Vec::new(&env))
+    }
+
+    /// Return the last (highest) available-unit page for `blood_type`.
+    ///
+    /// The total page count is this value plus one, except that a newly
+    /// initialized empty index also returns zero and has an empty page zero.
+    pub fn get_available_blood_type_page_count(env: Env, blood_type: BloodType) -> u32 {
+        let meta_key = DataKey::AvailableBloodTypeIndexMeta(blood_type);
+        env.storage().persistent().get(&meta_key).unwrap_or(0u32)
+    }
+
+    /// Backfill one page of the historical blood-type index into the available
+    /// index after upgrading from a version that did not maintain it.
+    ///
+    /// The admin should call this for every existing blood-type page before
+    /// relying on matching against the available index. It is safe to repeat.
+    pub fn backfill_available_blood_type_index_page(
+        env: Env,
+        admin: Address,
+        blood_type: BloodType,
+        source_page: u32,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        if admin != storage::get_admin(&env) {
+            return Err(ContractError::Unauthorized);
+        }
+
+        let source_key = DataKey::BloodTypeIndexPage(blood_type, source_page);
+        let unit_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&source_key)
+            .unwrap_or(Vec::new(&env));
+        for i in 0..unit_ids.len() {
+            let unit_id = unit_ids.get(i).ok_or(ContractError::NotFound)?;
+            let slot_key = DataKey::AvailableBloodTypeIndexSlot(unit_id);
+            if env.storage().persistent().has(&slot_key) {
+                continue;
+            }
+            if let Some(unit) = storage::get_blood_unit(&env, unit_id) {
+                if unit.status == BloodStatus::Available {
+                    storage::add_to_available_blood_type_index(&env, &unit);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn update_status(
@@ -593,6 +656,7 @@ impl InventoryContract {
         // Keep status index consistent: remove from old bucket, add to new bucket.
         storage::remove_from_status_index(&env, unit_id, old_status);
         storage::add_to_status_index(&env, &blood_unit);
+        storage::sync_available_blood_type_index(&env, &blood_unit, old_status);
 
         storage::record_status_change(
             &env,
@@ -622,6 +686,8 @@ impl InventoryContract {
     /// - `NotFound`: Blood unit with given ID doesn't exist
     /// - `NotUnitOwner`: `bank_id` does not own the unit
     /// - `NotAuthorizedBloodBank`: `bank_id` has been de-authorized
+    /// - `InvalidStatusTransition`: Unit is not `Available` or `Reserved`
+    /// - `InsufficientRolePermission`: Rider or hospital lacks the required role
     pub fn assign_delivery(
         env: Env,
         bank_id: Address,
@@ -639,6 +705,17 @@ impl InventoryContract {
         if !storage::is_authorized_bank(&env, &bank_id) {
             return Err(ContractError::NotAuthorizedBloodBank);
         }
+        if !matches!(
+            blood_unit.status,
+            BloodStatus::Available | BloodStatus::Reserved
+        ) {
+            return Err(ContractError::InvalidStatusTransition);
+        }
+        if Self::get_role(&env, &rider) != Role::Rider
+            || Self::get_role(&env, &hospital) != Role::Hospital
+        {
+            return Err(ContractError::InsufficientRolePermission);
+        }
 
         let rider_key = DataKey::UnitRider(unit_id);
         env.storage().persistent().set(&rider_key, &rider);
@@ -655,6 +732,8 @@ impl InventoryContract {
             storage::TTL_THRESHOLD,
             storage::TTL_EXTEND_TO,
         );
+
+        events::emit_delivery_assigned(&env, unit_id, &rider, &hospital);
 
         Ok(())
     }
@@ -786,6 +865,7 @@ impl InventoryContract {
 
             storage::remove_from_status_index(&env, unit_id, old_status);
             storage::add_to_status_index(&env, &blood_unit);
+            storage::sync_available_blood_type_index(&env, &blood_unit, old_status);
 
             storage::record_status_change(
                 &env,
@@ -811,6 +891,8 @@ impl InventoryContract {
         Ok(updated_count)
     }
 
+    /// Deprecated: reads every history page in one invocation. Prefer
+    /// `get_status_history_page` and `get_history_page_count`.
     pub fn get_status_history(env: Env, unit_id: u64) -> Vec<crate::types::StatusChangeHistory> {
         storage::get_status_history(&env, unit_id)
     }
@@ -1006,6 +1088,7 @@ impl InventoryContract {
             storage::set_blood_unit(&env, &unit);
             storage::remove_from_status_index(&env, unit_id, old_status);
             storage::add_to_status_index(&env, &unit);
+            storage::sync_available_blood_type_index(&env, &unit, old_status);
         }
 
         // ── Phase 2: sync each unit's status to the authoritative registry ────
@@ -1168,6 +1251,11 @@ impl InventoryContract {
                     storage::set_blood_unit(env, &unit);
                     storage::remove_from_status_index(env, unit_id, BloodStatus::Reserved);
                     storage::add_to_status_index(env, &unit);
+                    storage::sync_available_blood_type_index(
+                        env,
+                        &unit,
+                        BloodStatus::Reserved,
+                    );
                     storage::record_status_change(
                         env,
                         unit_id,
@@ -1308,6 +1396,74 @@ impl InventoryContract {
     /// Get the configured requests contract address, if any.
     pub fn get_requests_contract(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::RequestsContractId)
+    }
+
+    /// Configure the trusted temperature contract that can mark units
+    /// compromised following a sustained cold-chain excursion.
+    pub fn set_temperature_contract(
+        env: Env,
+        admin: Address,
+        temperature_contract_id: Address,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        if admin != storage::get_admin(&env) {
+            return Err(ContractError::Unauthorized);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::TemperatureContractId, &temperature_contract_id);
+        storage::extend_instance_ttl(&env);
+        Ok(())
+    }
+
+    /// Apply a compromise transition requested by the configured temperature
+    /// contract. The status/history/event update is idempotent.
+    pub fn mark_compromised_from_temperature(
+        env: Env,
+        temperature_contract: Address,
+        unit_id: u64,
+    ) -> Result<(), ContractError> {
+        Self::require_not_paused(&env)?;
+        temperature_contract.require_auth();
+        let trusted: Option<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::TemperatureContractId);
+        if trusted.as_ref() != Some(&temperature_contract) {
+            return Err(ContractError::Unauthorized);
+        }
+
+        let mut unit = storage::get_blood_unit(&env, unit_id).ok_or(ContractError::NotFound)?;
+        if unit.status == BloodStatus::Compromised {
+            return Ok(());
+        }
+        let old_status = unit.status;
+        validation::validate_status_transition(old_status, BloodStatus::Compromised)?;
+
+        unit.status = BloodStatus::Compromised;
+        storage::set_blood_unit(&env, &unit);
+        storage::remove_from_status_index(&env, unit_id, old_status);
+        storage::add_to_status_index(&env, &unit);
+        storage::sync_available_blood_type_index(&env, &unit, old_status);
+
+        let reason = String::from_str(&env, "Temperature violation streak reached threshold");
+        storage::record_status_change(
+            &env,
+            unit_id,
+            old_status,
+            BloodStatus::Compromised,
+            &temperature_contract,
+            Some(reason.clone()),
+        );
+        events::emit_status_change(
+            &env,
+            unit_id,
+            old_status,
+            BloodStatus::Compromised,
+            &temperature_contract,
+            Some(reason),
+        );
+        Ok(())
     }
 
     /// Upgrade the contract to a new WASM hash. Only admin can call this.
