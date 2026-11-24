@@ -20,8 +20,8 @@ use soroban_sdk::{
 };
 
 use coordinator_contract::{
-    BloodRequest, BloodStatus, BloodType, BloodUnit, CoordinatorContract,
-    CoordinatorContractClient, CoordinatorError, Payment, PaymentStatus, RequestStatus,
+    BloodComponent, BloodRequest, BloodStatus, BloodType, BloodUnit, CoordinatorContract,
+    CoordinatorContractClient, CoordinatorError, Payment, PaymentStatus, RequestStatus, Urgency,
     WorkflowRecord, WorkflowStatus,
 };
 use temperature_contract::{
@@ -49,8 +49,19 @@ impl MockRequestContract {
                 &ReqKey::Request(id),
                 &BloodRequest {
                     id,
+                    hospital_id: env.current_contract_address(),
                     blood_type: BloodType::OPositive,
+                    component: BloodComponent::WholeBlood,
+                    quantity_ml: 450,
+                    urgency: Urgency::Routine,
+                    created_timestamp: 0,
+                    required_by_timestamp: u64::MAX,
                     status,
+                    assigned_units: soroban_sdk::Vec::new(&env),
+                    fulfilled_quantity_ml: 0,
+                    reservation_id: None,
+                    fulfilled_by: None,
+                    history_len: 0,
                 },
             );
     }
@@ -62,6 +73,35 @@ impl MockRequestContract {
             .get(&ReqKey::Request(request_id))
             .expect("request not found")
     }
+
+    /// Called by the coordinator to obtain the admin passed to the calls below.
+    pub fn get_admin(env: Env) -> Address {
+        env.current_contract_address()
+    }
+
+    /// Called by the coordinator in allocate_units (Pending → Approved).
+    pub fn update_request_status(
+        env: Env,
+        _caller: Address,
+        request_id: u64,
+        new_status: RequestStatus,
+        _reason: String,
+    ) {
+        let mut request = Self::get_request(env.clone(), request_id);
+        request.status = new_status;
+        env.storage()
+            .persistent()
+            .set(&ReqKey::Request(request_id), &request);
+    }
+
+    /// Called by the coordinator in allocate_units to record the reservation.
+    pub fn set_reservation_id(env: Env, _caller: Address, request_id: u64, reservation_id: u64) {
+        let mut request = Self::get_request(env.clone(), request_id);
+        request.reservation_id = Some(reservation_id);
+        env.storage()
+            .persistent()
+            .set(&ReqKey::Request(request_id), &request);
+    }
 }
 
 // ── Mock: Inventory contract ──────────────────────────────────────────────────
@@ -71,6 +111,8 @@ enum InvKey {
     Unit(u64),
     Admin,
     Counter,
+    Reservation(u64),
+    ReservationCounter,
 }
 
 #[contract]
@@ -155,6 +197,62 @@ impl MockInventoryContract {
             authorized_by,
             Some(delivery_location),
         )
+    }
+
+    /// Called by the coordinator in allocate_units: every unit → Reserved.
+    pub fn reserve_blood(
+        env: Env,
+        requester: Address,
+        _hospital_id: Address,
+        unit_ids: soroban_sdk::Vec<u64>,
+        _request_id: u64,
+        _duration_seconds: u64,
+    ) -> u64 {
+        for i in 0..unit_ids.len() {
+            Self::update_status(
+                env.clone(),
+                unit_ids.get(i).unwrap(),
+                BloodStatus::Reserved,
+                requester.clone(),
+                None,
+            );
+        }
+        let id: u64 = env
+            .storage()
+            .instance()
+            .get(&InvKey::ReservationCounter)
+            .unwrap_or(0u64)
+            + 1;
+        env.storage()
+            .instance()
+            .set(&InvKey::ReservationCounter, &id);
+        env.storage()
+            .persistent()
+            .set(&InvKey::Reservation(id), &unit_ids);
+        id
+    }
+
+    /// Called by the coordinator in rollback: Reserved units → Available.
+    pub fn release_reservation(env: Env, caller: Address, reservation_id: u64) {
+        let unit_ids: soroban_sdk::Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&InvKey::Reservation(reservation_id))
+            .expect("reservation not found");
+        for i in 0..unit_ids.len() {
+            let uid = unit_ids.get(i).unwrap();
+            if Self::get_blood_unit(env.clone(), uid).status == BloodStatus::Reserved {
+                Self::update_status(env.clone(), uid, BloodStatus::Available, caller.clone(), None);
+            }
+        }
+        env.storage()
+            .persistent()
+            .remove(&InvKey::Reservation(reservation_id));
+    }
+
+    /// Called by the coordinator in expire_workflow.
+    pub fn expire_reservation(env: Env, reservation_id: u64) {
+        Self::release_reservation(env.clone(), env.current_contract_address(), reservation_id);
     }
 }
 

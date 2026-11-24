@@ -46,5 +46,8 @@ jobs:
       - name: Lint backend
         run: npm run lint --workspace backend
 
+      - name: Check @Api* decorator imports
+        run: npm run check:api-imports --workspace backend
+
       - name: Test backend
         run: npm test --workspace backend -- --ci

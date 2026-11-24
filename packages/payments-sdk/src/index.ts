@@ -44,6 +44,143 @@ export enum DisputeReason {
   Other = 6,
 }
 
+// ── Struct types ──────────────────────────────────────────────────────────────
+
+/**
+ * Decoded on-chain `Payment` struct.
+ *
+ * Mirrors the Rust `Payment` struct in
+ * lifebank-soroban/contracts/payments/src/lib.rs.
+ */
+export interface Payment {
+  paymentId: bigint;
+  requestId: bigint;
+  payer: string;
+  payee: string;
+  /** Amount in the token's smallest unit (e.g. stroops for XLM). */
+  amount: bigint;
+  /** Token contract address, if the payment is escrow-backed. */
+  token: string | null;
+  status: PaymentStatus;
+  /** Ledger timestamp (seconds since epoch) when the payment was created. */
+  timestamp: bigint;
+  /** Dispute reason, present only when `status === PaymentStatus.Disputed`. */
+  disputeReason: DisputeReason | null;
+  /** Case ID associated with a dispute, if any. */
+  caseId: string | null;
+}
+
+// ── Decoding helpers ──────────────────────────────────────────────────────────
+
+function scValToBigInt(value: xdr.ScVal): bigint {
+  switch (value.switch()) {
+    case xdr.ScValType.scvU32():
+      return BigInt(value.u32());
+    case xdr.ScValType.scvI32():
+      return BigInt(value.i32());
+    case xdr.ScValType.scvU64():
+      return BigInt(value.u64().toString());
+    case xdr.ScValType.scvI64():
+      return BigInt(value.i64().toString());
+    case xdr.ScValType.scvU128(): {
+      const parts = value.u128();
+      return (BigInt(parts.hi().toString()) << 64n) | BigInt(parts.lo().toString());
+    }
+    case xdr.ScValType.scvI128(): {
+      const parts = value.i128();
+      return (BigInt(parts.hi().toString()) << 64n) | BigInt(parts.lo().toString());
+    }
+    default:
+      throw new Error(`Cannot decode ScVal of type ${value.switch().name} as integer`);
+  }
+}
+
+function scValToAddress(value: xdr.ScVal): string {
+  // Address ScVals are decoded by the base SDK; fall back to the raw string form.
+  try {
+    return (value as unknown as { address(): { toString(): string } })
+      .address()
+      .toString();
+  } catch {
+    return value.toXDR('base64');
+  }
+}
+
+function scValToString(value: xdr.ScVal): string {
+  switch (value.switch()) {
+    case xdr.ScValType.scvString():
+      return value.str().toString();
+    case xdr.ScValType.scvSymbol():
+      return value.sym().toString();
+    default:
+      return value.toXDR('base64');
+  }
+}
+
+function scValToPaymentStatus(value: xdr.ScVal): PaymentStatus {
+  const ordinal = Number(scValToBigInt(value));
+  const status = PaymentStatus[ordinal as keyof typeof PaymentStatus];
+  if (typeof status !== 'number') {
+    throw new Error(`Unknown PaymentStatus ordinal: ${ordinal}`);
+  }
+  return status;
+}
+
+function scValToDisputeReason(value: xdr.ScVal): DisputeReason {
+  const ordinal = Number(scValToBigInt(value));
+  const reason = DisputeReason[ordinal as keyof typeof DisputeReason];
+  if (typeof reason !== 'number') {
+    throw new Error(`Unknown DisputeReason ordinal: ${ordinal}`);
+  }
+  return reason;
+}
+
+function getStructField(entries: xdr.ScMapEntry[], name: string): xdr.ScVal | undefined {
+  const entry = entries.find((e) => scValToString(e.key()) === name);
+  return entry?.val();
+}
+
+/**
+ * Decode a Soroban `Payment` struct ScVal into a typed {@link Payment}.
+ */
+export function decodePayment(value: xdr.ScVal): Payment {
+  if (value.switch() !== xdr.ScValType.scvMap()) {
+    throw new Error(`Expected Payment struct (scvMap), got ${value.switch().name}`);
+  }
+  const entries = value.map() ?? [];
+  const required = (name: string): xdr.ScVal => {
+    const field = getStructField(entries, name);
+    if (!field) {
+      throw new Error(`Payment struct is missing field '${name}'`);
+    }
+    return field;
+  };
+  const optional = (name: string): xdr.ScVal | undefined => {
+    const field = getStructField(entries, name);
+    if (!field || field.switch() === xdr.ScValType.scvVoid()) {
+      return undefined;
+    }
+    return field;
+  };
+
+  const token = optional('token');
+  const disputeReason = optional('dispute_reason');
+  const caseId = optional('case_id');
+
+  return {
+    paymentId: scValToBigInt(required('payment_id')),
+    requestId: scValToBigInt(required('request_id')),
+    payer: scValToAddress(required('payer')),
+    payee: scValToAddress(required('payee')),
+    amount: scValToBigInt(required('amount')),
+    token: token ? scValToAddress(token) : null,
+    status: scValToPaymentStatus(required('status')),
+    timestamp: scValToBigInt(required('timestamp')),
+    disputeReason: disputeReason ? scValToDisputeReason(disputeReason) : null,
+    caseId: caseId ? scValToString(caseId) : null,
+  };
+}
+
 function paymentStatusToScVal(status: PaymentStatus): xdr.ScVal {
   return xdr.ScVal.scvU32(status as number);
 }
@@ -225,19 +362,23 @@ export class Client extends BaseContractClient {
   /**
    * Get a payment by ID (read-only).
    *
-   * Mirrors: `get_payment(env, payment_id)`
+   * Mirrors: `get_payment(env, payment_id: u64) -> Payment`
    */
-  async get_payment(paymentId: bigint): Promise<unknown> {
-    return this.simulate('get_payment', [toScVal(paymentId)]);
+  async get_payment(paymentId: bigint): Promise<Payment> {
+    const result = await this.simulate('get_payment', [toScVal(paymentId)]);
+    return decodePayment(result as xdr.ScVal);
   }
 
   /**
    * Get the active payment for a request (read-only).
    *
-   * Mirrors: `get_payment_by_request(env, request_id)`
+   * Mirrors: `get_payment_by_request(env, request_id: u64) -> Payment`
    */
-  async get_payment_by_request(requestId: bigint): Promise<unknown> {
-    return this.simulate('get_payment_by_request', [toScVal(requestId)]);
+  async get_payment_by_request(requestId: bigint): Promise<Payment> {
+    const result = await this.simulate('get_payment_by_request', [
+      toScVal(requestId),
+    ]);
+    return decodePayment(result as xdr.ScVal);
   }
 
   /**

@@ -1304,6 +1304,7 @@ dependencies = [
 name = "request-contract"
 version = "0.0.0"
 dependencies = [
+ "inventory-contract",
  "soroban-sdk",
 ]
 

@@ -1,3 +1,4 @@
+import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { forwardRef, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
@@ -6,7 +7,9 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { CompensationModule } from '../common/compensation/compensation.module';
+import { RedisModule } from '../common/redis/redis.module';
 import { SorobanModule } from '../soroban/soroban.module';
+import { SorobanSubmissionService } from './services/soroban-submission.service';
 
 import { BlockchainController } from './controllers/blockchain.controller';
 import { DlqReplayAuditEntity } from './entities/dlq-replay-audit.entity';
@@ -23,21 +26,17 @@ import { FailedSorobanTxService } from './services/failed-soroban-tx.service';
 import { IdempotencyService } from './services/idempotency.service';
 import { QueueMetricsService } from './services/queue-metrics.service';
 import { SorobanService } from './services/soroban.service';
+import { SorobanRpcClient } from '../../soroban/soroban.service';
+import { SorobanProcessor } from './processors/soroban.processor';
+import { SOROBAN_QUEUE } from './constants';
 
 @Module({
   imports: [
-    ConfigModule,
-    JwtModule.registerAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET', 'default-secret'),
-        signOptions: {
-          expiresIn: configService.get<string>('JWT_EXPIRES_IN', '1h'),
-        },
-      }),
+    BullModule.registerQueue({
+      name: SOROBAN_QUEUE,
     }),
     CompensationModule,
+    RedisModule,
     forwardRef(() => SorobanModule),
     EventEmitterModule.forRoot(),
     TypeOrmModule.forFeature([
@@ -89,6 +88,7 @@ import { SorobanService } from './services/soroban.service';
   ],
   providers: [
     SorobanService,
+    SorobanSubmissionService,
     ConfirmationService,
     IdempotencyService,
     JobDeduplicationPlugin,
@@ -101,6 +101,11 @@ import { SorobanService } from './services/soroban.service';
     AdminGuard,
   ],
   controllers: [BlockchainController],
-  exports: [SorobanService, QueueMetricsService, DlqReplayAuditService],
+  exports: [
+    SorobanService,
+    SorobanSubmissionService,
+    QueueMetricsService,
+    DlqReplayAuditService,
+  ],
 })
 export class BlockchainModule {}

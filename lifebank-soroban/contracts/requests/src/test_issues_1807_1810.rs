@@ -72,7 +72,7 @@ fn test_pause_blocks_every_mutating_entrypoint() {
     assert_paused(client.try_set_reservation_id(&admin, &id, &9u64).err());
     assert_paused(client.try_set_fulfilling_org(&admin, &id, &bank).err());
     assert_paused(client.try_reassign_fulfilling_org(&id, &bank, &r).err());
-    assert_paused(client.try_assign_rider(&id, &rider).err());
+    assert_paused(client.try_assign_rider(&admin, &id, &rider).err());
     assert_paused(client.try_cancel_request(&hospital, &id, &r).err());
     assert_paused(client.try_cancel_request_by_contract(&admin, &id, &r).err());
 

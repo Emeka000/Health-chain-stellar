@@ -399,6 +399,14 @@ pub enum DataKey {
 pub struct IdentityContract;
 
 impl IdentityContract {
+    /// Keep the instance entry (admin, paused flag, org counter, requests
+    /// contract) alive. Called from every entrypoint, including reads.
+    fn bump_instance_ttl(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
     /// Check whether an address has a given non-expired role.
     fn has_role_internal(env: Env, account: Address, role: Role) -> bool {
         let key = DataKey::AddressRoles(account);
@@ -502,6 +510,7 @@ impl IdentityContract {
 impl IdentityContract {
     /// Initialize the contract with an admin
     pub fn initialize(env: Env, admin: Address) -> Result<(), Error> {
+        Self::bump_instance_ttl(&env);
         admin.require_auth();
         if Self::is_initialized(env.clone()) {
             return Err(Error::AlreadyInitialized);
@@ -517,7 +526,8 @@ impl IdentityContract {
     }
 
     /// Get contract version
-    pub fn version(_env: Env) -> u32 {
+    pub fn version(env: Env) -> u32 {
+        Self::bump_instance_ttl(&env);
         CONTRACT_VERSION
     }
 
@@ -527,6 +537,7 @@ impl IdentityContract {
         admin: Address,
         new_wasm_hash: BytesN<32>,
     ) -> Result<(), Error> {
+        Self::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_role(&env, &admin, Role::Admin)?;
 
@@ -540,6 +551,7 @@ impl IdentityContract {
     /// Propose a new admin. The current admin must authorize this call; the
     /// proposed admin must then call `accept_admin` to complete the transfer.
     pub fn propose_admin(env: Env, admin: Address, new_admin: Address) -> Result<(), Error> {
+        Self::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_role(&env, &admin, Role::Admin)?;
 
@@ -558,6 +570,7 @@ impl IdentityContract {
 
     /// Accept a pending admin transfer. Only the proposed admin may call this.
     pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        Self::bump_instance_ttl(&env);
         new_admin.require_auth();
 
         let pending: Address = env
@@ -582,7 +595,7 @@ impl IdentityContract {
         // Grant the Admin role to the new admin and drop it from the previous
         // admin so the role set stays consistent with the primary admin key.
         Self::grant_role_internal(&env, new_admin.clone(), Role::Admin);
-        Self::revoke_admin_role_internal(&env, &previous_admin);
+        Self::revoke_role_internal(&env, &previous_admin, &Role::Admin);
 
         AdminTransferred {
             previous_admin,
@@ -595,11 +608,13 @@ impl IdentityContract {
 
     /// Return the pending admin, if any.
     pub fn get_pending_admin(env: Env) -> Option<Address> {
+        Self::bump_instance_ttl(&env);
         env.storage().instance().get(&DataKey::PendingAdmin)
     }
 
     /// Pause all state-mutating functions. Admin only.
     pub fn pause(env: Env, admin: Address) -> Result<(), Error> {
+        Self::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_role(&env, &admin, Role::Admin)?;
         env.storage().instance().set(&DataKey::Paused, &true);
@@ -608,6 +623,7 @@ impl IdentityContract {
 
     /// Unpause the contract. Admin only.
     pub fn unpause(env: Env, admin: Address) -> Result<(), Error> {
+        Self::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_role(&env, &admin, Role::Admin)?;
         env.storage().instance().set(&DataKey::Paused, &false);
@@ -616,6 +632,7 @@ impl IdentityContract {
 
     /// Returns whether the contract is currently paused.
     pub fn is_paused(env: Env) -> bool {
+        Self::bump_instance_ttl(&env);
         env.storage()
             .instance()
             .get(&DataKey::Paused)
@@ -635,10 +652,12 @@ impl IdentityContract {
     }
 
     pub fn is_initialized(env: Env) -> bool {
+        Self::bump_instance_ttl(&env);
         env.storage().instance().has(&DataKey::Admin)
     }
 
     pub fn get_admin(env: Env) -> Result<Address, Error> {
+        Self::bump_instance_ttl(&env);
         env.storage()
             .instance()
             .get(&DataKey::Admin)
@@ -651,6 +670,7 @@ impl IdentityContract {
         admin: Address,
         requests_contract: Address,
     ) -> Result<(), Error> {
+        Self::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_role(&env, &admin, Role::Admin)?;
         env.storage()
@@ -660,6 +680,7 @@ impl IdentityContract {
     }
 
     pub fn get_org_counter(env: Env) -> Result<u32, Error> {
+        Self::bump_instance_ttl(&env);
         if !Self::is_initialized(env.clone()) {
             return Err(Error::Unauthorized);
         }
@@ -681,6 +702,7 @@ impl IdentityContract {
         location_hash: BytesN<32>,
         document_hashes: Vec<BytesN<32>>,
     ) -> Result<Address, Error> {
+        Self::bump_instance_ttl(&env);
         owner.require_auth();
         Self::require_not_paused(&env)?;
 
@@ -731,12 +753,7 @@ impl IdentityContract {
             .persistent()
             .extend_ttl(&docs_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
-        // Assign role
-        let role = match org_type.clone() {
-            OrgType::BloodBank => Role::BloodBank,
-            OrgType::Hospital => Role::Hospital,
-        };
-        Self::grant_role_internal(&env, org_id.clone(), role);
+        // Operational role is granted on verification, not here (see verification.rs).
 
         // Add to type index
         let type_key = DataKey::OrgTypeList(org_type.clone());
@@ -765,6 +782,7 @@ impl IdentityContract {
 
     /// Admin-only public entrypoint for granting a role to an address.
     pub fn grant_role(env: Env, admin: Address, address: Address, role: Role) -> Result<(), Error> {
+        Self::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_role(&env, &admin, Role::Admin)?;
         Self::grant_role_internal(&env, address, role);
@@ -780,6 +798,7 @@ impl IdentityContract {
         role: Role,
         expires_at: Option<u64>,
     ) -> Result<(), Error> {
+        Self::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_not_paused(&env)?;
         Self::require_role(&env, &admin, Role::Admin)?;
@@ -824,6 +843,7 @@ impl IdentityContract {
         address: Address,
         role: Role,
     ) -> Result<(), Error> {
+        Self::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_not_paused(&env)?;
         Self::require_role(&env, &admin, Role::Admin)?;
@@ -860,6 +880,7 @@ impl IdentityContract {
         admin: Address,
         address: Address,
     ) -> Result<u32, Error> {
+        Self::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_role(&env, &admin, Role::Admin)?;
 
@@ -868,6 +889,7 @@ impl IdentityContract {
 
     /// Get all role grants for an address (including expired until cleaned up).
     pub fn get_roles(env: Env, address: Address) -> Vec<RoleGrant> {
+        Self::bump_instance_ttl(&env);
         let key = DataKey::AddressRoles(address);
         env.storage()
             .persistent()
@@ -920,15 +942,23 @@ impl IdentityContract {
             .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
-    /// Internal helper to drop the `Admin` role from an address (no auth check).
-    fn revoke_admin_role_internal(env: &Env, address: &Address) {
+    /// The operational role an organization type receives once verified.
+    fn org_role(org_type: &OrgType) -> Role {
+        match org_type {
+            OrgType::BloodBank => Role::BloodBank,
+            OrgType::Hospital => Role::Hospital,
+        }
+    }
+
+    /// Internal helper to drop a role from an address (no auth check).
+    fn revoke_role_internal(env: &Env, address: &Address, role: &Role) {
         let key = DataKey::AddressRoles(address.clone());
         if let Some(roles) = env
             .storage()
             .persistent()
             .get::<DataKey, Vec<RoleGrant>>(&key)
         {
-            let roles = Self::remove_role_from_vec(env, roles, &Role::Admin);
+            let roles = Self::remove_role_from_vec(env, roles, role);
             if roles.is_empty() {
                 env.storage().persistent().remove(&key);
             } else {
@@ -942,6 +972,7 @@ impl IdentityContract {
 
     /// Get the primary role of an address (first role in the sorted vec, if any).
     pub fn get_role(env: Env, address: Address) -> Option<Role> {
+        Self::bump_instance_ttl(&env);
         let key = DataKey::AddressRoles(address);
         let roles: Vec<RoleGrant> = env
             .storage()
@@ -957,11 +988,13 @@ impl IdentityContract {
 
     /// Get organization by ID
     pub fn get_organization(env: Env, org_id: Address) -> Option<Organization> {
+        Self::bump_instance_ttl(&env);
         env.storage().persistent().get(&DataKey::Org(org_id))
     }
 
     /// Check if an address has a given non-expired role (lazily drops expired grants)
     pub fn has_role(env: Env, account: Address, role: Role) -> bool {
+        Self::bump_instance_ttl(&env);
         Self::cleanup_expired_roles_internal(&env, &account);
         Self::has_role_internal(env, account, role)
     }
@@ -981,6 +1014,7 @@ impl IdentityContract {
         org_type: OrgType,
         max_results: u32,
     ) -> Vec<Organization> {
+        Self::bump_instance_ttl(&env);
         let list: Vec<Address> = env
             .storage()
             .persistent()
@@ -1011,6 +1045,7 @@ impl IdentityContract {
         start: u32,
         max_results: u32,
     ) -> VerifiedOrgPage {
+        Self::bump_instance_ttl(&env);
         let list: Vec<Address> = env
             .storage()
             .persistent()
@@ -1043,6 +1078,7 @@ impl IdentityContract {
 
     /// Return the rating of an organization (0 if not found)
     pub fn get_organization_rating(env: Env, org_id: Address) -> u32 {
+        Self::bump_instance_ttl(&env);
         env.storage()
             .persistent()
             .get::<DataKey, Organization>(&DataKey::Org(org_id))
@@ -1060,6 +1096,7 @@ impl IdentityContract {
         org_type: OrgType,
         limit: u32,
     ) -> Vec<Organization> {
+        Self::bump_instance_ttl(&env);
         const CAP: u32 = 50;
         let take = limit.min(CAP);
         let mut results: Vec<Organization> = Vec::new(&env);
@@ -1098,6 +1135,7 @@ impl IdentityContract {
 
     /// Verify an organization (admin only)
     pub fn verify_organization(env: Env, admin: Address, org_id: Address) -> Result<(), Error> {
+        Self::bump_instance_ttl(&env);
         <verification::VerificationImpl as verification::VerificationTrait>::verify_organization(
             env, admin, org_id,
         )?;
@@ -1111,6 +1149,7 @@ impl IdentityContract {
         org_id: Address,
         reason: String,
     ) -> Result<(), Error> {
+        Self::bump_instance_ttl(&env);
         <verification::VerificationImpl as verification::VerificationTrait>::unverify_organization(
             env, admin, org_id, reason,
         )?;
@@ -1122,6 +1161,7 @@ impl IdentityContract {
         env: Env,
         org_id: Address,
     ) -> Result<verification::VerificationMetadata, Error> {
+        Self::bump_instance_ttl(&env);
         <verification::VerificationImpl as verification::VerificationTrait>::get_verification_metadata(
             env, org_id,
         )
@@ -1129,6 +1169,7 @@ impl IdentityContract {
 
     /// Check if an organization is verified
     pub fn is_organization_verified(env: Env, org_id: Address) -> Result<bool, Error> {
+        Self::bump_instance_ttl(&env);
         <verification::VerificationImpl as verification::VerificationTrait>::is_organization_verified(
             env, org_id,
         )
@@ -1136,6 +1177,7 @@ impl IdentityContract {
 
     /// Get the verification timestamp of an organization
     pub fn get_verification_timestamp(env: Env, org_id: Address) -> Result<Option<u64>, Error> {
+        Self::bump_instance_ttl(&env);
         <verification::VerificationImpl as verification::VerificationTrait>::get_verification_timestamp(
             env, org_id,
         )
@@ -1147,6 +1189,7 @@ impl IdentityContract {
         org_id: Address,
         limit: u32,
     ) -> Result<Vec<verification::VerificationEvent>, Error> {
+        Self::bump_instance_ttl(&env);
         <verification::VerificationImpl as verification::VerificationTrait>::get_verification_events(
             env, org_id, limit,
         )
@@ -1158,6 +1201,7 @@ impl IdentityContract {
         admin: Address,
         org_ids: Vec<Address>,
     ) -> Result<u32, Error> {
+        Self::bump_instance_ttl(&env);
         <verification::VerificationImpl as verification::VerificationTrait>::batch_verify_organizations(
             env, admin, org_ids,
         )
@@ -1170,6 +1214,7 @@ impl IdentityContract {
         org_ids: Vec<Address>,
         reason: String,
     ) -> Result<u32, Error> {
+        Self::bump_instance_ttl(&env);
         <verification::VerificationImpl as verification::VerificationTrait>::batch_revoke_organizations(
             env, admin, org_ids, reason,
         )
@@ -1187,6 +1232,7 @@ impl IdentityContract {
         rating: u32,
         request_id: u64,
     ) -> Result<(), Error> {
+        Self::bump_instance_ttl(&env);
         rater.require_auth();
         Self::require_not_paused(&env)?;
 
@@ -1252,6 +1298,7 @@ impl IdentityContract {
 
     /// Get a rating record for a given request and rater
     pub fn get_rating_record(env: Env, request_id: u64, rater: Address) -> Option<RatingRecord> {
+        Self::bump_instance_ttl(&env);
         env.storage()
             .persistent()
             .get(&DataKey::RatingRecord(request_id, rater))
@@ -1313,6 +1360,7 @@ impl IdentityContract {
         org_id: Address,
         badge_type: BadgeType,
     ) -> Result<(), Error> {
+        Self::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_not_paused(&env)?;
         Self::require_role(&env, &admin, Role::Admin)?;
@@ -1365,6 +1413,7 @@ impl IdentityContract {
         org_id: Address,
         badge_type: BadgeType,
     ) -> Result<(), Error> {
+        Self::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_not_paused(&env)?;
         Self::require_role(&env, &admin, Role::Admin)?;
@@ -1403,6 +1452,7 @@ impl IdentityContract {
 
     /// Return all badges for an organization
     pub fn get_badges(env: Env, org_id: Address) -> Vec<BadgeRecord> {
+        Self::bump_instance_ttl(&env);
         env.storage()
             .persistent()
             .get(&DataKey::OrgBadges(org_id))
@@ -1423,6 +1473,7 @@ impl IdentityContract {
         quantity_delivered: u32,
         temperature_ok: bool,
     ) -> Result<(), Error> {
+        Self::bump_instance_ttl(&env);
         verifier.require_auth();
         Self::require_not_paused(&env)?;
 
@@ -1536,6 +1587,7 @@ impl IdentityContract {
         quantity_delivered: u32,
         temperature_ok: bool,
     ) -> Result<(), Error> {
+        Self::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_not_paused(&env)?;
         Self::require_role(&env, &admin, Role::Admin)?;
@@ -1603,6 +1655,7 @@ impl IdentityContract {
 
     /// Get a delivery proof by request ID
     pub fn get_delivery(env: Env, request_id: u64) -> Option<DeliveryProof> {
+        Self::bump_instance_ttl(&env);
         env.storage()
             .persistent()
             .get(&DataKey::Delivery(request_id))
@@ -1610,6 +1663,7 @@ impl IdentityContract {
 
     /// Get the superseded delivery proofs for a request, oldest first.
     pub fn get_delivery_history(env: Env, request_id: u64) -> Vec<DeliveryProof> {
+        Self::bump_instance_ttl(&env);
         env.storage()
             .persistent()
             .get(&DataKey::DeliveryHistory(request_id))
@@ -1629,6 +1683,7 @@ impl IdentityContract {
         address: Address,
         scope: PermissionScope,
     ) -> Result<(), Error> {
+        Self::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_not_paused(&env)?;
         Self::require_role(&env, &admin, Role::Admin)?;
@@ -1664,6 +1719,7 @@ impl IdentityContract {
         address: Address,
         scope: PermissionScope,
     ) -> Result<(), Error> {
+        Self::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_not_paused(&env)?;
         Self::require_role(&env, &admin, Role::Admin)?;
@@ -1694,6 +1750,7 @@ impl IdentityContract {
 
     /// Check whether an address holds a specific permission scope.
     pub fn has_scope(env: Env, address: Address, scope: PermissionScope) -> bool {
+        Self::bump_instance_ttl(&env);
         let key = DataKey::AddressScopes(address);
         if let Some(scopes) = env
             .storage()
@@ -1711,6 +1768,7 @@ impl IdentityContract {
 
     /// Return all scopes granted to an address.
     pub fn get_scopes(env: Env, address: Address) -> Vec<PermissionScope> {
+        Self::bump_instance_ttl(&env);
         let key = DataKey::AddressScopes(address);
         env.storage()
             .persistent()

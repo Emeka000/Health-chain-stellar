@@ -18,6 +18,7 @@ import { Server, Socket } from 'socket.io';
 import { Order } from './types/order.types';
 import { AuthenticatedSocket, WsAuthService } from '../auth/ws-auth.service';
 import { SecurityEventLoggerService } from '../user-activity/security-event-logger.service';
+import { AuthService } from '../auth/auth.service';
 
 @WebSocketGateway({
   cors: {
@@ -44,6 +45,7 @@ export class OrdersGateway
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly securityEventLogger: SecurityEventLoggerService,
+    private readonly authService: AuthService,
   ) {}
 
   afterInit(server: Server) {
@@ -246,7 +248,7 @@ export class OrdersGateway
     client.join(roomName);
 
     this.logger.log(
-      `Client ${client.id} (user=${user.userId} role=${user.role}) joined dispatch room: ${roomName}`,
+      `Client ${client.id} (user=${user.userId} role=${user.role}) joined room: ${roomName}`,
     );
 
     client.emit('joined_channel', {
@@ -256,57 +258,64 @@ export class OrdersGateway
   }
 
   /**
-   * Refresh access token for long-lived WebSocket connections
+   * Refresh the socket's session using a refresh token.
    *
-   * Client sends refresh_token every 10min, receives new access token
-   * Prevents disconnection + reconnection overhead for persistent connections
+   * Validates the refresh token through AuthService (rotation + session
+   * revocation checks). On success, updates socket.user and its expiry and
+   * emits the real expiry. On failure, emits auth_error and disconnects.
    */
   @SubscribeMessage('refresh_token')
   async handleRefreshToken(
     @ConnectedSocket() socket: AuthenticatedSocket,
-    @MessageBody() payload: { refreshToken: string },
+    @MessageBody() payload: { refreshToken?: string },
   ): Promise<void> {
-    const user = socket.user;
-    if (!user) {
-      socket.emit('auth_error', 'No authenticated session');
+    const refreshToken = payload?.refreshToken;
+
+    if (!refreshToken || typeof refreshToken !== 'string') {
+      socket.emit('auth_error', 'Refresh token is required');
+      socket.disconnect(true);
       return;
     }
 
     try {
-      // TODO: Implement token refresh endpoint call or JWT rotation
-      // For now, log that refresh was requested
-      this.logger.debug(`Token refresh requested for userId=${user.userId}`);
+      const result = await this.authService.refreshTokens(refreshToken);
 
-      // Emit success (actual token generation would happen here)
+      const decoded: any = this.jwtService.decode(result.accessToken);
+      const newExpiry = decoded?.exp
+        ? new Date(decoded.exp * 1000).toISOString()
+        : new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+      if (socket.user) {
+        socket.user = {
+          ...socket.user,
+          ...(decoded?.sub ? { userId: decoded.sub } : {}),
+          ...(decoded?.role ? { role: decoded.role } : {}),
+          ...(decoded?.tenantId ? { tenantId: decoded.tenantId } : {}),
+          expiresAt: newExpiry,
+        } as any;
+      }
+
       socket.emit('token_refreshed', {
         status: 'success',
-        newExpiry: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+        newExpiry,
       });
     } catch (error) {
+      this.logger.warn(
+        `Refresh token rejected for socket ${socket.id}: ${(error as Error).message}`,
+      );
+
       await this.securityEventLogger.logEvent({
         eventType: 'AUTH_SESSION_RISK_ELEVATED' as any,
-        userId: user.userId,
+        userId: socket.user?.userId,
         metadata: {
-          event: 'WS_TOKEN_REFRESH_FAILED',
-          error: (error as Error).message,
+          event: 'WS_REFRESH_TOKEN_REJECTED',
+          reason: (error as Error).message,
         },
         ipAddress: (socket.handshake?.address as any) || '',
       });
 
-      socket.emit('auth_error', 'Token refresh failed');
+      socket.emit('auth_error', 'Invalid or revoked refresh token');
       socket.disconnect(true);
     }
-  }
-
-  /**
-   * Emit order update to all clients in the hospital's room.
-   * Only clients whose room membership was granted through authorization checks receive the broadcast.
-   */
-  emitOrderUpdate(hospitalId: string, order: Partial<Order>): void {
-    const roomName = `hospital:${hospitalId}`;
-    this.logger.log(
-      `Broadcasting order update to room: ${roomName}, order: ${order.id}`,
-    );
-    this.server.to(roomName).emit('order:updated', order);
   }
 }

@@ -7,6 +7,7 @@ import { UserActivityModule } from '../user-activity/user-activity.module';
 import { ProfileActivityEntity } from './entities/profile-activity.entity';
 import { TwoFactorAuthEntity } from './entities/two-factor-auth.entity';
 import { UserEntity } from './entities/user.entity';
+import { FileDownloadController } from './services/file-download.controller';
 import { ImageValidationService } from './services/image-validation.service';
 import { ProfileActivityService } from './services/profile-activity.service';
 import { StorageService } from './services/storage.service';
@@ -26,7 +27,7 @@ import { UsersService } from './users.service';
       dest: './uploads/temp',
     }),
   ],
-  controllers: [UsersController],
+  controllers: [UsersController, FileDownloadController],
   providers: [
     UsersService,
     UserRepository,
