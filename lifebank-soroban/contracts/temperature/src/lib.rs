@@ -37,6 +37,12 @@ pub struct OracleRemoved {
     pub oracle: Address,
 }
 
+#[contractevent(topics = ["oracle", "assigned"], data_format = "vec")]
+pub struct OracleAssigned {
+    pub unit_id: u64,
+    pub oracle: Address,
+}
+
 #[contractevent(topics = ["tmp_excur"], data_format = "vec")]
 pub struct ExcursionReported {
     pub unit_id: u64,
@@ -363,7 +369,7 @@ impl TemperatureContract {
     ///
     /// Only the assigned oracle (or the admin) may log readings for the unit,
     /// so a single compromised sensor key cannot fabricate excursions for, or
-    /// mask violations on, every other unit.
+    /// mask violations on, every other unit. The oracle must be whitelisted.
     pub fn assign_oracle(
         env: Env,
         admin: Address,
@@ -376,12 +382,59 @@ impl TemperatureContract {
         if admin != stored_admin {
             return Err(ContractError::Unauthorized);
         }
+        let is_approved: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OracleApproved(oracle.clone()))
+            .unwrap_or(false);
+        if !is_approved {
+            return Err(ContractError::OracleNotWhitelisted);
+        }
+
         let key = DataKey::AssignedOracle(unit_id);
+        let previous: Option<Address> = env.storage().persistent().get(&key);
+        if previous.as_ref() == Some(&oracle) {
+            return Ok(());
+        }
+        if let Some(previous_oracle) = previous {
+            Self::unindex_unit(&env, &previous_oracle, unit_id);
+        }
+
         env.storage().persistent().set(&key, &oracle);
         env.storage()
             .persistent()
             .extend_ttl(&key, ORACLE_BUMP_THRESHOLD, ORACLE_BUMP_TO);
+
+        let units_key = DataKey::OracleUnits(oracle.clone());
+        let mut units: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&units_key)
+            .unwrap_or_else(|| Vec::new(&env));
+        units.push_back(unit_id);
+        env.storage().persistent().set(&units_key, &units);
+        env.storage()
+            .persistent()
+            .extend_ttl(&units_key, ORACLE_BUMP_THRESHOLD, ORACLE_BUMP_TO);
+
+        OracleAssigned { unit_id, oracle }.publish(&env);
         Ok(())
+    }
+
+    /// Drop `unit_id` from the reverse index of `oracle`, if present.
+    fn unindex_unit(env: &Env, oracle: &Address, unit_id: u64) {
+        let units_key = DataKey::OracleUnits(oracle.clone());
+        let mut units: Vec<u64> = match env.storage().persistent().get(&units_key) {
+            Some(units) => units,
+            None => return,
+        };
+        if let Some(index) = units.first_index_of(unit_id) {
+            units.remove(index);
+        }
+        env.storage().persistent().set(&units_key, &units);
+        env.storage()
+            .persistent()
+            .extend_ttl(&units_key, ORACLE_BUMP_THRESHOLD, ORACLE_BUMP_TO);
     }
 
     /// Return the oracle assigned to `unit_id`, if any.
@@ -425,7 +478,7 @@ impl TemperatureContract {
                 .get(&DataKey::AssignedOracle(unit_id));
             if let Some(assigned_oracle) = assigned {
                 if assigned_oracle != oracle {
-                    return Err(ContractError::OracleNotAssigned);
+                    return Err(ContractError::OracleNotAssignedToUnit);
                 }
             }
         }
@@ -822,6 +875,10 @@ impl TemperatureContract {
     /// Use this for oracle rotation (replacing a compromised sensor) or
     /// temporary suspension (taking a sensor offline for maintenance).
     ///
+    /// Every unit bound to the oracle is unassigned, so none is left pointing
+    /// at an oracle that can no longer log. Those units accept readings from
+    /// any whitelisted oracle until the admin assigns them again.
+    ///
     /// # Arguments
     /// * `admin`  - Admin address performing the removal
     /// * `oracle` - Oracle address to de-whitelist
@@ -834,6 +891,16 @@ impl TemperatureContract {
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {
             return Err(ContractError::Unauthorized);
+        }
+        // shortcut: unindexing walks every unit the oracle owns in one call, so this is O(units per oracle) and can hit instruction limits for very large fleets; upgrade to paged unassignment when a single oracle covers thousands of units.
+        let units_key = DataKey::OracleUnits(oracle.clone());
+        if let Some(units) = env.storage().persistent().get::<_, Vec<u64>>(&units_key) {
+            for unit_id in units.iter() {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::AssignedOracle(unit_id));
+            }
+            env.storage().persistent().remove(&units_key);
         }
         let key = DataKey::OracleApproved(oracle.clone());
         env.storage().persistent().remove(&key);
@@ -1974,7 +2041,7 @@ mod tests {
         client.assign_oracle(&admin, &unit_b, &other);
         assert_eq!(
             client.try_log_reading(&oracle, &unit_b, &400),
-            Err(Ok(ContractError::OracleNotAssigned))
+            Err(Ok(ContractError::OracleNotAssignedToUnit))
         );
 
         // Admin may still log for any unit.
