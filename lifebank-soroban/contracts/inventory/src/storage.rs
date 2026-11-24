@@ -117,6 +117,8 @@ pub fn set_blood_unit(env: &Env, blood_unit: &BloodUnit) {
     env.storage()
         .persistent()
         .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    // A unit that remains live must retain its independent recovery reference.
+    extend_page_ttl(env, &DataKey::UnitReservation(blood_unit.id));
 }
 
 pub fn get_blood_unit(env: &Env, id: u64) -> Option<BloodUnit> {
@@ -504,8 +506,9 @@ pub fn increment_reservation_id(env: &Env) -> u64 {
 /// # Why persistent storage
 /// Temporary entries are deleted permanently once their TTL lapses. If a reservation
 /// were purged, its unit IDs would be unrecoverable and the units would stay stuck in
-/// `Reserved` forever. Persistent entries survive past expiry, so `expire_reservation`
-/// can still find them and return the units to `Available`.
+/// `Reserved` forever. Persistent entries are restorable, but are not readable
+/// on-chain once archived without a restore operation. Durable per-unit references
+/// provide a recovery path that does not read the archived reservation.
 ///
 /// # Why we extend TTL here
 /// The TTL covers the full reservation duration plus `RESERVATION_EXPIRY_GRACE_LEDGERS`
@@ -533,6 +536,34 @@ pub fn set_reservation(
     env.storage()
         .persistent()
         .extend_ttl(&key, ttl_ledgers, ttl_ledgers);
+
+    for unit_id in reservation.unit_ids.iter() {
+        let recovery_key = DataKey::UnitReservation(unit_id);
+        env.storage().persistent().set(
+            &recovery_key,
+            &crate::types::UnitReservation {
+                reservation_id: id,
+                expiration_timestamp: reservation.expiration_timestamp,
+                requester: reservation.requester.clone(),
+            },
+        );
+        env.storage()
+            .persistent()
+            .extend_ttl(&recovery_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+}
+
+pub fn get_unit_reservation(env: &Env, unit_id: u64) -> Option<crate::types::UnitReservation> {
+    let key = DataKey::UnitReservation(unit_id);
+    let reference = env.storage().persistent().get(&key);
+    extend_page_ttl(env, &key);
+    reference
+}
+
+pub fn remove_unit_reservation(env: &Env, unit_id: u64) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::UnitReservation(unit_id));
 }
 
 pub fn get_reservation(env: &Env, id: u64) -> Option<crate::types::Reservation> {

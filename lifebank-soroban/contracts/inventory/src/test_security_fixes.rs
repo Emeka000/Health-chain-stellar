@@ -81,12 +81,13 @@ mod security_tests {
             &self,
             _env: Env,
             requester: Address,
+            hospital_id: Address,
             unit_ids: soroban_sdk::Vec<u64>,
             request_id: u64,
             duration_seconds: u64,
         ) -> Result<u64, ContractError> {
             self.client
-                .try_reserve_blood(&requester, &requester, &unit_ids, &request_id, &duration_seconds)
+                .try_reserve_blood(&requester, &hospital_id, &unit_ids, &request_id, &duration_seconds)
                 .into_contract()
         }
 
@@ -94,10 +95,11 @@ mod security_tests {
             &self,
             _env: Env,
             requester: Address,
+            hospital_id: Address,
             batch: soroban_sdk::Vec<(soroban_sdk::Vec<u64>, u64, u64)>,
         ) -> Result<soroban_sdk::Vec<u64>, ContractError> {
             self.client
-                .try_batch_reserve_blood(&requester, &requester, &batch)
+                .try_batch_reserve_blood(&requester, &hospital_id, &batch)
                 .into_contract()
         }
 

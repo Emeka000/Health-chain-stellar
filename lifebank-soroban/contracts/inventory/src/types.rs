@@ -329,6 +329,9 @@ pub enum DataKey {
     /// Reservation counter
     ReservationCounter,
 
+    /// Durable recovery reference, independent of the reservation's shorter TTL.
+    UnitReservation(u64),
+
     /// Rider assigned by the owning bank to move a unit (blood_unit_id -> Address)
     UnitRider(u64),
 
@@ -361,6 +364,15 @@ pub struct Reservation {
     pub created_timestamp: u64,
     pub expiration_timestamp: u64,
     pub request_id: u64,
+}
+
+/// Minimum data needed to recover a reserved unit after its reservation archives.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct UnitReservation {
+    pub reservation_id: u64,
+    pub expiration_timestamp: u64,
+    pub requester: Address,
 }
 
 #[contractevent(topics = ["blood_registered"])]

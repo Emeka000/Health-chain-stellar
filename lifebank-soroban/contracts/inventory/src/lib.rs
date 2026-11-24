@@ -248,7 +248,10 @@ impl InventoryContract {
     ) -> Result<(), ContractError> {
         let assigned: Option<Address> = match role {
             Role::Rider => env.storage().persistent().get(&DataKey::UnitRider(unit_id)),
-            Role::Hospital => env.storage().persistent().get(&DataKey::UnitHospital(unit_id)),
+            Role::Hospital => env
+                .storage()
+                .persistent()
+                .get(&DataKey::UnitHospital(unit_id)),
             _ => None,
         };
         if assigned.as_ref() == Some(authorized_by) {
@@ -589,6 +592,12 @@ impl InventoryContract {
 
         blood_unit.status = new_status;
         storage::set_blood_unit(&env, &blood_unit);
+        // A reservation reference must not outlive its Reserved state. In
+        // particular, a later direct Available -> Reserved transition must
+        // not inherit an older reservation's recovery deadline.
+        if old_status == BloodStatus::Reserved {
+            storage::remove_unit_reservation(&env, unit_id);
+        }
 
         // Keep status index consistent: remove from old bucket, add to new bucket.
         storage::remove_from_status_index(&env, unit_id, old_status);
@@ -875,7 +884,7 @@ impl InventoryContract {
     ///
     /// All units must be `Available` and not expired. On success every unit is
     /// moved to `Reserved` and a time-bounded `Reservation` record is stored in
-    /// temporary storage (auto-purged by the ledger after `duration_seconds`).
+    /// persistent storage, with an independent durable recovery reference per unit.
     ///
     /// If a registry contract has been configured via [`set_registry_contract`],
     /// each unit's availability is also verified against the authoritative
@@ -1123,9 +1132,9 @@ impl InventoryContract {
     /// all of its units to `Available`.
     ///
     /// Permissionless, so units stranded in `Reserved` can be recovered without
-    /// per-unit admin action. Expired reservations remain in storage for a grace
-    /// period (see `storage::set_reservation`), so this can be called any time
-    /// after expiry.
+    /// per-unit admin action while the reservation is live or restored. If its
+    /// persistent entry has archived, call `release_unit_if_orphaned` for its
+    /// units instead; that path does not read the archived reservation entry.
     ///
     /// # Errors
     /// - `Paused` if the contract is paused
@@ -1147,6 +1156,57 @@ impl InventoryContract {
         Ok(())
     }
 
+    /// Permissionlessly release an expired reservation's unit without loading
+    /// the reservation, including when that entry has archived. The durable
+    /// per-unit reference binds the expiry and registry owner. Never releases
+    /// a newer reservation, or rolls back a unit that has already progressed.
+    /// Returns true only when Reserved became Available; repeated calls return
+    /// false. Missing references on legacy units are left untouched.
+    pub fn release_unit_if_orphaned(env: Env, unit_id: u64) -> Result<bool, ContractError> {
+        Self::require_not_paused(&env)?;
+        let reference = match storage::get_unit_reservation(&env, unit_id) {
+            Some(reference) => reference,
+            None => return Ok(false),
+        };
+        if env.ledger().timestamp() < reference.expiration_timestamp {
+            return Err(ContractError::ReservationNotExpired);
+        }
+        let mut unit = storage::get_blood_unit(&env, unit_id).ok_or(ContractError::NotFound)?;
+        let released = unit.status == BloodStatus::Reserved;
+        if released {
+            let caller = env.current_contract_address();
+            unit.status = BloodStatus::Available;
+            storage::set_blood_unit(&env, &unit);
+            storage::remove_from_status_index(&env, unit_id, BloodStatus::Reserved);
+            storage::add_to_status_index(&env, &unit);
+            storage::record_status_change(
+                &env,
+                unit_id,
+                BloodStatus::Reserved,
+                BloodStatus::Available,
+                &caller,
+                None,
+            );
+            events::emit_status_change(
+                &env,
+                unit_id,
+                BloodStatus::Reserved,
+                BloodStatus::Available,
+                &caller,
+                None,
+            );
+            let registry: Option<Address> =
+                env.storage().instance().get(&DataKey::RegistryContractId);
+            if let Some(registry) = registry {
+                if !registry_client::release_unit(&env, &registry, &reference.requester, unit_id) {
+                    return Err(ContractError::RegistryCallFailed);
+                }
+            }
+        }
+        storage::remove_unit_reservation(&env, unit_id);
+        Ok(released)
+    }
+
     /// Shared internal logic for releasing a reservation.
     /// `caller` is the address that actually triggered the release (admin,
     /// reserver, or requests contract) and is recorded in the audit trail
@@ -1162,6 +1222,13 @@ impl InventoryContract {
 
         for i in 0..reservation.unit_ids.len() {
             let unit_id = reservation.unit_ids.get(i).ok_or(ContractError::NotFound)?;
+            // An expired unit may have been recovered and reserved again before
+            // the old reservation record is cleaned up. Never release its new lock.
+            if let Some(reference) = storage::get_unit_reservation(env, unit_id) {
+                if reference.reservation_id != reservation_id {
+                    continue;
+                }
+            }
             if let Some(mut unit) = storage::get_blood_unit(env, unit_id) {
                 if unit.status == BloodStatus::Reserved {
                     unit.status = BloodStatus::Available;
@@ -1196,6 +1263,7 @@ impl InventoryContract {
                     }
                 }
             }
+            storage::remove_unit_reservation(env, unit_id);
         }
 
         storage::remove_reservation(env, reservation_id);
@@ -1337,5 +1405,7 @@ impl InventoryContract {
 mod test;
 #[cfg(test)]
 mod test_expiry_fix;
+#[cfg(test)]
+mod test_reservation_recovery;
 #[cfg(test)]
 mod test_security_fixes;
