@@ -6,6 +6,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { CompensationModule } from '../common/compensation/compensation.module';
+import { RedisModule } from '../common/redis/redis.module';
 import { SorobanModule } from '../soroban/soroban.module';
 import { SorobanSubmissionService } from './services/soroban-submission.service';
 
@@ -32,13 +33,14 @@ import { SorobanService } from './services/soroban.service';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET', 'default-secret'),
+        secret: configService.get<string>('JWT_SECRET'),
         signOptions: {
           expiresIn: configService.get<string>('JWT_EXPIRES_IN', '1h'),
         },
       }),
     }),
     CompensationModule,
+    RedisModule,
     forwardRef(() => SorobanModule),
     EventEmitterModule.forRoot(),
     TypeOrmModule.forFeature([

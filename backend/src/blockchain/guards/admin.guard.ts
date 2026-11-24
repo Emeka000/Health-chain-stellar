@@ -7,8 +7,6 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { JwtService } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 import { UserRole } from '../../auth/enums/user-role.enum';
 import { AdminScope } from '../enums/admin-scope.enum';
@@ -18,73 +16,51 @@ import type { JwtPayload } from '../../auth/jwt.strategy';
 /**
  * BlockchainAdminGuard
  *
- * Protects blockchain admin endpoints using JWT-based authentication
- * and role/permission checks.
+ * Protects blockchain admin endpoints using the identity already established
+ * by the global JwtAuthGuard (which verifies tokens via JwtKeyService and
+ * supports key rotation).
  *
- * - Extracts the Bearer token from the Authorization header.
- * - Verifies the JWT signature and expiry.
+ * - Relies on `request.user` populated by the global JwtAuthGuard.
  * - Ensures the authenticated user holds the `admin` role.
  * - Optionally enforces a required AdminScope set via @RequireAdminScope().
  * - Logs every access attempt (success and failure) with actor identity.
  *
- * Replaces the previous static x-admin-key header approach.
+ * Does NOT re-verify the JWT or overwrite `request.user`, so `sid` and
+ * `organizationId` are preserved for downstream consumers.
  */
 @Injectable()
 export class AdminGuard implements CanActivate {
   private readonly logger = new Logger(AdminGuard.name);
 
-  constructor(
-    private readonly jwtService: JwtService,
-    private readonly configService: ConfigService,
-    private readonly reflector: Reflector,
-  ) {}
+  constructor(private readonly reflector: Reflector) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
     const { method, path, ip } = request;
 
-    // ── 1. Extract Bearer token ─────────────────────────────────────────────
-    const authHeader = request.headers['authorization'];
-    if (!authHeader?.startsWith('Bearer ')) {
+    // ── 1. Read identity from the global JwtAuthGuard ───────────────────────
+    const user = (request as any).user as JwtPayload | undefined;
+    if (!user) {
       this.logger.warn(
-        `[AdminGuard] 401 — missing Bearer token | ${method} ${path} | ip=${ip}`,
+        `[AdminGuard] 401 — unauthenticated request | ${method} ${path} | ip=${ip}`,
       );
       throw new UnauthorizedException(
         'Authentication required. Please provide a valid Bearer token.',
       );
     }
 
-    const token = authHeader.substring(7);
-
-    // ── 2. Verify JWT ───────────────────────────────────────────────────────
-    let payload: JwtPayload;
-    try {
-      const secret = this.configService.get<string>('JWT_SECRET', 'default-secret');
-      payload = this.jwtService.verify<JwtPayload>(token, { secret });
-    } catch (err: any) {
-      const isExpired = err?.name === 'TokenExpiredError';
-      this.logger.warn(
-        `[AdminGuard] 401 — ${isExpired ? 'expired token' : 'invalid token'} | ${method} ${path} | ip=${ip}`,
-      );
-      throw new UnauthorizedException(
-        isExpired
-          ? 'Token has expired. Please re-authenticate.'
-          : 'Invalid token. Authentication failed.',
-      );
-    }
-
-    // ── 3. Check admin role ─────────────────────────────────────────────────
-    const userRole = payload.role as UserRole;
+    // ── 2. Check admin role ─────────────────────────────────────────────────
+    const userRole = user.role as UserRole;
     if (userRole !== UserRole.ADMIN) {
       this.logger.warn(
-        `[AdminGuard] 403 — insufficient role | userId=${payload.sub} | role=${userRole} | ${method} ${path}`,
+        `[AdminGuard] 403 — insufficient role | userId=${user.sub} | role=${userRole} | ${method} ${path}`,
       );
       throw new ForbiddenException(
         'Admin role required to access this resource.',
       );
     }
 
-    // ── 4. Check required AdminScope (if set on the handler) ───────────────
+    // ── 3. Check required AdminScope (if set on the handler) ───────────────
     const requiredScope = this.reflector.getAllAndOverride<AdminScope>(
       ADMIN_SCOPE_KEY,
       [context.getHandler(), context.getClass()],
@@ -94,7 +70,7 @@ export class AdminGuard implements CanActivate {
       const hasScope = this.checkScope(userRole, requiredScope);
       if (!hasScope) {
         this.logger.warn(
-          `[AdminGuard] 403 — insufficient scope | userId=${payload.sub} | required=${requiredScope} | ${method} ${path}`,
+          `[AdminGuard] 403 — insufficient scope | userId=${user.sub} | required=${requiredScope} | ${method} ${path}`,
         );
         throw new ForbiddenException(
           `Insufficient permissions. Required scope: ${requiredScope}`,
@@ -102,15 +78,9 @@ export class AdminGuard implements CanActivate {
       }
     }
 
-    // ── 5. Attach user to request & audit log ──────────────────────────────
-    (request as any).user = {
-      id: payload.sub,
-      email: payload.email,
-      role: payload.role,
-    };
-
+    // ── 4. Audit log (request.user is left untouched) ──────────────────────
     this.logger.log(
-      `[AdminGuard] Access granted | userId=${payload.sub} | email=${payload.email} | ${method} ${path}${requiredScope ? ` | scope=${requiredScope}` : ''}`,
+      `[AdminGuard] Access granted | userId=${user.sub} | email=${user.email} | ${method} ${path}${requiredScope ? ` | scope=${requiredScope}` : ''}`,
     );
 
     return true;

@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
   Query,
@@ -31,6 +32,9 @@ import { UpdateHospitalDto } from './dto/update-hospital.dto';
 import { OverrideReason } from './enums/override-reason.enum';
 import { HospitalIntakeWindowService } from './services/hospital-intake-window.service';
 import { HospitalsService } from './hospitals.service';
+
+const MAX_OVERRIDE_HISTORY_LIMIT = 100;
+const DEFAULT_OVERRIDE_HISTORY_LIMIT = 50;
 
 @ApiTags('Hospitals')
 @ApiBearerAuth()
@@ -180,10 +184,14 @@ export class HospitalsController {
   @ApiOperation({ summary: 'Get :id overrides' })
   @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id/overrides')
-  getOverrideAuditLog(@Param('id') id: string, @Query('limit') limit?: string) {
-    return this.intakeWindowService.getOverrideAuditLog(
-      id,
-      limit ? parseInt(limit, 10) : 50,
+  getOverrideAuditLog(
+    @Param('id') id: string,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
+  ) {
+    const boundedLimit = Math.min(
+      Math.max(limit ?? DEFAULT_OVERRIDE_HISTORY_LIMIT, 1),
+      MAX_OVERRIDE_HISTORY_LIMIT,
     );
+    return this.intakeWindowService.getOverrideAuditLog(id, boundedLimit);
   }
 }
