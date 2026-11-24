@@ -53,4 +53,10 @@ pub enum ContractError {
     // Cross-contract synchronisation (180-189)
     RegistryNotConfigured = 180,
     RegistryCallFailed = 181,
+
+    // Reservation validation (190-199)
+    ReservationDurationTooShort = 190,
+    EmptyReservation = 191,
+    RequestNotApproved = 192,
+    RequestsCallFailed = 193,
 }

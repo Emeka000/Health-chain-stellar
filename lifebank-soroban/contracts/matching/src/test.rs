@@ -9,9 +9,11 @@ mod pure_matching {
     use soroban_sdk::Env;
 
     use crate::matching::{
-        compatible_donor_types, is_compatible, score_unit, select_units, sort_by_expiration,
+        compatible_donor_types, compatible_donor_types_for_component, is_compatible,
+        is_compatible_for_component, score_unit, select_units, select_units_for_component,
+        sort_by_expiration,
     };
-    use crate::types::{BloodStatus, BloodType, BloodUnit, MatchKind, Urgency};
+    use crate::types::{BloodComponent, BloodStatus, BloodType, BloodUnit, MatchKind, Urgency};
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -29,6 +31,7 @@ mod pure_matching {
         BloodUnit {
             id,
             blood_type,
+            component: BloodComponent::WholeBlood,
             quantity_ml,
             bank_id: soroban_sdk::Address::generate(env),
             donor_id: None,
@@ -50,6 +53,7 @@ mod pure_matching {
         BloodUnit {
             id,
             blood_type,
+            component: BloodComponent::WholeBlood,
             quantity_ml,
             bank_id: soroban_sdk::Address::generate(env),
             donor_id: None,
@@ -318,6 +322,100 @@ mod pure_matching {
 
         assert_eq!(result.len(), 1);
         assert_eq!(result.get(0).unwrap().unit_id, 2); // oldest first
+    }
+
+    #[test]
+    fn plasma_abo_compatibility_is_reversed() {
+        let env = env();
+        let ab_donors = compatible_donor_types_for_component(
+            &env,
+            BloodType::ABPositive,
+            BloodComponent::Plasma,
+        );
+        assert!(ab_donors.contains(BloodType::ABPositive));
+        assert!(ab_donors.contains(BloodType::ABNegative));
+        assert!(!ab_donors.contains(BloodType::OPositive));
+        assert!(!is_compatible_for_component(
+            BloodType::OPositive,
+            BloodType::ABPositive,
+            BloodComponent::Plasma,
+        ));
+
+        for donor in [
+            BloodType::ONegative,
+            BloodType::OPositive,
+            BloodType::ANegative,
+            BloodType::APositive,
+            BloodType::BNegative,
+            BloodType::BPositive,
+            BloodType::ABNegative,
+            BloodType::ABPositive,
+        ] {
+            assert!(is_compatible_for_component(
+                donor,
+                BloodType::ONegative,
+                BloodComponent::Plasma
+            ));
+        }
+
+        let mut candidates = soroban_sdk::Vec::new(&env);
+        let mut o_plasma = make_unit(&env, 1, BloodType::OPositive, 450, 9000);
+        o_plasma.component = BloodComponent::Plasma;
+        let mut ab_plasma = make_unit(&env, 2, BloodType::ABPositive, 450, 8000);
+        ab_plasma.component = BloodComponent::Plasma;
+        candidates.push_back(o_plasma);
+        candidates.push_back(ab_plasma);
+        let selected = select_units_for_component(
+            &env,
+            candidates,
+            BloodType::ABPositive,
+            BloodComponent::Plasma,
+            Urgency::Routine,
+            450,
+            None,
+            0,
+        );
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected.get(0).unwrap().unit_id, 2);
+    }
+
+    #[test]
+    fn red_cell_compatibility_is_unchanged() {
+        assert!(is_compatible_for_component(
+            BloodType::ONegative,
+            BloodType::ABPositive,
+            BloodComponent::RedCells
+        ));
+        assert!(!is_compatible_for_component(
+            BloodType::ABPositive,
+            BloodType::ONegative,
+            BloodComponent::RedCells
+        ));
+    }
+
+    #[test]
+    fn selection_excludes_units_with_a_different_component() {
+        let env = env();
+        let mut candidates = soroban_sdk::Vec::new(&env);
+        let mut red_cell = make_unit(&env, 1, BloodType::ABPositive, 450, 9000);
+        red_cell.component = BloodComponent::RedCells;
+        let mut plasma = make_unit(&env, 2, BloodType::ABPositive, 450, 8000);
+        plasma.component = BloodComponent::Plasma;
+        candidates.push_back(red_cell);
+        candidates.push_back(plasma);
+
+        let selected = select_units_for_component(
+            &env,
+            candidates,
+            BloodType::ABPositive,
+            BloodComponent::Plasma,
+            Urgency::Routine,
+            450,
+            None,
+            0,
+        );
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected.get(0).unwrap().unit_id, 2);
     }
 
     #[test]
@@ -760,6 +858,7 @@ mod match_request_integration_tests {
         BloodUnit {
             id,
             blood_type,
+            component: BloodComponent::WholeBlood,
             quantity_ml,
             bank_id: Address::generate(env),
             donor_id: None,
@@ -991,6 +1090,7 @@ mod match_multiple_requests_integration_tests {
         let _ = BloodUnit {
             id: 1,
             blood_type: BloodType::APositive,
+            component: BloodComponent::WholeBlood,
             quantity_ml: 450,
             bank_id: bank.clone(),
             donor_id: None,

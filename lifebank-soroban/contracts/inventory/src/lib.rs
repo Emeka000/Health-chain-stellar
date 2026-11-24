@@ -10,9 +10,18 @@ mod validation;
 use crate::error::ContractError;
 use crate::types::{DataKey, Reservation, Role};
 
-pub use crate::types::{BloodStatus, BloodType, BloodUnit};
+pub use crate::types::{BloodComponent, BloodStatus, BloodType, BloodUnit};
 
 use soroban_sdk::{contract, contractimpl, Address, Env, Map, String, Vec};
+
+mod requests_client {
+    use soroban_sdk::{contractclient, Env};
+
+    #[contractclient(name = "RequestsContractClient")]
+    pub trait RequestsContractInterface {
+        fn is_request_approved(env: Env, request_id: u64) -> bool;
+    }
+}
 
 /// Cross-contract client for the authoritative HealthChainContract (BloodUnitRegistry).
 ///
@@ -75,6 +84,8 @@ pub struct InventoryContract;
 #[contractimpl]
 impl InventoryContract {
     const MAX_RESERVATION_DURATION_SECS: u64 = 86_400 * 7;
+    /// Minimum reservation window to prevent immediately expired reservations.
+    const MIN_RESERVATION_SECS: u64 = 60;
     const MAX_BATCH_SIZE: u32 = 50;
     const CONTRACT_VERSION: u32 = 1;
 
@@ -336,6 +347,29 @@ impl InventoryContract {
             bank_id,
             serial_number,
             blood_type,
+            BloodComponent::WholeBlood,
+            quantity_ml,
+            donor_id,
+        )
+    }
+
+    /// Register a blood unit with an explicit component type.
+    pub fn register_blood_component(
+        env: Env,
+        bank_id: Address,
+        serial_number: String,
+        blood_type: BloodType,
+        component: BloodComponent,
+        quantity_ml: u32,
+        donor_id: Option<Address>,
+    ) -> Result<u64, ContractError> {
+        bank_id.require_auth();
+        Self::register_blood_after_auth(
+            env,
+            bank_id,
+            serial_number,
+            blood_type,
+            component,
             quantity_ml,
             donor_id,
         )
@@ -346,6 +380,7 @@ impl InventoryContract {
         bank_id: Address,
         serial_number: String,
         blood_type: BloodType,
+        component: BloodComponent,
         quantity_ml: u32,
         donor_id: Option<Address>,
     ) -> Result<u64, ContractError> {
@@ -409,6 +444,7 @@ impl InventoryContract {
         let blood_unit = BloodUnit {
             id: blood_unit_id,
             blood_type,
+            component,
             quantity_ml,
             bank_id: bank_id.clone(),
             donor_id: donor_id.clone(),
@@ -978,6 +1014,7 @@ impl InventoryContract {
                 bank_id.clone(),
                 serial_number,
                 blood_type,
+                BloodComponent::WholeBlood,
                 quantity_ml,
                 donor_id,
             )?;
@@ -1012,6 +1049,10 @@ impl InventoryContract {
     /// - `BloodUnitExpired`: One or more units have expired (issue #845 fix)
     /// - `RegistryNotConfigured`: caller must set a registry contract first
     /// - `RegistryCallFailed`: the registry rejected the unit status check or update
+    /// - `EmptyReservation`: no unit IDs were supplied
+    /// - `ReservationDurationTooShort`: duration is below `MIN_RESERVATION_SECS`
+    /// - `RequestNotApproved`: configured requests contract does not recognize an approved request
+    /// - `RequestsCallFailed`: request validation call failed
     pub fn reserve_blood(
         env: Env,
         requester: Address,
@@ -1050,8 +1091,29 @@ impl InventoryContract {
 
         let current_time = env.ledger().timestamp();
 
+        if unit_ids.is_empty() {
+            return Err(ContractError::EmptyReservation);
+        }
+        if duration_seconds < Self::MIN_RESERVATION_SECS {
+            return Err(ContractError::ReservationDurationTooShort);
+        }
         if duration_seconds > Self::MAX_RESERVATION_DURATION_SECS {
             return Err(ContractError::InvalidInput);
+        }
+
+        if let Some(requests_address) = env
+            .storage()
+            .instance()
+            .get::<_, Address>(&DataKey::RequestsContractId)
+        {
+            let requests = requests_client::RequestsContractClient::new(&env, &requests_address);
+            let approved = requests
+                .try_is_request_approved(&request_id)
+                .map_err(|_| ContractError::RequestsCallFailed)?
+                .map_err(|_| ContractError::RequestsCallFailed)?;
+            if !approved {
+                return Err(ContractError::RequestNotApproved);
+            }
         }
 
         // ── Cross-contract synchronisation with BloodUnitRegistry ─────────────

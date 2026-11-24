@@ -1168,6 +1168,15 @@ impl RequestContract {
         storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)
     }
 
+    /// Return whether `request_id` exists and is approved for reservation.
+    ///
+    /// This read-only endpoint is intended for trusted inventory validation.
+    pub fn is_request_approved(env: Env, request_id: u64) -> bool {
+        storage::get_request(&env, request_id)
+            .map(|request| request.status == RequestStatus::Approved)
+            .unwrap_or(false)
+    }
+
     /// Returns the rider assigned to `request_id` via `assign_rider`, if any.
     /// Used by the identity contract to authorize delivery proofs.
     pub fn get_request_rider(env: Env, request_id: u64) -> Option<Address> {

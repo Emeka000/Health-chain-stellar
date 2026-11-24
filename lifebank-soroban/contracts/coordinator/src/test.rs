@@ -20,22 +20,43 @@ use soroban_sdk::{
 use super::{
     BloodComponent, BloodRequest, BloodStatus, BloodType, BloodUnit, CoordinatorContract,
     CoordinatorContractClient, CoordinatorError, ExcursionSummary, Payment, PaymentStatus,
-    RequestStatus, Urgency, WorkflowStatus,
+    RequestStatus, WorkflowStatus,
 };
 
-use inventory_contract::{
-    BloodStatus as InvStatus, BloodType as InvBloodType, InventoryContract,
-    InventoryContractClient,
-};
-use payment_contract::{
-    DisputeReason as PayDisputeReason, PaymentContract, PaymentContractClient,
-    PaymentStatus as PayStatus,
-};
-use request_contract::{
-    BloodComponent as ReqComponent, BloodType as ReqBloodType, RequestContract,
-    RequestContractClient, RequestStatus as ReqStatus, Urgency as ReqUrgency,
-};
-
+#[test]
+fn component_compatibility_matches_matching_contract_rules() {
+    assert!(BloodType::ABPositive.can_donate_to(
+        &BloodType::ABPositive,
+        BloodComponent::Plasma
+    ));
+    assert!(!BloodType::OPositive.can_donate_to(
+        &BloodType::ABPositive,
+        BloodComponent::Plasma
+    ));
+    for donor in [
+        BloodType::ONegative,
+        BloodType::OPositive,
+        BloodType::ANegative,
+        BloodType::APositive,
+        BloodType::BNegative,
+        BloodType::BPositive,
+        BloodType::ABNegative,
+        BloodType::ABPositive,
+    ] {
+        assert!(donor.can_donate_to(
+            &BloodType::ONegative,
+            BloodComponent::Plasma
+        ));
+    }
+    assert!(BloodType::ONegative.can_donate_to(
+        &BloodType::ABPositive,
+        BloodComponent::RedCells
+    ));
+    assert!(!BloodType::ABPositive.can_donate_to(
+        &BloodType::ONegative,
+        BloodComponent::RedCells
+    ));
+}
 
 // ── Mock: Requests contract ───────────────────────────────────────────────────
 
@@ -92,8 +113,15 @@ impl MockRequestContract {
     }
 
     pub fn seed_request_of_type(env: Env, id: u64, status: RequestStatus, blood_type: BloodType) {
-        let hospital = env.current_contract_address();
-        Self::seed_request_with_hospital(env, id, hospital, status, blood_type);
+        env.storage().persistent().set(
+            &ReqKey::Request(id),
+            &BloodRequest {
+                id,
+                blood_type,
+                component: BloodComponent::WholeBlood,
+                status,
+            },
+        );
     }
 
     pub fn seed_request_with_hospital(
@@ -116,7 +144,12 @@ impl MockRequestContract {
     ) {
         env.storage().persistent().set(
             &ReqKey::Request(id),
-            &make_request(&env, id, hospital.clone(), status, blood_type, quantity_ml),
+            &BloodRequest {
+                id,
+                blood_type,
+                component: BloodComponent::WholeBlood,
+                status,
+            },
         );
         env.storage()
             .persistent()
@@ -227,7 +260,23 @@ impl MockInventoryContract {
     }
 
     pub fn register_unit_of_type(env: Env, blood_type: BloodType) -> u64 {
-        Self::seed_unit(env, blood_type, BloodStatus::Available)
+        let id: u64 = env
+            .storage()
+            .instance()
+            .get(&InvKey::Counter)
+            .unwrap_or(0u64)
+            + 1;
+        env.storage().instance().set(&InvKey::Counter, &id);
+        env.storage().persistent().set(
+            &InvKey::Unit(id),
+            &BloodUnit {
+                id,
+                status: BloodStatus::Available,
+                blood_type,
+                component: BloodComponent::WholeBlood,
+            },
+        );
+        id
     }
 
     pub fn seed_unit(env: Env, blood_type: BloodType, status: BloodStatus) -> u64 {
@@ -254,13 +303,7 @@ impl MockInventoryContract {
             &BloodUnit {
                 id,
                 blood_type,
-                quantity_ml,
-                bank_id,
-                donor_id: None,
-                donation_timestamp: 0,
-                expiration_timestamp: u64::MAX,
-                status,
-                metadata: Map::new(&env),
+                component: BloodComponent::WholeBlood,
             },
         );
         id
