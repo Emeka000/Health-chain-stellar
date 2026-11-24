@@ -68,6 +68,8 @@ pub enum DataKey {
     /// Pending threshold change with time-lock (governance)
     PendingThresholdChange(u64),
     Paused,
+    /// Address of the trusted inventory contract for unit status updates
+    InventoryContract,
     /// Address of the coordinator contract for cross-contract dispute escalation
     CoordinatorContract,
     /// Per-oracle approval flag stored in persistent() storage.

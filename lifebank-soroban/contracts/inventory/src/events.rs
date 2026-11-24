@@ -36,6 +36,13 @@ pub struct RoleRevoked {
     pub revoked_by: Address,
 }
 
+#[contractevent(topics = ["delivery_assigned"], data_format = "vec")]
+pub struct DeliveryAssigned {
+    pub unit_id: u64,
+    pub rider: Address,
+    pub hospital: Address,
+}
+
 pub fn emit_blood_registered(
     env: &Env,
     blood_unit_id: u64,
@@ -120,6 +127,15 @@ pub fn emit_role_revoked(env: &Env, grantee: &Address, revoked_by: &Address) {
     RoleRevoked {
         grantee: grantee.clone(),
         revoked_by: revoked_by.clone(),
+    }
+    .publish(env);
+}
+
+pub fn emit_delivery_assigned(env: &Env, unit_id: u64, rider: &Address, hospital: &Address) {
+    DeliveryAssigned {
+        unit_id,
+        rider: rider.clone(),
+        hospital: hospital.clone(),
     }
     .publish(env);
 }

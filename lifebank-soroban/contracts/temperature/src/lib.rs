@@ -55,6 +55,13 @@ pub struct CompromisedReset {
     pub unit_id: u64,
 }
 
+#[contractevent(topics = ["temp", "compromised"], data_format = "vec")]
+pub struct UnitCompromised {
+    pub unit_id: u64,
+    pub streak: u32,
+    pub timestamp: u64,
+}
+
 #[contractevent(topics = ["tmp_viol"], data_format = "vec")]
 pub struct ViolationDetected {
     pub unit_id: u64,
@@ -105,6 +112,16 @@ pub trait CoordinatorContractInterface {
         unit_id: u64,
         payment_id: u64,
     ) -> Result<bool, soroban_sdk::Error>;
+}
+
+/// Trusted inventory interface for temperature-triggered compromise updates.
+#[contractclient(name = "InventoryContractClient")]
+pub trait InventoryContractInterface {
+    fn mark_compromised_from_temperature(
+        env: Env,
+        temperature_contract: Address,
+        unit_id: u64,
+    ) -> Result<(), soroban_sdk::Error>;
 }
 
 #[contractimpl]
@@ -537,15 +554,42 @@ impl TemperatureContract {
             .persistent()
             .extend_ttl(&streak_key, ORACLE_BUMP_THRESHOLD, ORACLE_BUMP_TO);
 
-        // Check if unit should be compromised (3 consecutive violations)
-        if new_streak >= 3 {
-            let compromised_key = DataKey::IsCompromised(unit_id);
+        // Only publish and notify inventory on the transition into compromised.
+        let compromised_key = DataKey::IsCompromised(unit_id);
+        let was_compromised: bool = env
+            .storage()
+            .persistent()
+            .get(&compromised_key)
+            .unwrap_or(false);
+        if new_streak >= 3 && !was_compromised {
             env.storage().persistent().set(&compromised_key, &true);
             env.storage().persistent().extend_ttl(
                 &compromised_key,
                 ORACLE_BUMP_THRESHOLD,
                 ORACLE_BUMP_TO,
             );
+
+            UnitCompromised {
+                unit_id,
+                streak: new_streak,
+                timestamp,
+            }
+            .publish(&env);
+
+            if let Some(inventory_address) = env
+                .storage()
+                .instance()
+                .get::<_, Address>(&DataKey::InventoryContract)
+            {
+                let inventory = InventoryContractClient::new(&env, &inventory_address);
+                inventory
+                    .try_mark_compromised_from_temperature(
+                        &env.current_contract_address(),
+                        &unit_id,
+                    )
+                    .map_err(|_| ContractError::InventoryCallFailed)?
+                    .map_err(|_| ContractError::InventoryCallFailed)?;
+            }
         }
 
         // Use the cached "current page" cursor so insertion is O(1) instead
@@ -824,6 +868,23 @@ impl TemperatureContract {
     }
 
     // ── Coordinator integration ────────────────────────────────────────────────
+
+    /// Configure the inventory contract that receives compromise transitions.
+    /// Admin only.
+    pub fn set_inventory_contract(
+        env: Env,
+        admin: Address,
+        inventory: Address,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        if admin != storage::get_admin(&env) {
+            return Err(ContractError::Unauthorized);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::InventoryContract, &inventory);
+        Ok(())
+    }
 
     /// Configure the coordinator contract address. Admin only.
     pub fn set_coordinator(
@@ -1104,8 +1165,54 @@ impl TemperatureContract {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::testutils::{Address as _, Events as _};
-    use soroban_sdk::{Symbol, TryFromVal};
+    use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
+    use soroban_sdk::{contract, contractimpl, contracttype, Symbol, TryFromVal};
+
+    #[contracttype]
+    #[derive(Clone)]
+    enum InventoryMockKey {
+        TemperatureContract,
+        Compromised(u64),
+    }
+
+    #[contract]
+    struct InventoryMock;
+
+    #[contractimpl]
+    impl InventoryMock {
+        pub fn set_temperature_contract(env: Env, temperature_contract: Address) {
+            env.storage()
+                .instance()
+                .set(&InventoryMockKey::TemperatureContract, &temperature_contract);
+        }
+
+        pub fn mark_compromised_from_temperature(
+            env: Env,
+            temperature_contract: Address,
+            unit_id: u64,
+        ) -> Result<(), soroban_sdk::Error> {
+            temperature_contract.require_auth();
+            let trusted: Address = env
+                .storage()
+                .instance()
+                .get(&InventoryMockKey::TemperatureContract)
+                .unwrap();
+            if trusted != temperature_contract {
+                return Err(soroban_sdk::Error::from_contract_error(1));
+            }
+            env.storage()
+                .instance()
+                .set(&InventoryMockKey::Compromised(unit_id), &true);
+            Ok(())
+        }
+
+        pub fn is_compromised(env: Env, unit_id: u64) -> bool {
+            env.storage()
+                .instance()
+                .get(&InventoryMockKey::Compromised(unit_id))
+                .unwrap_or(false)
+        }
+    }
 
     fn create_test_contract<'a>() -> (Env, Address, Address, TemperatureContractClient<'a>) {
         let env = Env::default();
@@ -1124,6 +1231,60 @@ mod tests {
         client.add_oracle(&admin, &oracle);
 
         (env, admin, oracle, client)
+    }
+
+    #[test]
+    fn third_consecutive_violation_emits_event_and_compromises_inventory_unit() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let inventory_id = env.register(InventoryMock, ());
+        let inventory = InventoryMockClient::new(&env, &inventory_id);
+
+        let temperature_id = env.register(TemperatureContract, ());
+        let client = TemperatureContractClient::new(&env, &temperature_id);
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let unit_id = 42u64;
+        env.ledger().set_timestamp(1000);
+        client.initialize(&admin);
+        client.add_oracle(&admin, &oracle);
+        client.set_threshold(&admin, &unit_id, &200, &600);
+        inventory.set_temperature_contract(&temperature_id);
+        client.set_inventory_contract(&admin, &inventory_id);
+        client.assign_oracle(&admin, &unit_id, &oracle);
+
+        client.log_reading(&oracle, &unit_id, &900);
+        client.log_reading(&oracle, &unit_id, &900);
+        client.log_reading(&oracle, &unit_id, &900);
+
+        assert!(client.is_compromised(&unit_id));
+        assert!(inventory.is_compromised(&unit_id));
+        let compromised_event = env
+            .events()
+            .all()
+            .iter()
+            .find(|(_, topics, _)| {
+                topics.iter().any(|topic| {
+                    Symbol::try_from_val(&env, &topic)
+                        == Ok(Symbol::new(&env, "compromised"))
+                })
+            })
+            .expect("Expected UnitCompromised event");
+        let payload =
+            Vec::<soroban_sdk::Val>::try_from_val(&env, &compromised_event.2).unwrap();
+        assert_eq!(
+            u64::try_from_val(&env, &payload.get(0).unwrap()).unwrap(),
+            unit_id
+        );
+        assert_eq!(
+            u32::try_from_val(&env, &payload.get(1).unwrap()).unwrap(),
+            3
+        );
+        assert_eq!(
+            u64::try_from_val(&env, &payload.get(2).unwrap()).unwrap(),
+            1000
+        );
     }
 
     #[test]
