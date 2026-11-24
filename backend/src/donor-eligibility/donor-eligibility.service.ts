@@ -154,10 +154,14 @@ export class DonorEligibilityService {
           t.predicateType === RulePredicateType.DONATION_INTERVAL),
     );
     if (failedPredicate) {
+      const failedRule = rules.find((r) => r.id === failedPredicate.ruleVersionId);
       const nextEligibleDate =
         failedPredicate.predicateType === RulePredicateType.DONATION_INTERVAL &&
         profile?.lastDonationDate
-          ? this.computeNextEligibleFromDonation(profile.lastDonationDate)
+          ? this.computeNextEligibleFromDonation(
+              profile.lastDonationDate,
+              failedRule ? this.resolveMinIntervalDays(failedRule) : MIN_DONATION_INTERVAL_DAYS,
+            )
           : null;
       return {
         donorId,
@@ -185,47 +189,63 @@ export class DonorEligibilityService {
     };
 
     if (rule.predicateType === RulePredicateType.AGE_RANGE) {
+      const { minAge, maxAge } = this.resolveAgeLimits(rule);
       if (!profile?.dateOfBirth) {
         return {
           ...base,
-          passed: true,
-          reason: 'Donor date of birth not provided; age check skipped',
+          passed: false,
+          reason: 'Donor date of birth not provided; age check cannot be satisfied',
         };
       }
-      const isValidAge = this.validateAge(profile.dateOfBirth);
+      const isValidAge = this.validateAge(profile.dateOfBirth, minAge, maxAge);
       return {
         ...base,
         passed: isValidAge,
         reason: isValidAge
-          ? `Donor age is within the allowed range (${MIN_AGE}-${MAX_AGE})`
-          : `Donor age is outside the allowed range (${MIN_AGE}-${MAX_AGE})`,
+          ? `Donor age is within the allowed range (${minAge}-${maxAge})`
+          : `Donor age is outside the allowed range (${minAge}-${maxAge})`,
       };
     }
 
     if (rule.predicateType === RulePredicateType.DONATION_INTERVAL) {
+      const minIntervalDays = this.resolveMinIntervalDays(rule);
       if (!profile?.lastDonationDate) {
         return {
           ...base,
           passed: true,
-          reason: 'Donor last-donation date not provided; interval check skipped',
+          reason: 'Donor has no previous donation; interval check not applicable',
         };
       }
-      const nextEligible = this.computeNextEligibleFromDonation(profile.lastDonationDate);
+      const nextEligible = this.computeNextEligibleFromDonation(profile.lastDonationDate, minIntervalDays);
       const passed = nextEligible <= now;
       return {
         ...base,
         passed,
         reason: passed
-          ? `Minimum ${MIN_DONATION_INTERVAL_DAYS}-day donation interval satisfied`
+          ? `Minimum ${minIntervalDays}-day donation interval satisfied`
           : `Donor not eligible again until ${nextEligible.toISOString()}`,
       };
     }
 
     return {
       ...base,
-      passed: true,
-      reason: `Rule "${rule.ruleKey}" v${rule.version} evaluated (config: ${JSON.stringify(rule.config)})`,
+      passed: false,
+      reason: `Unsupported predicate type "${rule.predicateType}" for rule "${rule.ruleKey}" v${rule.version}; failing closed`,
     };
+  }
+
+  /** Read age limits from rule.config, falling back to defaults */
+  private resolveAgeLimits(rule: EligibilityRuleVersionEntity): { minAge: number; maxAge: number } {
+    const config = (rule.config ?? {}) as Record<string, unknown>;
+    const minAge = typeof config.minAge === 'number' ? config.minAge : MIN_AGE;
+    const maxAge = typeof config.maxAge === 'number' ? config.maxAge : MAX_AGE;
+    return { minAge, maxAge };
+  }
+
+  /** Read minimum donation interval (days) from rule.config, falling back to default */
+  private resolveMinIntervalDays(rule: EligibilityRuleVersionEntity): number {
+    const config = (rule.config ?? {}) as Record<string, unknown>;
+    return typeof config.minIntervalDays === 'number' ? config.minIntervalDays : MIN_DONATION_INTERVAL_DAYS;
   }
 
   async assertEligible(donorId: string, profile?: DonorProfile): Promise<void> {
@@ -331,14 +351,17 @@ export class DonorEligibilityService {
   }
 
   /** Compute next eligible date from last donation date */
-  computeNextEligibleFromDonation(lastDonationDate: Date): Date {
+  computeNextEligibleFromDonation(
+    lastDonationDate: Date,
+    minIntervalDays: number = MIN_DONATION_INTERVAL_DAYS,
+  ): Date {
     const next = new Date(lastDonationDate);
-    next.setDate(next.getDate() + MIN_DONATION_INTERVAL_DAYS);
+    next.setDate(next.getDate() + minIntervalDays);
     return next;
   }
 
-  validateAge(dateOfBirth: Date): boolean {
+  validateAge(dateOfBirth: Date, minAge: number = MIN_AGE, maxAge: number = MAX_AGE): boolean {
     const age = Math.floor((Date.now() - dateOfBirth.getTime()) / (365.25 * 24 * 3600 * 1000));
-    return age >= MIN_AGE && age <= MAX_AGE;
+    return age >= minAge && age <= maxAge;
   }
 }

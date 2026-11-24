@@ -1564,3 +1564,35 @@ fn test_rollback_refunds_escrow_to_hospital() {
     );
     assert_eq!(e.token.balance(&e.hospital), 1_000);
 }
+
+// ── Instance storage TTL ──────────────────────────────────────────────────────
+
+/// Advance the ledger well past the default instance TTL (4096 ledgers in the
+/// test environment) and past the bump threshold, so a contract that never
+/// extends its instance entry would find it archived on the next call.
+fn advance_past_default_instance_ttl(env: &Env) {
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 600_000;
+        li.timestamp += 600_000 * 5;
+    });
+}
+
+#[test]
+fn test_instance_ttl_extended_across_long_ledger_gaps() {
+    let h = setup();
+
+    advance_past_default_instance_ttl(&h.env);
+    assert!(h.coord.is_initialized());
+    h.coord.pause(&h.admin);
+    assert!(h.coord.is_paused());
+
+    advance_past_default_instance_ttl(&h.env);
+    h.coord.unpause(&h.admin);
+    assert!(!h.coord.is_paused());
+    let oracle = Address::generate(&h.env);
+    h.coord.set_temperature_oracle(&h.admin, &oracle);
+
+    advance_past_default_instance_ttl(&h.env);
+    assert!(h.coord.is_initialized());
+    assert!(!h.coord.is_emergency_halted());
+}

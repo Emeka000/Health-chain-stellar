@@ -6,10 +6,10 @@ import { RetentionPolicyEntity, DataCategory, RetentionAction } from './entities
 import { DataRedactionEntity, RedactionStatus, SensitiveFieldType } from './entities/data-redaction.entity';
 
 // Import entities for sensitive data
-import { BloodUnit } from '../../blood-units/entities/blood-unit.entity';
-import { RiderEntity } from '../../riders/entities/rider.entity';
-import { OrganizationEntity } from '../../organizations/entities/organization.entity';
-import { LocationHistoryEntity } from '../../location-history/entities/location-history.entity';
+import { BloodUnit } from '../blood-units/entities/blood-unit.entity';
+import { RiderEntity } from '../riders/entities/rider.entity';
+import { OrganizationEntity } from '../organizations/entities/organization.entity';
+import { LocationHistoryEntity } from '../location-history/entities/location-history.entity';
 
 interface SensitiveField {
   entityType: string;

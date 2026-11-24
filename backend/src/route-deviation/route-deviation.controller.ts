@@ -8,6 +8,8 @@ import {
   AcknowledgeDeviationDto,
   CreatePlannedRouteDto,
   LocationUpdateDto,
+  OverrideSeverityDto,
+  ValidateClassificationDto,
 } from './dto/route-deviation.dto';
 import { RouteDeviationService } from './route-deviation.service';
 import { DeviationSeverity } from './entities/route-deviation-incident.entity';
@@ -95,12 +97,7 @@ export class RouteDeviationController {
   @RequirePermissions(Permission.DISPATCH_OVERRIDE)
   async overrideSeverity(
     @Param('id') id: string,
-    @Body()
-    body: {
-      newSeverity: DeviationSeverity;
-      operatorId?: string;
-      rationale: string;
-    },
+    @Body() body: OverrideSeverityDto,
     @Req() req: { user?: { id?: string } },
   ) {
     const actorId = req.user?.id;
@@ -117,7 +114,7 @@ export class RouteDeviationController {
   @RequirePermissions(Permission.MANAGE_DISPATCH)
   validateClassification(
     @Param('id') id: string,
-    @Body() body: { actualSeverity: DeviationSeverity },
+    @Body() body: ValidateClassificationDto,
   ) {
     return this.service.validateClassification(id, body.actualSeverity);
   }

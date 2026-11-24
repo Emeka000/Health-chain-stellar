@@ -40,6 +40,10 @@ const WORKFLOW_TIMEOUT_SECS: u64 = 6 * 60 * 60;
 
 const CONTRACT_VERSION: u32 = 1;
 
+/// Instance storage TTL constants (ledgers; one ledger ≈ 5 s on mainnet).
+const INSTANCE_TTL_THRESHOLD: u32 = 518_400; // ~30 days
+const INSTANCE_TTL_EXTEND_TO: u32 = 1_036_800; // ~60 days
+
 // ── Minimal interface types mirroring the domain contracts ────────────────────
 // These allow the coordinator to inspect cross-contract return values without
 // importing compiled WASMs. Soroban's generated decoder unpacks the returned
@@ -318,6 +322,14 @@ pub struct CoordTemperatureBreach {
 
 // ── Storage helpers ────────────────────────────────────────────────────────────
 
+/// Keep the instance entry (admin, linked contracts, pause/halt flags,
+/// pending admin) alive. Called from every entrypoint, including reads.
+fn bump_instance_ttl(env: &Env) {
+    env.storage()
+        .instance()
+        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+}
+
 fn get_admin(env: &Env) -> Result<Address, CoordinatorError> {
     env.storage()
         .instance()
@@ -475,6 +487,7 @@ impl CoordinatorContract {
         inventory_contract: Address,
         payment_contract: Address,
     ) -> Result<(), CoordinatorError> {
+        bump_instance_ttl(&env);
         admin.require_auth();
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(CoordinatorError::AlreadyInitialized);
@@ -494,12 +507,14 @@ impl CoordinatorContract {
     }
 
     /// Get contract version
-    pub fn version(_env: Env) -> u32 {
+    pub fn version(env: Env) -> u32 {
+        bump_instance_ttl(&env);
         CONTRACT_VERSION
     }
 
     /// Pause all state-mutating functions. Admin only.
     pub fn pause(env: Env, admin: Address) -> Result<(), CoordinatorError> {
+        bump_instance_ttl(&env);
         admin.require_auth();
         let stored: Address = env
             .storage()
@@ -515,6 +530,7 @@ impl CoordinatorContract {
 
     /// Unpause the contract. Admin only.
     pub fn unpause(env: Env, admin: Address) -> Result<(), CoordinatorError> {
+        bump_instance_ttl(&env);
         admin.require_auth();
         let stored: Address = env
             .storage()
@@ -530,6 +546,7 @@ impl CoordinatorContract {
 
     /// Returns whether the contract is currently paused.
     pub fn is_paused(env: Env) -> bool {
+        bump_instance_ttl(&env);
         is_paused(&env)
     }
 
@@ -565,6 +582,7 @@ impl CoordinatorContract {
     /// bug) by stopping every in-progress workflow from advancing.
     /// Call unpause() or a dedicated resume function to restore normal operation.
     pub fn emergency_halt(env: Env, admin: Address) -> Result<(), CoordinatorError> {
+        bump_instance_ttl(&env);
         admin.require_auth();
         let stored: Address = env
             .storage()
@@ -581,6 +599,7 @@ impl CoordinatorContract {
 
     /// Clear the emergency halt flag. Admin only.
     pub fn clear_emergency_halt(env: Env, admin: Address) -> Result<(), CoordinatorError> {
+        bump_instance_ttl(&env);
         admin.require_auth();
         let stored: Address = env
             .storage()
@@ -598,6 +617,7 @@ impl CoordinatorContract {
 
     /// Returns whether the emergency halt is active.
     pub fn is_emergency_halted(env: Env) -> bool {
+        bump_instance_ttl(&env);
         env.storage()
             .instance()
             .get(&DataKey::EmergencyHalt)
@@ -611,6 +631,7 @@ impl CoordinatorContract {
         admin: Address,
         oracle: Address,
     ) -> Result<(), CoordinatorError> {
+        bump_instance_ttl(&env);
         admin.require_auth();
         let stored = get_admin(&env)?;
         if admin != stored {
@@ -660,6 +681,7 @@ impl CoordinatorContract {
         payment_id: u64,
         caller: Address,
     ) -> Result<(), CoordinatorError> {
+        bump_instance_ttl(&env);
         caller.require_auth();
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
@@ -760,6 +782,7 @@ impl CoordinatorContract {
         caller: Address,
         location: String,
     ) -> Result<(), CoordinatorError> {
+        bump_instance_ttl(&env);
         caller.require_auth();
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
@@ -815,6 +838,7 @@ impl CoordinatorContract {
         request_id: u64,
         caller: Address,
     ) -> Result<(), CoordinatorError> {
+        bump_instance_ttl(&env);
         caller.require_auth();
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
@@ -859,6 +883,7 @@ impl CoordinatorContract {
 
     /// Rollback – admin only. Releases units and refunds payment.
     pub fn rollback(env: Env, request_id: u64) -> Result<(), CoordinatorError> {
+        bump_instance_ttl(&env);
         let admin = get_admin(&env)?;
         admin.require_auth();
         Self::require_initialized(&env)?;
@@ -924,6 +949,7 @@ impl CoordinatorContract {
     /// - `InvalidWorkflowState`— workflow is not in the `Allocated` state
     ///   (already delivered, settled, or rolled back)
     pub fn expire_workflow(env: Env, request_id: u64) -> Result<(), CoordinatorError> {
+        bump_instance_ttl(&env);
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
 
@@ -975,6 +1001,7 @@ impl CoordinatorContract {
     }
 
     pub fn get_workflow(env: Env, request_id: u64) -> Result<WorkflowRecord, CoordinatorError> {
+        bump_instance_ttl(&env);
         load_workflow(&env, request_id).ok_or(CoordinatorError::WorkflowNotFound)
     }
 
@@ -992,6 +1019,7 @@ impl CoordinatorContract {
         payment_id: u64,
         excursion_summary: ExcursionSummary,
     ) -> Result<(), CoordinatorError> {
+        bump_instance_ttl(&env);
         let caller = env.current_contract_address();
         caller.require_auth();
 
@@ -1038,6 +1066,7 @@ impl CoordinatorContract {
         current_admin: Address,
         new_admin: Address,
     ) -> Result<(), CoordinatorError> {
+        bump_instance_ttl(&env);
         current_admin.require_auth();
         let stored: Address = env
             .storage()
@@ -1056,6 +1085,7 @@ impl CoordinatorContract {
     /// Step 2 of two-step admin transfer: the pending admin accepts ownership.
     /// Clears PendingAdmin and promotes new_admin to Admin.
     pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), CoordinatorError> {
+        bump_instance_ttl(&env);
         new_admin.require_auth();
         let pending: Address = env
             .storage()
@@ -1071,6 +1101,7 @@ impl CoordinatorContract {
     }
 
     pub fn is_initialized(env: Env) -> bool {
+        bump_instance_ttl(&env);
         env.storage().instance().has(&DataKey::Admin)
     }
 
@@ -1094,6 +1125,7 @@ impl CoordinatorContract {
         admin: Address,
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), CoordinatorError> {
+        bump_instance_ttl(&env);
         admin.require_auth();
         let stored: Address = env
             .storage()

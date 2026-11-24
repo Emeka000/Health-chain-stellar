@@ -12,6 +12,7 @@ import {
   NotFoundException,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';

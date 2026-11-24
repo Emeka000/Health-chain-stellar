@@ -993,7 +993,8 @@ fn test_vesting_pre_cliff_claim_fails() {
     // cliff = now + 1000s, duration = 2000s
     env.ledger().with_mut(|l| l.timestamp = 5000);
     let token_id = deploy_token_with_balance(&env, &admin, &admin, 1_000_000);
-    client.create_vesting(
+    client.add_allowed_token(&admin, &token_id);
+    let sid = client.create_vesting(
         &admin,
         &donor,
         &token_id,
@@ -1004,7 +1005,7 @@ fn test_vesting_pre_cliff_claim_fails() {
 
     // Try to claim at t=5500 (before cliff at t=6000)
     env.ledger().with_mut(|l| l.timestamp = 5500);
-    let result = client.try_claim_vested(&donor);
+    let result = client.try_claim_vested(&donor, &sid);
     assert_eq!(
         result,
         Err(Ok(Error::CliffNotReached)),
@@ -1022,17 +1023,18 @@ fn test_vesting_partial_claim_at_50_percent() {
     // cliff = now + 0 (immediate), duration = 2000s → vest_end = now + 2000
     env.ledger().with_mut(|l| l.timestamp = 10_000);
     let token_id = deploy_token_with_balance(&env, &admin, &admin, 1_000_000);
-    client.create_vesting(&admin, &donor, &token_id, &1_000_000i128, &0u64, &2000u64);
+    client.add_allowed_token(&admin, &token_id);
+    let sid = client.create_vesting(&admin, &donor, &token_id, &1_000_000i128, &0u64, &2000u64);
 
     // Advance to 50% of vesting duration (cliff == vest_start == 10_000, vest_end == 12_000)
     env.ledger().with_mut(|l| l.timestamp = 11_000); // 1000s elapsed of 2000s
-    let claimed = client.claim_vested(&donor);
+    let claimed = client.claim_vested(&donor, &sid);
     assert_eq!(
         claimed, 500_000i128,
         "50% vesting should yield half the total"
     );
 
-    let schedule = client.get_vesting(&donor);
+    let schedule = client.get_vesting(&donor, &sid);
     assert_eq!(schedule.claimed, 500_000i128);
 }
 
@@ -1045,14 +1047,15 @@ fn test_vesting_full_claim_after_vest_end() {
 
     env.ledger().with_mut(|l| l.timestamp = 1_000);
     let token_id = deploy_token_with_balance(&env, &admin, &admin, 500_000);
-    client.create_vesting(&admin, &donor, &token_id, &500_000i128, &0u64, &1000u64);
+    client.add_allowed_token(&admin, &token_id);
+    let sid = client.create_vesting(&admin, &donor, &token_id, &500_000i128, &0u64, &1000u64);
 
     // Advance past vest_end
     env.ledger().with_mut(|l| l.timestamp = 3_000);
-    let claimed = client.claim_vested(&donor);
+    let claimed = client.claim_vested(&donor, &sid);
     assert_eq!(claimed, 500_000i128, "Full amount claimable after vest end");
 
-    let result = client.try_get_vesting(&donor);
+    let result = client.try_get_vesting(&donor, &sid);
     assert_eq!(result, Err(Ok(Error::VestingNotFound)));
 }
 
@@ -1065,15 +1068,16 @@ fn test_vesting_cannot_exceed_total_amount() {
 
     env.ledger().with_mut(|l| l.timestamp = 1_000);
     let token_id = deploy_token_with_balance(&env, &admin, &admin, 1_000_000);
-    client.create_vesting(&admin, &donor, &token_id, &1_000_000i128, &0u64, &1000u64);
+    client.add_allowed_token(&admin, &token_id);
+    let sid = client.create_vesting(&admin, &donor, &token_id, &1_000_000i128, &0u64, &1000u64);
 
     // Claim full amount after vest end
     env.ledger().with_mut(|l| l.timestamp = 5_000);
-    let first = client.claim_vested(&donor);
+    let first = client.claim_vested(&donor, &sid);
     assert_eq!(first, 1_000_000i128);
 
     // Second claim should fail with VestingNotFound
-    let result = client.try_claim_vested(&donor);
+    let result = client.try_claim_vested(&donor, &sid);
     assert_eq!(
         result,
         Err(Ok(Error::VestingNotFound)),
@@ -1348,13 +1352,14 @@ fn test_vesting_events_emitted() {
 
     env.ledger().with_mut(|l| l.timestamp = 1_000);
     let token_id = deploy_token_with_balance(&env, &admin, &admin, 200_000);
-    client.create_vesting(&admin, &donor, &token_id, &200_000i128, &0u64, &1000u64);
+    client.add_allowed_token(&admin, &token_id);
+    let sid = client.create_vesting(&admin, &donor, &token_id, &200_000i128, &0u64, &1000u64);
 
     env.ledger().with_mut(|l| l.timestamp = 2_500); // past vest_end
-    client.claim_vested(&donor);
+    client.claim_vested(&donor, &sid);
 
     // Events are published — verify no panic and schedule is updated
-    let result = client.try_get_vesting(&donor);
+    let result = client.try_get_vesting(&donor, &sid);
     assert_eq!(result, Err(Ok(Error::VestingNotFound)));
 }
 
@@ -1847,6 +1852,7 @@ fn test_vesting_duration_bounded_and_overflow_rejected() {
     let client = PaymentContractClient::new(&env, &cid);
     let donor = Address::generate(&env);
     let token_id = deploy_token_with_balance(&env, &admin, &admin, 1_000);
+    client.add_allowed_token(&admin, &token_id);
 
     let result = client.try_create_vesting(
         &admin,
@@ -1861,7 +1867,7 @@ fn test_vesting_duration_bounded_and_overflow_rejected() {
     env.ledger().with_mut(|l| l.timestamp = u64::MAX - 10);
     let result = client.try_create_vesting(&admin, &donor, &token_id, &1_000i128, &0u64, &1_000u64);
     assert_eq!(result, Err(Ok(Error::Overflow)));
-    assert!(client.try_get_vesting(&donor).is_err());
+    assert!(client.try_get_vesting(&donor, &1u64).is_err());
 }
 
 /// #1460: with vesting and escrow in the same token, a vesting claim cannot
@@ -1885,7 +1891,7 @@ fn test_vesting_claim_cannot_spend_escrowed_funds() {
         &1_000i128,
         &token_id,
     );
-    client.create_vesting(&admin, &donor, &token_id, &500i128, &0u64, &100u64);
+    let sid = client.create_vesting(&admin, &donor, &token_id, &500i128, &0u64, &100u64);
     assert_eq!(client.get_escrow_reserve(&token_id), 1_000);
     assert_eq!(client.get_vesting_reserve(&token_id), 500);
 
@@ -1895,7 +1901,7 @@ fn test_vesting_claim_cannot_spend_escrowed_funds() {
     env.as_contract(&cid, || token.transfer(&cid, &sink, &600));
 
     env.ledger().with_mut(|l| l.timestamp = 2_000);
-    let result = client.try_claim_vested(&donor);
+    let result = client.try_claim_vested(&donor, &sid);
     assert_eq!(result, Err(Ok(Error::InsufficientEscrowFunds)));
     assert_eq!(token.balance(&cid), 900);
     assert_eq!(client.get_vesting_reserve(&token_id), 500);
@@ -1921,13 +1927,13 @@ fn test_reserves_track_settlement() {
         &1_000i128,
         &token_id,
     );
-    client.create_vesting(&admin, &donor, &token_id, &500i128, &0u64, &100u64);
+    let sid = client.create_vesting(&admin, &donor, &token_id, &500i128, &0u64, &100u64);
 
     client.refund_escrow(&admin, &pid);
     assert_eq!(client.get_escrow_reserve(&token_id), 0);
 
     env.ledger().with_mut(|l| l.timestamp = 2_000);
-    assert_eq!(client.claim_vested(&donor), 500);
+    assert_eq!(client.claim_vested(&donor, &sid), 500);
     assert_eq!(client.get_vesting_reserve(&token_id), 0);
 }
 
