@@ -1,6 +1,18 @@
 use crate::types::{DataKey, TemperatureReading, TemperatureThreshold};
 use soroban_sdk::{Env, Vec};
 
+/// Instance storage TTL constants (ledgers; one ledger ≈ 5 s on mainnet).
+const INSTANCE_TTL_THRESHOLD: u32 = 518_400; // ~30 days
+const INSTANCE_TTL_EXTEND_TO: u32 = 1_036_800; // ~60 days
+
+/// Keep the instance entry (admin, paused flag, coordinator address) alive.
+/// Called from every entrypoint, including reads.
+pub fn bump_instance_ttl(env: &Env) {
+    env.storage()
+        .instance()
+        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+}
+
 pub fn get_admin(env: &Env) -> soroban_sdk::Address {
     env.storage().instance().get(&DataKey::Admin).unwrap()
 }

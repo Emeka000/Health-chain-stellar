@@ -215,12 +215,14 @@ jobs:
           mkdir -p deployment
           echo '{"network": "testnet", "contracts": {}}' > deployment/contracts-testnet.json
           
+          source lifebank-soroban/scripts/wasm-artifacts.sh
+
           # Deploy each contract
           for contract in inventory requests payments temperature delivery reputation identity; do
             echo "Deploying $contract contract..."
             
             # Find the WASM file
-            WASM_FILE=$(find ./wasm-files -name "*${contract}*.wasm" | head -n 1)
+            WASM_FILE=$(find ./wasm-files -name "${WASM_ARTIFACTS[$contract]}.wasm" | head -n 1)
             
             if [ -z "$WASM_FILE" ]; then
               echo "Warning: WASM file for $contract not found, skipping..."

@@ -1,34 +1,33 @@
-import { Module, Logger } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-
+import { Module, Global, OnModuleDestroy, Inject, Logger } from '@nestjs/common';
 import Redis from 'ioredis';
 
-import { REDIS_CLIENT } from './redis.constants';
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 
+export const REDIS_CLIENT = 'REDIS_CLIENT';
+
+@Global()
 @Module({
-  imports: [ConfigModule],
   providers: [
     {
       provide: REDIS_CLIENT,
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => {
+      useFactory: () => {
         const logger = new Logger('RedisModule');
-        const redisUrl = configService.get<string>(
-          'REDIS_URL',
-          'redis://127.0.0.1:6379',
-        );
-        const client = new Redis(redisUrl, {
-          lazyConnect: true,
-          maxRetriesPerRequest: 1,
+        const client = new Redis(REDIS_URL, {
+          maxRetriesPerRequest: 3,
+          lazyConnect: false,
         });
-        // Attach error listener to prevent process crash on connection errors
-        client.on('error', (err) => {
-          logger.error(`Redis connection error: ${err.message}`, err.stack);
-        });
+        client.on('error', (err) => logger.error(`Redis error: ${err.message}`));
+        client.on('connect', () => logger.log('Redis connected'));
         return client;
       },
     },
   ],
   exports: [REDIS_CLIENT],
 })
-export class RedisModule {}
+export class RedisModule implements OnModuleDestroy {
+  constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis) {}
+
+  async onModuleDestroy() {
+    await this.redis.quit();
+  }
+}

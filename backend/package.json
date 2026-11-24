@@ -7,6 +7,7 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
+    "build:packages": "tsc -p ../packages/base-sdk/tsconfig.json && tsc -p ../packages/inventory-sdk/tsconfig.json && tsc -p ../packages/coordinator-sdk/tsconfig.json && tsc -p ../packages/payments-sdk/tsconfig.json && tsc -p ../packages/requests-sdk/tsconfig.json && tsc -p ../packages/temperature-sdk/tsconfig.json",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
@@ -56,6 +57,7 @@
     "@nestjs/websockets": "^11.1.14",
     "@stellar/stellar-sdk": "^14.5.0",
     "@types/bull": "^3.15.9",
+    "africastalking": "^0.7.0",
     "bullmq": "^5.69.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.3",
@@ -72,6 +74,7 @@
     "redis": "^5.11.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "sharp": "^0.33.5",
     "socket.io": "^4.8.3",
     "sql.js": "^1.14.0",
     "typeorm": "^0.3.28",

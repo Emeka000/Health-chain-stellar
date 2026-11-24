@@ -349,6 +349,12 @@ pub enum DataKey {
     /// `release_reservation_by_contract`. Only this address is permitted;
     /// any other address is rejected regardless of `require_auth`.
     RequestsContractId,
+
+    /// Address of the trusted coordinator contract. It may pass its own
+    /// address as `authorized_by` to `update_status` / `mark_delivered` to
+    /// drive the workflow transitions (reserve, ship, deliver, release)
+    /// without an inventory-admin or blood-bank signature.
+    CoordinatorContractId,
 }
 
 /// Reservation record for blood units locked for a specific requester
