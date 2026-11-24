@@ -188,6 +188,14 @@ pub fn set_request_rider(env: &Env, request_id: u64, rider: &Address) {
         .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
+/// Drop the rider assignment, so a new `assign_rider` is required before the
+/// request can be picked up again.
+pub fn clear_request_rider(env: &Env, request_id: u64) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::RequestRider(request_id));
+}
+
 pub fn get_request_rider(env: &Env, request_id: u64) -> Option<Address> {
     env.storage()
         .persistent()

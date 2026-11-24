@@ -91,6 +91,15 @@ pub struct PaymentPage {
     pub page_size: u32,
 }
 
+/// A donor's recurring-donation commitment.
+///
+/// **Pledges are off-chain commitments.** Creating one records intent only:
+/// no token is transferred or escrowed, and nothing on-chain executes the
+/// pledge every `interval_secs`. The backend (or the donor's wallet) is
+/// expected to make each periodic donation as an ordinary payment and use the
+/// pledge record (and its `pledge`/`status` events) to schedule and reconcile
+/// them. `active` only signals whether the donor wants those donations to
+/// continue.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DonationPledge {
@@ -106,16 +115,42 @@ pub struct DonationPledge {
     pub created_at: u64,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PledgePage {
+    pub items: Vec<DonationPledge>,
+    pub total: u64,
+    pub page: u32,
+    pub page_size: u32,
+}
+
 /// On-chain vesting schedule for donor reward tokens.
+///
+/// **Vesting model (standard cliff vesting).** Tokens accrue linearly from
+/// `start_timestamp` to `vest_end_timestamp`. The cliff only gates claims:
+/// nothing can be claimed before `cliff_timestamp`, and at the cliff the
+/// portion accrued since the start becomes claimable at once. A 12-month
+/// schedule with a 3-month cliff therefore releases 3/12 of the total at the
+/// cliff, then the rest linearly over the remaining 9 months.
+///
+/// A donor may hold several concurrent schedules; each is addressed by
+/// `(donor, id)`.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VestingSchedule {
+    pub id: u64,
     pub donor: Address,
     pub reward_token: Address,
+    /// Amount the donor can ever receive from this schedule. Reduced to the
+    /// amount vested at revocation time by `revoke_vesting`.
     pub total_amount: i128,
+    pub start_timestamp: u64,
     pub cliff_timestamp: u64,
     pub vest_end_timestamp: u64,
     pub claimed: i128,
+    /// Set by `revoke_vesting`. A revoked schedule accrues nothing further;
+    /// whatever had vested before revocation stays claimable.
+    pub revoked: bool,
 }
 
 #[contracterror]
@@ -135,7 +170,8 @@ pub enum Error {
     NothingToClaim = 510,
     /// A payment already exists for this request.
     DuplicatePayment = 511,
-    /// Donor already has an active vesting schedule that has not been fully claimed.
+    /// Retained for ABI stability. No longer returned: a donor may hold
+    /// several concurrent vesting schedules (#1803).
     ActiveVestingExists = 517,
     /// The associated request is not in a state that permits payment.
     RequestNotPayable = 512,
@@ -174,6 +210,12 @@ pub enum Error {
     /// A disputed payment can only be closed by resolve_dispute or
     /// process_expired_disputes; update_status must not skip the resolution.
     DisputeResolutionRequired = 528,
+    /// A pledge string field exceeds `MAX_PLEDGE_STRING_LEN` bytes.
+    StringTooLong = 529,
+    /// The vesting schedule has already been revoked.
+    VestingRevoked = 530,
+    /// The vesting schedule has nothing left to vest; there is nothing to revoke.
+    NothingToRevoke = 531,
 }
 
 // ── Storage keys ───────────────────────────────────────────────────────────────
@@ -207,6 +249,12 @@ const ALLOWED_TOKENS: soroban_sdk::Symbol = symbol_short!("ALWD_TOK");
 const MAX_VESTING_DURATION_SECS: u64 = 10 * 365 * 24 * 3600;
 /// Maximum number of items a single paginated query may return.
 const MAX_PAGE_SIZE: u32 = 100;
+/// Instance storage key for the vesting schedule ID counter.
+const VESTING_COUNTER: soroban_sdk::Symbol = symbol_short!("VEST_CTR");
+/// Maximum byte length of a pledge's `payee_pool`, `cause` and `region`.
+/// Each pledge is a persistent entry the donor pays rent for, so its size
+/// must be bounded.
+pub const MAX_PLEDGE_STRING_LEN: u32 = 64;
 
 /// Persistent storage TTL constants (in ledgers; one ledger ≈ 5 s).
 /// Entries are bumped to PERSISTENT_BUMP_TO whenever their remaining TTL
@@ -221,6 +269,39 @@ fn extend_instance_ttl(env: &Env) {
     env.storage()
         .instance()
         .extend_ttl(PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
+}
+
+/// Bump a persistent entry's TTL if it exists. `extend_ttl` traps on a
+/// missing key, so the existence check is required.
+fn bump_persistent_if_present<K>(env: &Env, key: &K)
+where
+    K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
+{
+    if env.storage().persistent().has(key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
+    }
+}
+
+/// Read a persistent entry and, when present, extend its TTL (#1804).
+///
+/// Records and index entries used to be bumped only on write, so a payment
+/// that sat Locked without a state change, or an old index page, archived
+/// after ~60 days even while it was still being queried. Bumping on every
+/// read keeps anything that is in use live.
+fn get_persistent<K, V>(env: &Env, key: &K) -> Option<V>
+where
+    K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
+    V: soroban_sdk::TryFromVal<Env, soroban_sdk::Val>,
+{
+    let value: Option<V> = env.storage().persistent().get(key);
+    if value.is_some() {
+        env.storage()
+            .persistent()
+            .extend_ttl(key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
+    }
+    value
 }
 
 fn payment_key(id: u64) -> (u64, &'static str) {
@@ -249,6 +330,10 @@ enum IndexKey {
     StatusAt(u32, u32),
     /// Position of a payment id inside its status index, for O(1) removal.
     StatusPos(u32, u64),
+    /// Number of pledges a donor has created (#1802).
+    DonorPledgeLen(Address),
+    /// `(donor, position)` → pledge id, append-only.
+    DonorPledgeAt(Address, u32),
 }
 
 fn status_code(status: PaymentStatus) -> u32 {
@@ -294,10 +379,16 @@ fn store_payment(env: &Env, payment: &Payment) {
     env.storage()
         .persistent()
         .extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
+    // The request → payment mapping backs the DuplicatePayment guard; keep it
+    // live for as long as the payment is.
+    if !is_terminal_status(payment.status) {
+        bump_persistent_if_present(env, &req_idx_key(payment.request_id));
+    }
 }
 
 fn load_payment(env: &Env, id: u64) -> Option<Payment> {
-    env.storage().persistent().get(&payment_key(id))
+    extend_instance_ttl(env);
+    get_persistent(env, &payment_key(id))
 }
 
 fn store_pledge(env: &Env, pledge: &DonationPledge) {
@@ -309,27 +400,86 @@ fn store_pledge(env: &Env, pledge: &DonationPledge) {
 }
 
 fn load_pledge(env: &Env, id: u64) -> Option<DonationPledge> {
-    env.storage().persistent().get(&pledge_key(id))
+    get_persistent(env, &pledge_key(id))
 }
 
-fn vesting_key(donor: &Address) -> (Address, &'static str) {
-    (donor.clone(), "vest")
+/// Reject a pledge string longer than `MAX_PLEDGE_STRING_LEN` bytes.
+fn validate_pledge_string(value: &String) -> Result<(), Error> {
+    if value.len() > MAX_PLEDGE_STRING_LEN {
+        return Err(Error::StringTooLong);
+    }
+    Ok(())
+}
+
+/// Vesting schedules are keyed by `(donor, schedule_id)` so a donor can hold
+/// several at once (#1803), and a schedule can only be claimed by its donor.
+fn vesting_key(donor: &Address, schedule_id: u64) -> (Address, u64, &'static str) {
+    (donor.clone(), schedule_id, "vest")
 }
 
 fn store_vesting(env: &Env, schedule: &VestingSchedule) {
-    let key = vesting_key(&schedule.donor);
+    let key = vesting_key(&schedule.donor, schedule.id);
     env.storage().persistent().set(&key, schedule);
     env.storage()
         .persistent()
         .extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
 }
 
-fn load_vesting(env: &Env, donor: &Address) -> Option<VestingSchedule> {
-    env.storage().persistent().get(&vesting_key(donor))
+fn load_vesting(env: &Env, donor: &Address, schedule_id: u64) -> Option<VestingSchedule> {
+    get_persistent(env, &vesting_key(donor, schedule_id))
 }
 
-fn remove_vesting(env: &Env, donor: &Address) {
-    env.storage().persistent().remove(&vesting_key(donor));
+fn remove_vesting(env: &Env, donor: &Address, schedule_id: u64) {
+    env.storage()
+        .persistent()
+        .remove(&vesting_key(donor, schedule_id));
+}
+
+fn next_vesting_id(env: &Env) -> u64 {
+    let id = env
+        .storage()
+        .instance()
+        .get(&VESTING_COUNTER)
+        .unwrap_or(0u64)
+        + 1;
+    env.storage().instance().set(&VESTING_COUNTER, &id);
+    extend_instance_ttl(env);
+    id
+}
+
+/// Amount of `schedule` vested at `now`, ignoring the cliff (the cliff gates
+/// claims, not accrual). Accrual runs linearly from `start_timestamp` to
+/// `vest_end_timestamp`; a revoked schedule is fully vested at its reduced
+/// `total_amount`.
+///
+/// `total * elapsed / duration` is evaluated as
+/// `(total / duration) * elapsed + (total % duration) * elapsed / duration`,
+/// which is exact and cannot overflow for any `total` that fits in i128,
+/// because `elapsed < duration` here. Any arithmetic failure is still
+/// surfaced as `Error::Overflow` instead of being silently treated as 0.
+fn vested_amount(schedule: &VestingSchedule, now: u64) -> Result<i128, Error> {
+    if schedule.revoked || now >= schedule.vest_end_timestamp {
+        return Ok(schedule.total_amount);
+    }
+    if now <= schedule.start_timestamp {
+        return Ok(0);
+    }
+    let elapsed = (now - schedule.start_timestamp) as i128;
+    let duration = schedule
+        .vest_end_timestamp
+        .checked_sub(schedule.start_timestamp)
+        .ok_or(Error::Overflow)? as i128;
+    if duration == 0 {
+        return Ok(schedule.total_amount);
+    }
+    let whole = (schedule.total_amount / duration)
+        .checked_mul(elapsed)
+        .ok_or(Error::Overflow)?;
+    let part = (schedule.total_amount % duration)
+        .checked_mul(elapsed)
+        .ok_or(Error::Overflow)?
+        / duration;
+    whole.checked_add(part).ok_or(Error::Overflow)
 }
 
 // ── Per-token reserves ─────────────────────────────────────────────────────────
@@ -349,7 +499,7 @@ fn escrow_reserve_key(token: &Address) -> (Address, &'static str) {
 }
 
 fn load_reserve(env: &Env, key: &(Address, &'static str)) -> i128 {
-    env.storage().persistent().get(key).unwrap_or(0i128)
+    get_persistent(env, key).unwrap_or(0i128)
 }
 
 fn add_reserve(env: &Env, key: &(Address, &'static str), amount: i128) -> Result<(), Error> {
@@ -408,7 +558,7 @@ fn set_index_entry<V: soroban_sdk::IntoVal<Env, soroban_sdk::Val>>(
 }
 
 fn index_len(env: &Env, len_key: &IndexKey) -> u32 {
-    env.storage().persistent().get(len_key).unwrap_or(0u32)
+    get_persistent(env, len_key).unwrap_or(0u32)
 }
 
 /// Append `id` at the end of an index and return the position it was stored at.
@@ -432,6 +582,16 @@ fn index_by_payer(env: &Env, payer: &Address, id: u64) {
 fn index_by_payee(env: &Env, payee: &Address, id: u64) {
     let len_key = IndexKey::PayeeLen(payee.clone());
     index_push(env, &len_key, |i| IndexKey::PayeeAt(payee.clone(), i), id);
+}
+
+fn index_pledge_by_donor(env: &Env, donor: &Address, id: u64) {
+    let len_key = IndexKey::DonorPledgeLen(donor.clone());
+    index_push(
+        env,
+        &len_key,
+        |i| IndexKey::DonorPledgeAt(donor.clone(), i),
+        id,
+    );
 }
 
 fn index_by_status(env: &Env, status: PaymentStatus, id: u64) {
@@ -488,11 +648,7 @@ fn request_timeline_key(request_id: u64) -> (u64, &'static str) {
 /// for a given request are appended in creation order.
 fn timeline_append(env: &Env, request_id: u64, payment_id: u64) {
     let key = request_timeline_key(request_id);
-    let mut ids: Vec<u64> = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(Vec::new(env));
+    let mut ids: Vec<u64> = get_persistent(env, &key).unwrap_or(Vec::new(env));
     ids.push_back(payment_id);
     env.storage().persistent().set(&key, &ids);
     env.storage()
@@ -505,18 +661,14 @@ fn timeline_append(env: &Env, request_id: u64, payment_id: u64) {
 fn remove_from_status_index(env: &Env, status: PaymentStatus, id: u64) {
     let code = status_code(status);
     let pos_key = IndexKey::StatusPos(code, id);
-    let pos: u32 = match env.storage().persistent().get(&pos_key) {
+    let pos: u32 = match get_persistent(env, &pos_key) {
         Some(p) => p,
         None => return,
     };
     let len_key = IndexKey::StatusLen(code);
     let last = index_len(env, &len_key).saturating_sub(1);
     if pos != last {
-        let moved: u64 = env
-            .storage()
-            .persistent()
-            .get(&IndexKey::StatusAt(code, last))
-            .unwrap();
+        let moved: u64 = get_persistent(env, &IndexKey::StatusAt(code, last)).unwrap();
         set_index_entry(env, &IndexKey::StatusAt(code, pos), &moved);
         set_index_entry(env, &IndexKey::StatusPos(code, moved), &pos);
     }
@@ -827,19 +979,41 @@ pub struct PledgeCreated {
     pub pledge_id: u64,
 }
 
+/// Emitted by `set_pledge_active` when a pledge is paused or resumed (#1802).
+#[contractevent(topics = ["pledge", "status"], data_format = "vec")]
+pub struct PledgeStatusChanged {
+    pub pledge_id: u64,
+    pub donor: Address,
+    pub active: bool,
+}
+
+/// Accrual starts at `start_timestamp`; claims open at `cliff_timestamp`.
 #[contractevent(topics = ["vest", "created"], data_format = "vec")]
 pub struct VestingCreated {
+    pub schedule_id: u64,
     pub donor: Address,
     pub total_amount: i128,
+    pub start_timestamp: u64,
     pub cliff_timestamp: u64,
     pub vest_end_timestamp: u64,
 }
 
 #[contractevent(topics = ["vest", "claimed"], data_format = "vec")]
 pub struct VestingClaimed {
+    pub schedule_id: u64,
     pub donor: Address,
     pub claimable: i128,
     pub new_claimed: i128,
+}
+
+/// `unvested_returned` went back to the admin; `vested_remaining` (vested but
+/// not yet claimed) is still claimable by the donor.
+#[contractevent(topics = ["vest", "revoked"], data_format = "vec")]
+pub struct VestingRevokedEvent {
+    pub schedule_id: u64,
+    pub donor: Address,
+    pub unvested_returned: i128,
+    pub vested_remaining: i128,
 }
 
 #[contractevent(topics = ["payment", "req_ctr"], data_format = "single-value")]
@@ -1157,7 +1331,7 @@ impl PaymentContract {
 
         // Check if hospital has also confirmed
         let hosp_key = hosp_ok_key(payment_id);
-        let hospital_confirmed: bool = env.storage().persistent().get(&hosp_key).unwrap_or(false);
+        let hospital_confirmed: bool = get_persistent(&env, &hosp_key).unwrap_or(false);
 
         if !hospital_confirmed {
             // Coordinator confirmed but waiting for hospital
@@ -1218,8 +1392,7 @@ impl PaymentContract {
 
         // Check if coordinator has also confirmed
         let coord_key = coord_ok_key(payment_id);
-        let coordinator_confirmed: bool =
-            env.storage().persistent().get(&coord_key).unwrap_or(false);
+        let coordinator_confirmed: bool = get_persistent(&env, &coord_key).unwrap_or(false);
 
         if !coordinator_confirmed {
             // Hospital confirmed but waiting for coordinator
@@ -1487,11 +1660,8 @@ impl PaymentContract {
     }
 
     pub fn get_payment_by_request(env: Env, request_id: u64) -> Result<Payment, Error> {
-        let payment_id: u64 = env
-            .storage()
-            .persistent()
-            .get(&req_idx_key(request_id))
-            .ok_or(Error::PaymentNotFound)?;
+        let payment_id: u64 =
+            get_persistent(&env, &req_idx_key(request_id)).ok_or(Error::PaymentNotFound)?;
         load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)
     }
 
@@ -1535,13 +1705,19 @@ impl PaymentContract {
     ) -> PaymentPage {
         let code = status_code(status);
         let total = index_len(&env, &IndexKey::StatusLen(code));
-        Self::load_page(
+        let page = Self::load_page(
             &env,
             total,
             |i| IndexKey::StatusAt(code, i),
             page,
             page_size,
-        )
+        );
+        // StatusPos backs O(1) removal from this index; keep it as live as
+        // the StatusAt entry it mirrors.
+        for p in page.items.iter() {
+            bump_persistent_if_present(&env, &IndexKey::StatusPos(code, p.id));
+        }
+        page
     }
 
     pub fn get_payment_statistics(env: Env) -> PaymentStats {
@@ -1560,11 +1736,8 @@ impl PaymentContract {
         limit: u32,
     ) -> Vec<Payment> {
         let limit = limit.clamp(1, 100);
-        let ids: Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&request_timeline_key(request_id))
-            .unwrap_or(Vec::new(&env));
+        let ids: Vec<u64> =
+            get_persistent(&env, &request_timeline_key(request_id)).unwrap_or(Vec::new(&env));
         let total = ids.len();
         let start = offset;
         // saturating: offset near u32::MAX must not overflow and panic.
@@ -1585,6 +1758,11 @@ impl PaymentContract {
         get_counter(&env)
     }
 
+    /// Record a recurring-donation pledge. Returns the new pledge ID.
+    ///
+    /// This records intent only: no funds move and nothing executes the
+    /// pledge on-chain (see [`DonationPledge`]). `payee_pool`, `cause` and
+    /// `region` are limited to `MAX_PLEDGE_STRING_LEN` bytes each.
     #[allow(clippy::too_many_arguments)]
     pub fn create_pledge(
         env: Env,
@@ -1604,6 +1782,9 @@ impl PaymentContract {
         if interval_secs == 0 {
             return Err(Error::InvalidAmount);
         }
+        validate_pledge_string(&payee_pool)?;
+        validate_pledge_string(&cause)?;
+        validate_pledge_string(&region)?;
 
         let id = get_pledge_counter(&env) + 1;
         set_pledge_counter(&env, id);
@@ -1621,6 +1802,7 @@ impl PaymentContract {
             created_at: env.ledger().timestamp(),
         };
         store_pledge(&env, &pledge);
+        index_pledge_by_donor(&env, &donor, id);
 
         PledgeCreated { pledge_id: id }.publish(&env);
 
@@ -1631,6 +1813,37 @@ impl PaymentContract {
         load_pledge(&env, pledge_id).ok_or(Error::PaymentNotFound)
     }
 
+    /// One page of a donor's pledges, oldest first. `page` is zero-indexed;
+    /// `page_size` 0 means the default of 20 and is capped at `MAX_PAGE_SIZE`.
+    pub fn get_pledges_by_donor(env: Env, donor: Address, page: u32, page_size: u32) -> PledgePage {
+        let page_size = if page_size == 0 {
+            20
+        } else {
+            page_size.min(MAX_PAGE_SIZE)
+        };
+        let total = index_len(&env, &IndexKey::DonorPledgeLen(donor.clone()));
+        let start = (page as u64) * (page_size as u64);
+        let mut items: Vec<DonationPledge> = Vec::new(&env);
+        if start < total as u64 {
+            let end = (start + page_size as u64).min(total as u64);
+            for i in start..end {
+                let id: Option<u64> =
+                    get_persistent(&env, &IndexKey::DonorPledgeAt(donor.clone(), i as u32));
+                if let Some(p) = id.and_then(|id| load_pledge(&env, id)) {
+                    items.push_back(p);
+                }
+            }
+        }
+        PledgePage {
+            items,
+            total: total as u64,
+            page,
+            page_size,
+        }
+    }
+
+    /// Pause (`active = false`) or resume a pledge. Donor only. Emits
+    /// `("pledge", "status")` whenever the flag actually changes.
     pub fn set_pledge_active(
         env: Env,
         pledge_id: u64,
@@ -1643,13 +1856,28 @@ impl PaymentContract {
         if p.donor != donor {
             return Err(Error::NotPledgeDonor);
         }
+        if p.active == active {
+            return Ok(());
+        }
         p.active = active;
         store_pledge(&env, &p);
+        PledgeStatusChanged {
+            pledge_id,
+            donor,
+            active,
+        }
+        .publish(&env);
         Ok(())
     }
 
     // ── Vesting ────────────────────────────────────────────────────────────────
 
+    /// Create a vesting schedule funded by `admin`. Returns the schedule ID.
+    ///
+    /// Accrual starts now and runs linearly for `duration_secs`; nothing can
+    /// be claimed for the first `cliff_secs` (see [`VestingSchedule`]). A
+    /// donor may hold several schedules at once. `reward_token` must be on
+    /// the token allowlist.
     pub fn create_vesting(
         env: Env,
         admin: Address,
@@ -1658,18 +1886,10 @@ impl PaymentContract {
         total_amount: i128,
         cliff_secs: u64,
         duration_secs: u64,
-    ) -> Result<(), Error> {
+    ) -> Result<u64, Error> {
         admin.require_auth();
         Self::require_not_paused(&env)?;
-
-        let stored_admin: Address = env
-            .storage()
-            .instance()
-            .get(&ADMIN_KEY)
-            .ok_or(Error::Unauthorized)?;
-        if admin != stored_admin {
-            return Err(Error::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
 
         if total_amount <= 0 {
             return Err(Error::InvalidAmount);
@@ -1683,17 +1903,8 @@ impl PaymentContract {
         if duration_secs > MAX_VESTING_DURATION_SECS {
             return Err(Error::InvalidVestingSchedule);
         }
-
-        // Reject if donor already has an active (uncompleted) vesting schedule.
-        // Overwriting it would silently destroy unclaimed rewards.
-        if let Some(existing) = load_vesting(&env, &donor) {
-            if existing.claimed < existing.total_amount {
-                return Err(Error::ActiveVestingExists);
-            }
-        }
-
-        if load_vesting(&env, &donor).is_some() {
-            return Err(Error::ActiveVestingExists);
+        if !Self::is_allowed_token(env.clone(), reward_token.clone()) {
+            return Err(Error::TokenNotAllowed);
         }
 
         // Overflow is an error: clamping to `now` would make the whole amount
@@ -1702,63 +1913,60 @@ impl PaymentContract {
         let cliff_timestamp = now.checked_add(cliff_secs).ok_or(Error::Overflow)?;
         let vest_end_timestamp = now.checked_add(duration_secs).ok_or(Error::Overflow)?;
 
+        let schedule_id = next_vesting_id(&env);
+
         add_reserve(&env, &vesting_reserve_key(&reward_token), total_amount)?;
         let token_client = token::Client::new(&env, &reward_token);
         token_client.transfer(&admin, env.current_contract_address(), &total_amount);
 
         let schedule = VestingSchedule {
+            id: schedule_id,
             donor: donor.clone(),
             reward_token: reward_token.clone(),
             total_amount,
+            start_timestamp: now,
             cliff_timestamp,
             vest_end_timestamp,
             claimed: 0,
+            revoked: false,
         };
 
         store_vesting(&env, &schedule);
 
         VestingCreated {
+            schedule_id,
             donor,
             total_amount,
+            start_timestamp: now,
             cliff_timestamp,
             vest_end_timestamp,
         }
         .publish(&env);
 
-        Ok(())
+        Ok(schedule_id)
     }
 
-    pub fn claim_vested(env: Env, donor: Address) -> Result<i128, Error> {
+    /// Claim everything vested and not yet claimed on one schedule.
+    /// Returns the amount transferred to `donor`. The schedule is removed
+    /// once it is fully claimed.
+    pub fn claim_vested(env: Env, donor: Address, schedule_id: u64) -> Result<i128, Error> {
         donor.require_auth();
         Self::require_not_paused(&env)?;
 
         // The payout token is the one bound to the schedule at creation
         // (#1154); it is never caller-supplied.
-        let mut schedule = load_vesting(&env, &donor).ok_or(Error::VestingNotFound)?;
+        let mut schedule = load_vesting(&env, &donor, schedule_id).ok_or(Error::VestingNotFound)?;
 
         let now = env.ledger().timestamp();
 
-        if now < schedule.cliff_timestamp {
+        if !schedule.revoked && now < schedule.cliff_timestamp {
             return Err(Error::CliffNotReached);
         }
 
-        let vested = if now >= schedule.vest_end_timestamp {
-            schedule.total_amount
-        } else {
-            let elapsed = now.saturating_sub(schedule.cliff_timestamp);
-            let duration = schedule
-                .vest_end_timestamp
-                .checked_sub(schedule.cliff_timestamp)
-                .unwrap_or(1);
-            (schedule
-                .total_amount
-                .checked_mul(elapsed as i128)
-                .unwrap_or(0))
-            .checked_div(duration as i128)
-            .unwrap_or(0)
-        };
-
-        let claimable = vested.checked_sub(schedule.claimed).unwrap_or(0);
+        let vested = vested_amount(&schedule, now)?;
+        let claimable = vested
+            .checked_sub(schedule.claimed)
+            .ok_or(Error::Overflow)?;
         if claimable <= 0 {
             return Err(Error::NothingToClaim);
         }
@@ -1766,7 +1974,7 @@ impl PaymentContract {
         let new_claimed = schedule
             .claimed
             .checked_add(claimable)
-            .unwrap_or(schedule.claimed);
+            .ok_or(Error::Overflow)?;
         if new_claimed > schedule.total_amount {
             return Err(Error::NothingToClaim);
         }
@@ -1774,7 +1982,7 @@ impl PaymentContract {
         schedule.claimed = new_claimed;
 
         if schedule.claimed == schedule.total_amount {
-            remove_vesting(&env, &donor);
+            remove_vesting(&env, &donor, schedule_id);
         } else {
             store_vesting(&env, &schedule);
         }
@@ -1789,6 +1997,7 @@ impl PaymentContract {
         ensure_reserves_covered(&env, &schedule.reward_token)?;
 
         VestingClaimed {
+            schedule_id,
             donor,
             claimable,
             new_claimed,
@@ -1798,8 +2007,93 @@ impl PaymentContract {
         Ok(claimable)
     }
 
-    pub fn get_vesting(env: Env, donor: Address) -> Result<VestingSchedule, Error> {
-        load_vesting(&env, &donor).ok_or(Error::VestingNotFound)
+    /// Revoke a vesting schedule. Admin only.
+    ///
+    /// Accrual stops now. The unvested remainder is transferred back to
+    /// `admin` and released from the vesting reserve. Anything already vested
+    /// but not yet claimed stays claimable by the donor through
+    /// `claim_vested`. Revoking before the cliff returns the whole amount,
+    /// since the donor is not entitled to anything until the cliff. Returns
+    /// the amount returned to `admin`.
+    pub fn revoke_vesting(
+        env: Env,
+        admin: Address,
+        donor: Address,
+        schedule_id: u64,
+    ) -> Result<i128, Error> {
+        admin.require_auth();
+        Self::require_not_paused(&env)?;
+        Self::require_admin(&env, &admin)?;
+
+        let mut schedule = load_vesting(&env, &donor, schedule_id).ok_or(Error::VestingNotFound)?;
+        if schedule.revoked {
+            return Err(Error::VestingRevoked);
+        }
+
+        let now = env.ledger().timestamp();
+        // Before the cliff the donor is entitled to nothing.
+        let vested = if now < schedule.cliff_timestamp {
+            0
+        } else {
+            vested_amount(&schedule, now)?
+        };
+        let unvested = schedule
+            .total_amount
+            .checked_sub(vested)
+            .ok_or(Error::Overflow)?;
+        if unvested <= 0 {
+            return Err(Error::NothingToRevoke);
+        }
+
+        schedule.total_amount = vested;
+        schedule.vest_end_timestamp = now;
+        schedule.revoked = true;
+        let vested_remaining = vested
+            .checked_sub(schedule.claimed)
+            .ok_or(Error::Overflow)?;
+        if vested_remaining <= 0 {
+            remove_vesting(&env, &donor, schedule_id);
+        } else {
+            store_vesting(&env, &schedule);
+        }
+
+        release_reserve(&env, &vesting_reserve_key(&schedule.reward_token), unvested);
+        let token_client = token::Client::new(&env, &schedule.reward_token);
+        token_client.transfer(&env.current_contract_address(), &admin, &unvested);
+        ensure_reserves_covered(&env, &schedule.reward_token)?;
+
+        VestingRevokedEvent {
+            schedule_id,
+            donor,
+            unvested_returned: unvested,
+            vested_remaining,
+        }
+        .publish(&env);
+
+        Ok(unvested)
+    }
+
+    pub fn get_vesting(
+        env: Env,
+        donor: Address,
+        schedule_id: u64,
+    ) -> Result<VestingSchedule, Error> {
+        load_vesting(&env, &donor, schedule_id).ok_or(Error::VestingNotFound)
+    }
+
+    /// Amount `claim_vested` would pay out right now for this schedule
+    /// (0 before the cliff).
+    pub fn get_claimable_vested(env: Env, donor: Address, schedule_id: u64) -> Result<i128, Error> {
+        let schedule = load_vesting(&env, &donor, schedule_id).ok_or(Error::VestingNotFound)?;
+        let now = env.ledger().timestamp();
+        if !schedule.revoked && now < schedule.cliff_timestamp {
+            return Ok(0);
+        }
+        let vested = vested_amount(&schedule, now)?;
+        Ok(vested
+            .checked_sub(schedule.claimed)
+            .ok_or(Error::Overflow)?
+            .max(0))
     }
 
     /// Total unclaimed vesting rewards denominated in `token`.
@@ -1983,6 +2277,13 @@ impl PaymentContract {
 
     /// Load one page of an index. `page_size` 0 means the default of 20 and
     /// is capped at MAX_PAGE_SIZE so a single call cannot read an entire index.
+    ///
+    /// Every index entry and payment record read here has its TTL extended
+    /// (#1804), so entries that are being paged through cannot archive while
+    /// the `*Len` counter still counts them. Index entries are never removed
+    /// without the counter being updated, so the only way `items` comes back
+    /// shorter than the page is when an entry is genuinely missing; such an
+    /// entry is skipped, and `total` is still the index length.
     fn load_page(
         env: &Env,
         total: u32,
@@ -2001,7 +2302,7 @@ impl PaymentContract {
         if start < total as u64 {
             let end = (start + page_size as u64).min(total as u64);
             for i in start..end {
-                let id: Option<u64> = env.storage().persistent().get(&entry_key(i as u32));
+                let id: Option<u64> = get_persistent(env, &entry_key(i as u32));
                 if let Some(p) = id.and_then(|id| load_payment(env, id)) {
                     items.push_back(p);
                 }
@@ -2045,5 +2346,6 @@ impl PaymentContract {
 }
 
 mod test;
+mod test_pledges_vesting_ttl;
 mod test_security_fixes;
 mod test_settlement_fixes;

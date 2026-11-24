@@ -1079,6 +1079,81 @@ impl InventoryContract {
         Ok(())
     }
 
+    /// Close a reservation by marking its units `Compromised` rather than
+    /// returning them to `Available`. Called by the trusted requests contract
+    /// when an InProgress request is rejected after a failed delivery
+    /// (cold-chain breach, accident, refused units): those units must not
+    /// re-enter matching.
+    ///
+    /// Same trust model as `release_reservation_by_contract`: the caller must
+    /// authorize as `authorized_contract`, which must equal the requests
+    /// contract configured via `set_requests_contract`.
+    ///
+    /// Units in `Reserved` or `InTransit` move to `Compromised`; units already
+    /// in a terminal or end-of-life state (`Delivered`, `Expired`,
+    /// `Compromised`, `Disposed`) or back in `Available` are left alone. The
+    /// reservation is removed. Returns the number of units compromised.
+    ///
+    /// # Errors
+    /// - `ContractPaused` if the contract is paused
+    /// - `Unauthorized` if `authorized_contract` is not the trusted requests contract
+    /// - `ReservationNotFound` if the reservation does not exist
+    pub fn compromise_reservation_by_ctr(
+        env: Env,
+        authorized_contract: Address,
+        reservation_id: u64,
+        reason: String,
+    ) -> Result<u32, ContractError> {
+        Self::require_not_paused(&env)?;
+        authorized_contract.require_auth();
+
+        let trusted: Option<Address> = env.storage().instance().get(&DataKey::RequestsContractId);
+        match trusted {
+            Some(ref requests_contract) if *requests_contract == authorized_contract => {}
+            _ => return Err(ContractError::Unauthorized),
+        }
+
+        let reservation = storage::get_reservation(&env, reservation_id)
+            .ok_or(ContractError::ReservationNotFound)?;
+
+        let mut compromised: u32 = 0;
+        for i in 0..reservation.unit_ids.len() {
+            let unit_id = reservation.unit_ids.get(i).ok_or(ContractError::NotFound)?;
+            if let Some(mut unit) = storage::get_blood_unit(&env, unit_id) {
+                let old_status = unit.status;
+                if !matches!(old_status, BloodStatus::Reserved | BloodStatus::InTransit) {
+                    continue;
+                }
+                unit.status = BloodStatus::Compromised;
+                storage::set_blood_unit(&env, &unit);
+                storage::remove_from_status_index(&env, unit_id, old_status);
+                storage::add_to_status_index(&env, &unit);
+                storage::record_status_change(
+                    &env,
+                    unit_id,
+                    old_status,
+                    BloodStatus::Compromised,
+                    &authorized_contract,
+                    Some(reason.clone()),
+                );
+                events::emit_status_change(
+                    &env,
+                    unit_id,
+                    old_status,
+                    BloodStatus::Compromised,
+                    &authorized_contract,
+                    Some(reason.clone()),
+                );
+                compromised += 1;
+            }
+        }
+
+        storage::remove_reservation(&env, reservation_id);
+        events::emit_reservation_compromised(&env, reservation_id, compromised);
+
+        Ok(compromised)
+    }
+
     /// Release a reservation, returning all units to `Available`.
     ///
     /// Can only be called by the original reserver or admin (external authorization).
