@@ -2,7 +2,7 @@ import { TableColumn, TableIndex, Table, TableForeignKey } from 'typeorm';
 
 import type { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class EnhanceBloodRequestWorkflow1773000000000 implements MigrationInterface {
+export class EnhanceBloodRequestWorkflow1773000000001 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     // Add new columns to blood_requests table
     const newColumns = [
