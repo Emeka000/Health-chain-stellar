@@ -301,3 +301,126 @@ fn test_process_expired_disputes_rejects_oversized_batch() {
         Err(Ok(Error::BatchTooLarge))
     );
 }
+
+// ── Settlement coordinator role split ─────────────────────────────────────────
+
+/// With the coordinator wired as the settlement coordinator, the admin keeps
+/// dispute resolution and the token allowlist.
+#[test]
+fn test_admin_keeps_dispute_resolution_and_allowlist_with_coordinator_set() {
+    let s = setup(true);
+    let coordinator = Address::generate(&s.env);
+    s.client.set_coordinator(&s.admin, &coordinator);
+    assert_eq!(s.client.get_coordinator(), Some(coordinator.clone()));
+
+    let request_id = new_request(&s);
+    let escrow_id = s
+        .client
+        .create_escrow(&request_id, &s.hospital, &s.payee, &500, &s.token);
+
+    // The coordinator can open a dispute (e.g. a temperature excursion)...
+    s.client.record_dispute(
+        &escrow_id,
+        &DisputeReason::TemperatureExcursion,
+        &String::from_str(&s.env, "TEMP-EXCURSION"),
+        &coordinator,
+    );
+    // ...but only the admin can resolve it, here releasing to the payee.
+    assert_eq!(
+        s.client
+            .try_resolve_dispute(&escrow_id, &DisputeResolution::ReleaseToPayee, &coordinator),
+        Err(Ok(Error::Unauthorized))
+    );
+    s.client
+        .resolve_dispute(&escrow_id, &DisputeResolution::ReleaseToPayee, &s.admin);
+    assert_eq!(
+        s.client.get_payment(&escrow_id).status,
+        PaymentStatus::Released
+    );
+    assert_eq!(
+        soroban_sdk::token::Client::new(&s.env, &s.token).balance(&s.payee),
+        500
+    );
+
+    // The admin still manages the allowlist.
+    let new_token = s
+        .env
+        .register_stellar_asset_contract_v2(s.admin.clone())
+        .address();
+    s.client.add_allowed_token(&s.admin, &new_token);
+    assert!(s.client.is_allowed_token(&new_token));
+    s.client.remove_allowed_token(&s.admin, &new_token);
+    assert!(!s.client.is_allowed_token(&new_token));
+}
+
+/// The settlement coordinator cannot call admin-only configuration functions.
+#[test]
+fn test_coordinator_cannot_call_admin_configuration() {
+    let s = setup(true);
+    let coordinator = Address::generate(&s.env);
+    s.client.set_coordinator(&s.admin, &coordinator);
+
+    let token = s
+        .env
+        .register_stellar_asset_contract_v2(s.admin.clone())
+        .address();
+    assert_eq!(
+        s.client.try_add_allowed_token(&coordinator, &token),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        s.client.try_remove_allowed_token(&coordinator, &s.token),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        s.client.try_set_dispute_timeout(&coordinator, &3_600),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        s.client.try_pause(&coordinator),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        s.client.try_set_coordinator(&coordinator, &coordinator),
+        Err(Ok(Error::Unauthorized))
+    );
+}
+
+/// The settlement coordinator can drive escrow release and refund.
+#[test]
+fn test_coordinator_can_release_and_refund_escrow() {
+    let s = setup(true);
+    let coordinator = Address::generate(&s.env);
+    s.client.set_coordinator(&s.admin, &coordinator);
+    let token = soroban_sdk::token::Client::new(&s.env, &s.token);
+
+    let released_id = s
+        .client
+        .create_escrow(&new_request(&s), &s.hospital, &s.payee, &300, &s.token);
+    s.client.release_escrow(&coordinator, &released_id);
+    s.client.confirm_receipt(&released_id, &s.hospital);
+    assert_eq!(
+        s.client.get_payment(&released_id).status,
+        PaymentStatus::Released
+    );
+    assert_eq!(token.balance(&s.payee), 300);
+
+    let refunded_id = s
+        .client
+        .create_escrow(&new_request(&s), &s.hospital, &s.payee, &200, &s.token);
+    s.client.refund_escrow(&coordinator, &refunded_id);
+    assert_eq!(
+        s.client.get_payment(&refunded_id).status,
+        PaymentStatus::Refunded
+    );
+
+    // An unrelated address is still rejected.
+    let stranger = Address::generate(&s.env);
+    let other_id = s
+        .client
+        .create_escrow(&new_request(&s), &s.hospital, &s.payee, &100, &s.token);
+    assert_eq!(
+        s.client.try_release_escrow(&stranger, &other_id),
+        Err(Ok(Error::Unauthorized))
+    );
+}

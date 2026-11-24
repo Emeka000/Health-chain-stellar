@@ -202,6 +202,21 @@ After initialization, wire cross-contract references that were not set during `i
 stellar contract invoke --id $TEMPERATURE_ID --source $IDENTITY --network $NETWORK \
     -- set_coordinator --admin $ADMIN_ADDRESS --coordinator $COORDINATOR_ID
 
+# Register the coordinator as the payments settlement coordinator. Do NOT make
+# the coordinator the payments admin: the admin keeps resolve_dispute, the token
+# allowlist, dispute timeouts, vesting, pause and upgrade, while the coordinator
+# may only release/refund escrows, record disputes and settle Locked payments.
+stellar contract invoke --id $PAYMENTS_ID --source $IDENTITY --network $NETWORK \
+    -- set_coordinator --admin $ADMIN_ADDRESS --coordinator $COORDINATOR_ID
+
+# Let the coordinator refuse delivery/settlement of compromised units
+stellar contract invoke --id $COORDINATOR_ID --source $IDENTITY --network $NETWORK \
+    -- set_temperature_contract --admin $ADMIN_ADDRESS --temperature_contract $TEMPERATURE_ID
+
+# Trust the requests contract to release inventory reservations on cancellation
+stellar contract invoke --id $INVENTORY_ID --source $IDENTITY --network $NETWORK \
+    -- set_requests_contract --admin $ADMIN_ADDRESS --requests_contract_id $REQUESTS_ID
+
 # Wire payments → requests for request validation
 stellar contract invoke --id $PAYMENTS_ID --source $IDENTITY --network $NETWORK \
     -- set_requests_contract --admin $ADMIN_ADDRESS --requests_contract $REQUESTS_ID

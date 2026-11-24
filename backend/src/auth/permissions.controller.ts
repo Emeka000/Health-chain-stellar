@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Body, Param, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { IsNotEmpty, IsObject, IsString } from 'class-validator';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
@@ -9,6 +10,15 @@ import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { PermissionsService } from '../auth/permissions.service';
 import { ScopeResolutionService } from '../auth/scope-resolution.service';
 import { ScopeEvaluationContext } from '../auth/scope-resolution.types';
+
+export class EvaluateScopeDto {
+  @IsString()
+  @IsNotEmpty()
+  scope: string;
+
+  @IsObject()
+  context: ScopeEvaluationContext;
+}
 
 @ApiTags('Permissions')
 @ApiBearerAuth()
@@ -52,9 +62,7 @@ export class PermissionsController {
   @Post('evaluate')
   @RequirePermissions(Permission.MANAGE_ROLES)
   @ApiOperation({ summary: 'Evaluate a scope decision with full trace' })
-  async evaluateScope(
-    @Body() body: { scope: string; context: ScopeEvaluationContext },
-  ) {
+  async evaluateScope(@Body() body: EvaluateScopeDto) {
     return this.scopeResolutionService.evaluate(body.scope, body.context);
   }
 }

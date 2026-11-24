@@ -66,6 +66,16 @@ pub fn get_payments_contract(env: &Env) -> Option<Address> {
     env.storage().instance().get(&DataKey::PaymentsContract)
 }
 
+pub fn set_coordinator_contract(env: &Env, coordinator_contract: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::CoordinatorContract, coordinator_contract);
+}
+
+pub fn get_coordinator_contract(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::CoordinatorContract)
+}
+
 pub fn set_request_counter(env: &Env, value: u64) {
     env.storage()
         .instance()
@@ -186,6 +196,14 @@ pub fn set_request_rider(env: &Env, request_id: u64, rider: &Address) {
     env.storage()
         .persistent()
         .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+}
+
+/// Drop the rider assignment, so a new `assign_rider` is required before the
+/// request can be picked up again.
+pub fn clear_request_rider(env: &Env, request_id: u64) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::RequestRider(request_id));
 }
 
 pub fn get_request_rider(env: &Env, request_id: u64) -> Option<Address> {

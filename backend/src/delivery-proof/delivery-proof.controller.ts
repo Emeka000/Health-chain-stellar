@@ -18,19 +18,15 @@ import type { Request } from 'express';
 import { CreateDeliveryProofDto } from './dto/create-delivery-proof.dto';
 import { DeliveryProofQueryDto } from './dto/delivery-proof-query.dto';
 import { DeliveryProofService } from './delivery-proof.service';
-import {
-  QueryDeliveryProofDto,
-  UploadPhotoDto,
-} from './dto/delivery-proof.dto';
+import { UploadPhotoDto } from './dto/upload-photo.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
-import { Role } from '../auth/enums/role.enum';
 
 interface AuthenticatedUser {
   id: string;
-  role: Role;
+  role: string;
   permissions?: Permission[];
 }
 

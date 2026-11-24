@@ -14,6 +14,12 @@ pub enum WorkflowStatus {
     Settled,
     /// Workflow rolled back; units released, payment refunded.
     RolledBack,
+    /// settle_payment recorded the coordinator's half of a two-party escrow
+    /// release, but the hospital has not yet called `confirm_receipt`, so the
+    /// funds are still Locked. `finalize_settlement` moves the workflow to
+    /// Settled once the payment is Released; until then it can still be rolled
+    /// back or expired.
+    AwaitingReceipt,
 }
 
 /// Per-request workflow record stored in the coordinator.
@@ -58,6 +64,9 @@ pub enum DataKey {
     PaymentContract,
     /// Address authorized to call flag_temperature_breach (the temperature-oracle contract).
     TemperatureOracle,
+    /// Temperature contract queried via `is_compromised` before delivery and
+    /// settlement, so units with a sustained excursion are never delivered or paid for.
+    TemperatureContract,
     Workflow(u64),
     Paused,
     /// Emergency halt flag — set by emergency_halt(); blocks all in-flight

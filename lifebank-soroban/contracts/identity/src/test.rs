@@ -2364,3 +2364,33 @@ fn test_accept_admin_emits_event() {
         TryFromVal::try_from_val(&env, &topics.get(topics.len() - 1).unwrap()).unwrap();
     assert_eq!(event_topic, Symbol::new(&env, "admin_transferred"));
 }
+
+// ── Instance storage TTL ──────────────────────────────────────────────────────
+
+/// Advance the ledger well past the default instance TTL (4096 ledgers in the
+/// test environment) and past the bump threshold, so a contract that never
+/// extends its instance entry would find it archived on the next call.
+fn advance_past_default_instance_ttl(env: &Env) {
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 600_000;
+        li.timestamp += 600_000 * 5;
+    });
+}
+
+#[test]
+fn test_identity_instance_ttl_extended_across_long_ledger_gaps() {
+    let (env, client, admin) = setup_identity();
+
+    advance_past_default_instance_ttl(&env);
+    assert!(client.is_initialized());
+    assert_eq!(client.get_admin(), admin);
+    assert_eq!(client.get_org_counter(), 0);
+
+    advance_past_default_instance_ttl(&env);
+    assert!(!client.is_paused());
+    assert_eq!(client.get_admin(), admin);
+
+    advance_past_default_instance_ttl(&env);
+    assert_eq!(client.get_org_counter(), 0);
+    assert_eq!(client.get_pending_admin(), None);
+}

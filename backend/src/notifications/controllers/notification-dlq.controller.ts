@@ -1,9 +1,25 @@
 import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiPropertyOptional, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { IsOptional, IsString, MaxLength } from 'class-validator';
 import { RequirePermissions } from '../../auth/decorators/require-permissions.decorator';
 import { Permission } from '../../auth/enums/permission.enum';
 import { DlqEntryStatus } from '../entities/notification-dlq.entity';
 import { NotificationDlqService } from '../services/notification-dlq.service';
+
+export class ReplayBulkDto {
+  @ApiPropertyOptional({ description: 'Optional channel filter' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  channel?: string;
+}
+
+export class AbandonDlqEntryDto {
+  @ApiPropertyOptional({ description: 'Reason for abandoning the entry' })
+  @IsString()
+  @MaxLength(500)
+  reason!: string;
+}
 
 @ApiTags('Notifications')
 @ApiBearerAuth()
@@ -43,7 +59,7 @@ export class NotificationDlqController {
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('replay/bulk')
   replayBulk(
-    @Body() body: { channel?: string },
+    @Body() body: ReplayBulkDto,
     @Req() req: { user?: { id?: string } },
   ) {
     return this.dlqService.replayBulk(req.user?.id ?? 'system', body.channel);
@@ -55,7 +71,7 @@ export class NotificationDlqController {
   @Post(':id/abandon')
   abandon(
     @Param('id') id: string,
-    @Body() body: { reason: string },
+    @Body() body: AbandonDlqEntryDto,
     @Req() req: { user?: { id?: string } },
   ) {
     return this.dlqService.abandon(id, body.reason, req.user?.id ?? 'system');

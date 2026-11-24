@@ -1,4 +1,10 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, LessThanOrEqual, Repository } from 'typeorm';
 import { Response } from 'express';
@@ -15,6 +21,10 @@ import {
 } from '../soroban/entities/reconciliation-log.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationChannel } from '../notifications/enums/notification-channel.enum';
+import { OrderEntity } from '../orders/entities/order.entity';
+import { PaymentEntity } from '../payments/entities/payment.entity';
+import { PermissionsService } from '../auth/permissions.service';
+import { Permission } from '../auth/enums/permission.enum';
 
 const MAX_LIMIT = 100;
 const CURSOR_SECRET = process.env.CURSOR_SECRET ?? 'disputes-cursor-secret';
@@ -42,11 +52,48 @@ export class DisputesService {
     private readonly noteRepo: Repository<DisputeNoteEntity>,
     @InjectRepository(ReconciliationLogEntity)
     private readonly reconciliationLogRepo: Repository<ReconciliationLogEntity>,
+    @InjectRepository(OrderEntity)
+    private readonly orderRepo: Repository<OrderEntity>,
+    @InjectRepository(PaymentEntity)
+    private readonly paymentRepo: Repository<PaymentEntity>,
+    private readonly permissionsService: PermissionsService,
     private readonly sorobanService: SorobanService,
     private readonly notificationsService: NotificationsService,
   ) {}
 
   async open(dto: OpenDisputeDto, openedBy: string): Promise<DisputeEntity> {
+    if (!dto.orderId && !dto.paymentId) {
+      throw new BadRequestException('A dispute must reference an orderId or a paymentId');
+    }
+
+    let order: OrderEntity | null = null;
+    if (dto.orderId) {
+      order = await this.orderRepo.findOne({ where: { id: dto.orderId } });
+      if (!order) {
+        throw new BadRequestException(`Order '${dto.orderId}' not found`);
+      }
+    }
+
+    if (dto.paymentId) {
+      const payment = await this.paymentRepo.findOne({ where: { id: dto.paymentId } });
+      if (!payment) {
+        throw new BadRequestException(`Payment '${dto.paymentId}' not found`);
+      }
+      if (order && payment.orderId && payment.orderId !== order.id) {
+        throw new BadRequestException(
+          `Payment '${dto.paymentId}' does not belong to order '${order.id}'`,
+        );
+      }
+      if (!order && payment.orderId) {
+        order = await this.orderRepo.findOne({ where: { id: payment.orderId } });
+        if (!order) {
+          throw new BadRequestException(`Order '${payment.orderId}' not found`);
+        }
+      }
+    }
+
+    await this.assertCanOpenDispute(order, openedBy);
+
     const timeoutOwner: 'CHAIN' | 'BACKEND' = dto.paymentId ? 'CHAIN' : 'BACKEND';
     const deadline = new Date(Date.now() + DEFAULT_DISPUTE_TIMEOUT_SECONDS * 1000);
     const dispute = this.disputeRepo.create({
@@ -63,6 +110,28 @@ export class DisputesService {
       timeoutDecisionReason: null,
     });
     return this.disputeRepo.save(dispute);
+  }
+
+  private async assertCanOpenDispute(
+    order: OrderEntity | null,
+    userId: string,
+  ): Promise<void> {
+    if (order) {
+      const hospitalId = (order as any).hospitalId ?? (order as any).hospital?.id ?? null;
+      const bloodBankId =
+        (order as any).bloodBankId ?? (order as any).bloodBank?.id ?? null;
+      if (hospitalId === userId || bloodBankId === userId) {
+        return;
+      }
+    }
+
+    const canResolve = await this.permissionsService.hasPermission(
+      userId,
+      Permission.DISPUTE_RESOLVE,
+    );
+    if (!canResolve) {
+      throw new ForbiddenException('You are not allowed to open a dispute for this order');
+    }
   }
 
   async list(filters: {
@@ -134,7 +203,7 @@ export class DisputesService {
       {
         resolutionNotes: dto.resolutionNotes,
         outcome: dto.outcome,
-        resolvedBy: dto.resolvedBy,
+        resolvedBy,
         status: DisputeStatus.RESOLVED,
         resolvedAt: now,
         timeoutProcessedAt: d.timeoutProcessedAt ?? now,

@@ -7,6 +7,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { CompensationModule } from '../common/compensation/compensation.module';
 import { SorobanModule } from '../soroban/soroban.module';
+import { SorobanSubmissionService } from './services/soroban-submission.service';
 
 import { BlockchainController } from './controllers/blockchain.controller';
 import { DlqReplayAuditEntity } from './entities/dlq-replay-audit.entity';
@@ -89,6 +90,7 @@ import { SorobanService } from './services/soroban.service';
   ],
   providers: [
     SorobanService,
+    SorobanSubmissionService,
     ConfirmationService,
     IdempotencyService,
     JobDeduplicationPlugin,
@@ -101,6 +103,11 @@ import { SorobanService } from './services/soroban.service';
     AdminGuard,
   ],
   controllers: [BlockchainController],
-  exports: [SorobanService, QueueMetricsService, DlqReplayAuditService],
+  exports: [
+    SorobanService,
+    SorobanSubmissionService,
+    QueueMetricsService,
+    DlqReplayAuditService,
+  ],
 })
 export class BlockchainModule {}

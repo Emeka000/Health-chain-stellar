@@ -161,12 +161,13 @@ export class BlockchainController {
       throw new BadRequestException('Callback is stale');
     }
 
-    const replayAllowed =
-      await this.sorobanService.checkAndSetCallbackIdempotency(
-        callback.eventId,
-      );
+    // Only reject a replay once the callback has actually been processed.
+    // The idempotency key is set after successful processing so that a
+    // failed attempt can be retried with the same eventId.
+    const alreadyProcessed =
+      await this.sorobanService.isCallbackProcessed(callback.eventId);
 
-    if (!replayAllowed) {
+    if (alreadyProcessed) {
       this.logger.warn('Blockchain callback replay detected', {
         eventId: callback.eventId,
       });
@@ -174,6 +175,8 @@ export class BlockchainController {
     }
 
     await this.sorobanService.processWebhookCallback(callback);
+
+    await this.sorobanService.markCallbackProcessed(callback.eventId);
 
     this.logger.log('Blockchain callback processed successfully', {
       eventId: callback.eventId,
