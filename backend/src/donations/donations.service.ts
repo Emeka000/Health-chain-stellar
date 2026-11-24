@@ -76,6 +76,41 @@ export class DonationsService {
     donation.status = DonationStatus.COMPLETED;
     donation.transactionHash = transactionHash;
     donation.confirmedAt = new Date();
+
+    if (!donation.paymentId) {
+      const paymentId = await this.resolvePaymentId(donation, transactionHash);
+      if (paymentId !== null) {
+        donation.paymentId = paymentId;
+      }
+    }
+
     return this.donationRepository.save(donation);
+  }
+
+  /**
+   * Resolve the on-chain u64 payment id for a donation so reconciliation can
+   * call `get_payment(payment_id)` instead of passing a transaction hash.
+   */
+  private async resolvePaymentId(
+    donation: Donation,
+    transactionHash: string,
+  ): Promise<string | null> {
+    try {
+      const byRequest = await this.sorobanService.getPaymentByRequest({
+        transactionHash,
+        memo: donation.memo,
+        payerAddress: donation.payerAddress,
+      });
+      if (byRequest !== null && byRequest !== undefined) {
+        return byRequest.toString();
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Could not resolve payment id for donation ${donation.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    return null;
   }
 }
