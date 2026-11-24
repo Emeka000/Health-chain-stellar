@@ -45,6 +45,8 @@ pub enum ContractError {
     InventoryReleaseFailed = 323,
     /// `expire_request` was called before the request's `required_by_timestamp` passed.
     RequestNotExpired = 324,
+    /// No trusted coordinator contract has been configured.
+    CoordinatorContractNotSet = 325,
 }
 
 #[cfg(test)]
@@ -81,6 +83,7 @@ mod tests {
             ContractError::ReservationRequired,
             ContractError::InventoryReleaseFailed,
             ContractError::RequestNotExpired,
+            ContractError::CoordinatorContractNotSet,
         ];
 
         for i in 0..all.len() {

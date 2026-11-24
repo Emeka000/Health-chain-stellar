@@ -20,18 +20,9 @@ pub struct PaymentsContractSet {
     pub payments_contract: Address,
 }
 
-/// Emitted when an InProgress request's delivery fails (#1805).
-/// `new_status` is `Approved` (retry with a new rider; reservation kept) or
-/// `Rejected` (reservation units marked Compromised in inventory, in which
-/// case `reservation_compromised` is true if the request held one).
-#[contractevent(topics = ["delivery_failed"], data_format = "vec")]
-pub struct DeliveryFailed {
-    pub request_id: u64,
-    pub actor: Address,
-    pub rider: Option<Address>,
-    pub new_status: RequestStatus,
-    pub reservation_compromised: bool,
-    pub timestamp: u64,
+#[contractevent(topics = ["coordinator_contract_set"], data_format = "single-value")]
+pub struct CoordinatorContractSet {
+    pub coordinator_contract: Address,
 }
 
 #[contractevent(topics = ["request_cancelled"], data_format = "vec")]
@@ -142,6 +133,13 @@ pub fn emit_request_created(env: &Env, request: &BloodRequest) {
 pub fn emit_payments_contract_set(env: &Env, payments_contract: &Address) {
     PaymentsContractSet {
         payments_contract: payments_contract.clone(),
+    }
+    .publish(env);
+}
+
+pub fn emit_coordinator_contract_set(env: &Env, coordinator_contract: &Address) {
+    CoordinatorContractSet {
+        coordinator_contract: coordinator_contract.clone(),
     }
     .publish(env);
 }

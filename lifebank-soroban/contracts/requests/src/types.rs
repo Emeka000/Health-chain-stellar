@@ -31,6 +31,7 @@ pub enum DataKey {
     /// One entry per request keeps every storage entry small, so the history
     /// can grow without hitting the per-entry size limit.
     HospitalRequestAt(Address, u32),
+    CoordinatorContract,          // Trusted coordinator contract allowed to drive request status
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

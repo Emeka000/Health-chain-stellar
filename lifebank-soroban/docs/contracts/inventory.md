@@ -105,7 +105,7 @@ pub fn update_status(
 ) -> Result<BloodUnit, ContractError>
 ```
 
-Transitions a blood unit to a new status. `authorized_by` must be the admin or the unit's owning bank.
+Transitions a blood unit to a new status. `authorized_by` must be the admin or the unit's owning bank, or the trusted coordinator contract configured via `set_coordinator_contract(admin, coordinator)`. The coordinator passes its own address (no inventory-admin signature) and may only move units to `Reserved`, `InTransit`, `Delivered` or `Available`.
 
 - Validates the transition against the allowed transition matrix.
 - Blocks supply-chain transitions on expired units (only `→ Expired` and `→ Disposed` are allowed past shelf life).
