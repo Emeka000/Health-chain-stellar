@@ -36,7 +36,8 @@ async function bootstrap() {
   const correlationIdMiddleware = new CorrelationIdMiddleware();
   app.use((req, res, next) => correlationIdMiddleware.use(req, res, next));
 
-  if (configService.get<string>('TRUST_PROXY', 'false') === 'true') {
+  const trustProxy = configService.get<boolean>('TRUST_PROXY', false);
+  if (trustProxy) {
     app.getHttpAdapter().getInstance().set('trust proxy', 1);
   }
 
@@ -70,8 +71,7 @@ async function bootstrap() {
   // Swagger/OpenAPI configuration
   // Only mount Swagger outside production, or when explicitly enabled.
   const enableSwagger =
-    !isProduction ||
-    configService.get<string>('ENABLE_SWAGGER', 'false') === 'true';
+    !isProduction || configService.get<boolean>('ENABLE_SWAGGER', false);
 
   if (enableSwagger) {
     const swaggerConfig = new DocumentBuilder()
