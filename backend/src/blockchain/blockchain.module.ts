@@ -1,3 +1,4 @@
+import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { forwardRef, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
@@ -25,19 +26,14 @@ import { FailedSorobanTxService } from './services/failed-soroban-tx.service';
 import { IdempotencyService } from './services/idempotency.service';
 import { QueueMetricsService } from './services/queue-metrics.service';
 import { SorobanService } from './services/soroban.service';
+import { SorobanRpcClient } from '../../soroban/soroban.service';
+import { SorobanProcessor } from './processors/soroban.processor';
+import { SOROBAN_QUEUE } from './constants';
 
 @Module({
   imports: [
-    ConfigModule,
-    JwtModule.registerAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET'),
-        signOptions: {
-          expiresIn: configService.get<string>('JWT_EXPIRES_IN', '1h'),
-        },
-      }),
+    BullModule.registerQueue({
+      name: SOROBAN_QUEUE,
     }),
     CompensationModule,
     RedisModule,

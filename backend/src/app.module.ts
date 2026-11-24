@@ -22,6 +22,8 @@ import { BloodMatchingModule } from './blood-matching/blood-matching.module';
 import { BloodRequestsModule } from './blood-requests/blood-requests.module';
 import { BloodUnitsModule } from './blood-units/blood-units.module';
 import { ColdChainModule } from './cold-chain/cold-chain.module';
+import { ErrorsModule } from './common/errors/errors.module';
+import { LoggerModule } from './common/logger/logger.module';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { CorrelationIdService } from './common/middleware/correlation-id.service';
 import { ApiCompatibilityInterceptor } from './common/versioning/api-compatibility.interceptor';
@@ -81,6 +83,10 @@ import type Redis from 'ioredis';
   imports: [
     // ── Single authoritative configuration bootstrap ──────────────────────
     AppConfigModule,
+
+    // ── Cross-cutting infrastructure (logging + error handling) ───────────
+    LoggerModule,
+    ErrorsModule,
 
     EventEmitterModule.forRoot(),
     ScheduleModule.forRoot(),

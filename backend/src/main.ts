@@ -2,6 +2,7 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -27,6 +28,10 @@ async function bootstrap() {
   DatabaseSyncGuard.validateSynchronizeConfig(nodeEnv, synchronize);
 
   const app = await NestFactory.create(AppModule);
+
+  // Route all Nest logs through Winston (daily rotation + secret redaction).
+  app.useLogger(app.get(WINSTON_MODULE_NEST_PROVIDER));
+
   const configService = app.get(ConfigService);
   const logger = new Logger('Bootstrap');
   const isProduction =

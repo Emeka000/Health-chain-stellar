@@ -2,6 +2,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ForbiddenException,
   UnprocessableEntityException,
   Inject,
 } from '@nestjs/common';
@@ -36,6 +37,17 @@ import { CreateDispatchDto, UpdateDispatchDto } from './dto/dispatch.dto';
 /** TTL for event dedup keys in Redis (1 hour) */
 const DEDUP_TTL_SECONDS = 3600;
 const DEDUP_KEY_PREFIX = 'dispatch:dedup:';
+
+/**
+ * Minimal shape of the authenticated caller passed from the controller.
+ * Access tokens carry no riderId, so the rider record is resolved from the DB.
+ */
+export interface DispatchActor {
+  id: string;
+  organizationId?: string;
+  role?: string;
+  riderId?: string;
+}
 
 @Injectable()
 export class DispatchService {
@@ -111,6 +123,37 @@ export class DispatchService {
     return saved;
   }
 
+  /**
+   * Loads an order and enforces that it belongs to the caller's organization.
+   * Throws 404 when the order does not exist and 403 on cross-tenant access.
+   */
+  private async loadOrderForActor(
+    orderId: string,
+    actor: DispatchActor,
+  ): Promise<OrderEntity> {
+    const order = await this.orderRepo.findOne({ where: { id: orderId } });
+    if (!order) throw new NotFoundException(`Order ${orderId} not found`);
+
+    const orderOrgId = (order as unknown as { organizationId?: string }).organizationId;
+    if (actor.organizationId && orderOrgId && orderOrgId !== actor.organizationId) {
+      throw new ForbiddenException('Order does not belong to your organization');
+    }
+    return order;
+  }
+
+  /**
+   * Resolves the rider record for the caller from the database.
+   * Access tokens carry no riderId, so the user id is used to look it up.
+   */
+  private async resolveCallerRiderId(actor: DispatchActor): Promise<string> {
+    const riderId = actor.riderId ?? actor.id;
+    const rider = await this.riderAssignmentService.findRiderById(riderId);
+    if (!rider) {
+      throw new NotFoundException(`Rider for user ${actor.id} not found`);
+    }
+    return rider.id;
+  }
+
   // ---------------------------------------------------------------------------
   // CRUD (fixes #525)
   // ---------------------------------------------------------------------------
@@ -173,6 +216,57 @@ export class DispatchService {
   }
 
   // ---------------------------------------------------------------------------
+  // Assignment (fixes #1879)
+  // ---------------------------------------------------------------------------
+
+  async assignOrder(orderId: string, riderId: string, actor: DispatchActor) {
+    await this.loadOrderForActor(orderId, actor);
+
+    const rider = await this.riderAssignmentService.findRiderById(riderId);
+    if (!rider) throw new NotFoundException(`Rider ${riderId} not found`);
+    if (!rider.isAvailable) {
+      throw new UnprocessableEntityException(`Rider ${riderId} is not available`);
+    }
+
+    this.eventEmitter.emit(
+      'order.rider.assigned',
+      new OrderRiderAssignedEvent(orderId, rider.id, new Date()),
+    );
+
+    return {
+      message: 'Rider assigned successfully',
+      data: { orderId, riderId: rider.id },
+    };
+  }
+
+  async respondToAssignment(
+    orderId: string,
+    accepted: boolean,
+    actor: DispatchActor,
+  ) {
+    await this.loadOrderForActor(orderId, actor);
+
+    const riderId = await this.resolveCallerRiderId(actor);
+
+    const dispatch = await this.dispatchRepo.findOne({ where: { orderId } });
+    if (!dispatch) throw new NotFoundException(`Dispatch for order ${orderId} not found`);
+    if (dispatch.riderId !== riderId) {
+      throw new ForbiddenException('You can only respond to your own assignment');
+    }
+
+    if (accepted) {
+      await this.transitionStatus(dispatch, DispatchStatus.ACCEPTED, 'rider accepted');
+    } else {
+      await this.transitionStatus(dispatch, DispatchStatus.REJECTED, 'rider rejected');
+    }
+
+    return {
+      message: accepted ? 'Assignment accepted' : 'Assignment rejected',
+      data: { orderId, riderId, accepted },
+    };
+  }
+
+  // ---------------------------------------------------------------------------
   // Event handlers — now update DB records and append history (fixes #525 + #526)
   // ---------------------------------------------------------------------------
 
@@ -212,138 +306,32 @@ export class DispatchService {
     }
 
     this.logger.log(
-      `Handling order.status.updated: ${event.orderId} ${event.previousStatus} → ${event.newStatus}`,
+      `Handling order.status.updated for order ${event.orderId} -> ${event.status}`,
     );
 
     const dispatch = await this.dispatchRepo.findOne({ where: { orderId: event.orderId } });
     if (!dispatch) return;
 
-    // Map order status to dispatch status where applicable
-    const statusMap: Partial<Record<OrderStatus, DispatchStatus>> = {
-      [OrderStatus.DISPATCHED]: DispatchStatus.ASSIGNED,
-      [OrderStatus.IN_TRANSIT]: DispatchStatus.IN_TRANSIT,
-      [OrderStatus.DELIVERED]: DispatchStatus.COMPLETED,
-      [OrderStatus.CANCELLED]: DispatchStatus.CANCELLED,
-    };
-
-    const target = statusMap[event.newStatus as OrderStatus];
-    if (!target) return;
-
-    const allowed = ALLOWED_TRANSITIONS[dispatch.status];
-    if (!allowed.includes(target)) return;
-
-    dispatch.status = target;
-    await this.dispatchRepo.save(dispatch);
-    await this.appendHistory(
-      dispatch.id,
-      target,
-      `order status changed to ${event.newStatus}`,
-    );
-  }
-
-  @OnEvent('order.rider.assigned')
-  async handleOrderRiderAssigned(event: OrderRiderAssignedEvent) {
-    const key = this.dedupKey('order.rider.assigned', event.orderId, event.timestamp);
-    if (!(await this.acquireDedup(key))) {
-      this.logger.warn(`Duplicate event skipped: ${key}`);
-      return;
+    if (event.status === OrderStatus.CANCELLED) {
+      const allowed = ALLOWED_TRANSITIONS[dispatch.status];
+      if (allowed.includes(DispatchStatus.CANCELLED)) {
+        dispatch.status = DispatchStatus.CANCELLED;
+        await this.dispatchRepo.save(dispatch);
+        await this.appendHistory(dispatch.id, DispatchStatus.CANCELLED, 'order cancelled');
+      }
     }
-
-    this.logger.log(
-      `Handling order.rider.assigned: rider ${event.riderId} → order ${event.orderId}`,
-    );
-
-    let dispatch = await this.dispatchRepo.findOne({ where: { orderId: event.orderId } });
-    if (!dispatch) {
-      dispatch = this.dispatchRepo.create({
-        orderId: event.orderId,
-        riderId: event.riderId,
-        status: DispatchStatus.PENDING,
-      });
-      await this.dispatchRepo.save(dispatch);
-      await this.appendHistory(dispatch.id, DispatchStatus.PENDING, 'auto-created on rider assignment');
-    }
-
-    const allowed = ALLOWED_TRANSITIONS[dispatch.status];
-    if (!allowed.includes(DispatchStatus.ASSIGNED)) return;
-
-    dispatch.riderId = event.riderId;
-    dispatch.status = DispatchStatus.ASSIGNED;
-    await this.dispatchRepo.save(dispatch);
-    await this.appendHistory(dispatch.id, DispatchStatus.ASSIGNED, `rider ${event.riderId} assigned`);
   }
 
   @OnEvent('cold-chain.breach')
-  async handleColdChainBreach(event: ColdChainBreachEvent): Promise<void> {
-    this.logger.warn(
-      `Cold-chain breach for delivery ${event.deliveryId}: ` +
-        `${event.breachDurationMinutes.toFixed(1)} min outside 2–8 °C`,
-    );
-
-    if (event.orderId) {
-      await this.orderRepo.update(event.orderId, { status: OrderStatus.CANCELLED });
-
-      const order = await this.orderRepo.findOne({ where: { id: event.orderId } });
-      if (order) {
-        await this.bloodUnitRepo
-          .createQueryBuilder()
-          .update()
-          .set({ status: BloodStatus.QUARANTINED })
-          .where('reservedFor = :orderId', { orderId: event.orderId })
-          .execute();
-
-        const notifyIds = [order.hospitalId, order.bloodBankId].filter(Boolean) as string[];
-        for (const recipientId of notifyIds) {
-          await this.notificationsService
-            .send({
-              recipientId,
-              channels: [NotificationChannel.EMAIL],
-              templateKey: 'cold_chain_breach',
-              variables: {
-                deliveryId: event.deliveryId,
-                orderId: event.orderId ?? '',
-                breachDurationMinutes: String(event.breachDurationMinutes.toFixed(1)),
-                minTempCelsius: String(event.minTempCelsius),
-                maxTempCelsius: String(event.maxTempCelsius),
-                breachStartedAt: event.breachStartedAt.toISOString(),
-              },
-            })
-            .catch((e) =>
-              this.logger.warn(
-                `Breach notification failed for ${recipientId}: ${(e as Error).message}`,
-              ),
-            );
-        }
-      }
-    }
-
-    try {
-      await this.riderAssignmentService.reassign(event.orderId ?? event.deliveryId);
-    } catch (err) {
-      this.logger.error(
-        `Rider reassignment failed for delivery ${event.deliveryId}: ${(err as Error).message}`,
-      );
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Delegation to RiderAssignmentService
-  // ---------------------------------------------------------------------------
-
-  async assignOrder(orderId: string, riderId: string) {
-    this.eventEmitter.emit('order.rider.assigned', new OrderRiderAssignedEvent(orderId, riderId));
-    return { message: 'Order assigned to rider successfully', data: { orderId, riderId } };
-  }
-
-  getDispatchStats() {
-    return this.riderAssignmentService.getDispatchStats();
-  }
-
-  async getAssignmentLogs(orderId?: string) {
-    return this.riderAssignmentService.getAssignmentLogs(orderId);
-  }
-
-  async respondToAssignment(orderId: string, riderId: string, accepted: boolean) {
-    return this.riderAssignmentService.respondToAssignment(orderId, riderId, accepted);
+  async handleColdChainBreach(event: ColdChainBreachEvent) {
+    this.logger.warn(`Cold chain breach for order ${event.orderId}`);
+    const dispatch = await this.dispatchRepo.findOne({ where: { orderId: event.orderId } });
+    if (!dispatch) return;
+    await this.notificationsService.send({
+      channel: NotificationChannel.IN_APP,
+      recipientId: dispatch.riderId ?? '',
+      title: 'Cold chain breach',
+      body: `Cold chain breach detected for order ${event.orderId}`,
+    });
   }
 }
