@@ -1,5 +1,11 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  ConflictException,
+  forwardRef,
+  Inject,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -56,24 +62,34 @@ export class SorobanService {
    * Submit a transaction to the queue with idempotency guarantee.
    * All Soroban contract calls must go through this method.
    *
+   * The idempotency key maps to the enqueued job ID. The key is only
+   * persisted after the job is successfully queued, and is released when
+   * enqueueing fails so transient failures can be retried with the same key.
+   *
    * @param job - Transaction job with contractMethod, args, and idempotencyKey
    * @returns Job ID for status tracking
-   * @throws Error if idempotency key already exists (duplicate submission)
+   * @throws ConflictException if idempotency key already maps to a live job
    */
   async submitTransaction(job: SorobanTxJob): Promise<string> {
     const normalizedJob = this.normalizeJob(job);
     assertSorobanTxJob(normalizedJob);
 
-    // Enforce idempotency: prevent duplicate submissions
-    const isNew = await this.idempotencyService.checkAndSetIdempotencyKey(
+    // Enforce idempotency: reject duplicates, surfacing the original job ID
+    const existingJobId = await this.findExistingJobId(
       normalizedJob.idempotencyKey,
     );
 
-    if (!isNew) {
+    if (existingJobId) {
       this.logger.warn(
-        `Duplicate submission detected for idempotency key: ${normalizedJob.idempotencyKey}`,
+        `Duplicate submission detected for idempotency key: ${normalizedJob.idempotencyKey} (job=${existingJobId})`,
       );
-      throw new Error('Duplicate submission - idempotency key already exists');
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: 'Duplicate submission - idempotency key already exists',
+        jobId: existingJobId,
+        idempotencyKey: normalizedJob.idempotencyKey,
+      });
     }
 
     // Check for duplicate job within dedup window
@@ -87,27 +103,84 @@ export class SorobanService {
         `Duplicate job suppressed (within dedup window): ${normalizedJob.contractMethod}`,
         { idempotencyKey: normalizedJob.idempotencyKey },
       );
-      throw new Error('Duplicate job - equivalent job enqueued recently');
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: 'Duplicate job - equivalent job enqueued recently',
+        idempotencyKey: normalizedJob.idempotencyKey,
+      });
     }
 
     const maxRetries = normalizedJob.maxRetries ?? this.DEFAULT_MAX_RETRIES;
 
-    // Add job to queue with exponential backoff and jitter
-    const queueJob = await this.txQueue.add(job.contractMethod, job, {
-      attempts: maxRetries,
-      backoff: {
-        type: 'exponential',
-        delay: this.BASE_DELAY,
-      },
-      removeOnComplete: true,
-      removeOnFail: false, // Keep failed jobs for audit trail
-      jobId: normalizedJob.idempotencyKey,
-    });
+    let queueJob: Awaited<ReturnType<Queue['add']>>;
+    try {
+      // Add job to queue with exponential backoff and jitter
+      queueJob = await this.txQueue.add(job.contractMethod, job, {
+        attempts: maxRetries,
+        backoff: {
+          type: 'exponential',
+          delay: this.BASE_DELAY,
+        },
+        removeOnComplete: true,
+        removeOnFail: false, // Keep failed jobs for audit trail
+        jobId: normalizedJob.idempotencyKey,
+      });
+    } catch (error) {
+      // Enqueue failed: release the key so the caller can retry.
+      await this.releaseIdempotencyKey(normalizedJob.idempotencyKey);
+      throw error;
+    }
+
+    // Persist key -> jobId only after a successful enqueue.
+    await this.idempotencyService.setIdempotencyKey(
+      normalizedJob.idempotencyKey,
+      String(queueJob.id),
+    );
 
     this.logger.log(
       `Transaction queued: ${queueJob.id} (${normalizedJob.contractMethod}) with ${maxRetries} max retries`,
     );
     return String(queueJob.id);
+  }
+
+  /**
+   * Release the idempotency key for a job that failed terminally or was
+   * moved to the DLQ, allowing resubmission with the same key.
+   */
+  async releaseIdempotencyKey(idempotencyKey: string): Promise<void> {
+    try {
+      await this.idempotencyService.clearIdempotencyKey(idempotencyKey);
+    } catch (error) {
+      this.logger.error(
+        `Failed to release idempotency key ${idempotencyKey}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
+  }
+
+  /**
+   * Resolve an existing job ID for an idempotency key, if any.
+   * Returns null when the key is unknown or the referenced job no longer
+   * exists (e.g. it was removed after terminal failure).
+   */
+  private async findExistingJobId(
+    idempotencyKey: string,
+  ): Promise<string | null> {
+    const storedJobId =
+      await this.idempotencyService.getIdempotencyKey(idempotencyKey);
+
+    if (!storedJobId) {
+      return null;
+    }
+
+    const existingJob = await this.txQueue.getJob(storedJobId);
+    if (!existingJob) {
+      // Stale mapping: the job is gone, so the key can be reused.
+      await this.releaseIdempotencyKey(idempotencyKey);
+      return null;
+    }
+
+    return storedJobId;
   }
 
   /**
@@ -447,9 +520,7 @@ export class SorobanService {
 
       try {
         // Clear old idempotency key to allow resubmission
-        await this.idempotencyService.clearIdempotencyKey(
-          job.data.idempotencyKey,
-        );
+        await this.releaseIdempotencyKey(job.data.idempotencyKey);
 
         // Resubmit to main queue
         await this.submitTransaction({
