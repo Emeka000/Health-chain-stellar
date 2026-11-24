@@ -180,7 +180,7 @@ export class IncidentReviewWorkflowService {
 
         // Check if all corrective actions are completed
         const actions = await this.actionRepo.find({
-            where: { incidentReviewId: input.incidentReviewId },
+            where: { incidentReview: { id: input.incidentReviewId } },
         });
 
         const incompleteActions = actions.filter(
@@ -236,21 +236,21 @@ export class IncidentReviewWorkflowService {
             where: { status: IncidentReviewStatus.OPEN },
         });
 
-        const now = new Date();
-        const overdueCount = openIncidents.filter(
-            (i) => i.dueDate && i.dueDate < now,
-        ).length;
-
-        const escalatedCount = openIncidents.filter(
-            (i) => i.escalationLevel > 0,
-        ).length;
-
         const byRootCause: Record<string, number> = {};
         const bySeverity: Record<string, number> = {};
+        let overdueCount = 0;
+        let escalatedCount = 0;
+        const now = new Date();
 
         for (const incident of openIncidents) {
             byRootCause[incident.rootCause] = (byRootCause[incident.rootCause] ?? 0) + 1;
             bySeverity[incident.severity] = (bySeverity[incident.severity] ?? 0) + 1;
+            if (incident.dueDate && incident.dueDate < now) {
+                overdueCount++;
+            }
+            if (incident.status === IncidentReviewStatus.ESCALATED) {
+                escalatedCount++;
+            }
         }
 
         return {
@@ -262,228 +262,22 @@ export class IncidentReviewWorkflowService {
         };
     }
 
-    /**
-     * Get action completion rate metrics
-     */
-    async getActionCompletionMetrics(): Promise<{
-        totalActions: number;
-        completedActions: number;
-        completionRate: number;
-        overdueActions: number;
-        byStatus: Record<string, number>;
-    }> {
-        const allActions = await this.actionRepo.find();
-        const completedActions = allActions.filter(
-            (a) => a.status === CorrectiveActionStatus.COMPLETED,
-        ).length;
-
-        const now = new Date();
-        const overdueActions = allActions.filter(
-            (a) =>
-                a.status !== CorrectiveActionStatus.COMPLETED &&
-                a.dueDate &&
-                a.dueDate < now,
-        ).length;
-
-        const byStatus: Record<string, number> = {};
-        for (const action of allActions) {
-            byStatus[action.status] = (byStatus[action.status] ?? 0) + 1;
-        }
-
-        return {
-            totalActions: allActions.length,
-            completedActions,
-            completionRate:
-                allActions.length > 0
-                    ? Math.round((completedActions / allActions.length) * 100)
-                    : 0,
-            overdueActions,
-            byStatus,
-        };
-    }
-
-    /**
-     * Calculate due date based on severity
-     */
     private calculateDueDate(severity: IncidentSeverity): Date {
         const now = new Date();
-        const hoursToAdd =
-            severity === IncidentSeverity.CRITICAL
-                ? 24
-                : severity === IncidentSeverity.HIGH
-                    ? 72
-                    : severity === IncidentSeverity.MEDIUM
-                        ? 168
-                        : 336; // 2 weeks for LOW
-
-        return new Date(now.getTime() + hoursToAdd * 60 * 60 * 1000);
-    }
-
-    /**
-     * Assign owner based on severity and context
-     */
-    private assignOwner(severity: IncidentSeverity, hospitalId?: string): string {
-        if (severity === IncidentSeverity.CRITICAL) {
-            return 'ops-manager';
-        }
-        if (severity === IncidentSeverity.HIGH) {
-            return hospitalId ? `hospital-coordinator-${hospitalId}` : 'ops-team';
-        }
-        return 'ops-team';
-    }
-
-    /**
-     * Event listener: Auto-create incident review from severe anomaly
-     */
-    @OnEvent('anomaly.detected.severe')
-    async handleSevereAnomaly(payload: {
-        anomalyId: string;
-        orderId?: string;
-        riderId?: string;
-        hospitalId?: string;
-        description: string;
-        metadata?: Record<string, unknown>;
-    }): Promise<void> {
-        await this.autoCreateIncidentReview({
-            orderId: payload.orderId,
-            riderId: payload.riderId,
-            hospitalId: payload.hospitalId,
-            rootCause: IncidentRootCause.ANOMALY_DETECTED,
-            severity: IncidentSeverity.HIGH,
-            description: payload.description,
-            linkedAnomalyId: payload.anomalyId,
-            reportedByUserId: 'SYSTEM',
-            metadata: payload.metadata,
-        });
-    }
-
-    /**
-     * Event listener: Auto-create incident review from SLA breach
-     */
-    @OnEvent('sla.breached')
-    async handleSlaBreached(payload: {
-        slaRecordId: string;
-        orderId: string;
-        hospitalId: string;
-        bloodBankId?: string;
-        riderId?: string;
-        stage: string;
-        elapsedSeconds: number;
-        budgetSeconds: number;
-    }): Promise<void> {
-        await this.autoCreateIncidentReview({
-            orderId: payload.orderId,
-            riderId: payload.riderId,
-            hospitalId: payload.hospitalId,
-            bloodBankId: payload.bloodBankId,
-            rootCause: IncidentRootCause.SLA_BREACH,
-            severity: IncidentSeverity.MEDIUM,
-            description: `SLA breach at stage ${payload.stage}: ${payload.elapsedSeconds}s elapsed vs ${payload.budgetSeconds}s budget`,
-            linkedSlaBreachId: payload.slaRecordId,
-            linkedOrderIds: [payload.orderId],
-            reportedByUserId: 'SYSTEM',
-            metadata: {
-                stage: payload.stage,
-                elapsedSeconds: payload.elapsedSeconds,
-                budgetSeconds: payload.budgetSeconds,
-            },
-        });
-    }
-
-    /**
-     * Event listener: Auto-create incident review from compliance violation
-     */
-    @OnEvent('compliance.violation.detected')
-    async handleComplianceViolation(payload: {
-        violationId: string;
-        orderId?: string;
-        riderId?: string;
-        hospitalId?: string;
-        bloodBankId?: string;
-        policyId: string;
-        description: string;
-        severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
-        metadata?: Record<string, unknown>;
-    }): Promise<void> {
-        const severityMap: Record<string, IncidentSeverity> = {
-            CRITICAL: IncidentSeverity.CRITICAL,
-            HIGH: IncidentSeverity.HIGH,
-            MEDIUM: IncidentSeverity.MEDIUM,
-            LOW: IncidentSeverity.LOW,
+        const hoursBySeverity: Record<IncidentSeverity, number> = {
+            [IncidentSeverity.CRITICAL]: 4,
+            [IncidentSeverity.HIGH]: 24,
+            [IncidentSeverity.MEDIUM]: 72,
+            [IncidentSeverity.LOW]: 168,
         };
-
-        await this.autoCreateIncidentReview({
-            orderId: payload.orderId,
-            riderId: payload.riderId,
-            hospitalId: payload.hospitalId,
-            bloodBankId: payload.bloodBankId,
-            rootCause: IncidentRootCause.COMPLIANCE_VIOLATION,
-            severity: severityMap[payload.severity] ?? IncidentSeverity.MEDIUM,
-            description: payload.description,
-            linkedPolicyIds: [payload.policyId],
-            reportedByUserId: 'SYSTEM',
-            metadata: {
-                ...payload.metadata,
-                violationId: payload.violationId,
-            },
-        });
+        const hours = hoursBySeverity[severity] ?? 72;
+        return new Date(now.getTime() + hours * 60 * 60 * 1000);
     }
 
-    /**
-     * Event listener: Auto-create incident review from cold chain failure
-     */
-    @OnEvent('cold-chain.failure.detected')
-    async handleColdChainFailure(payload: {
-        orderId: string;
-        riderId?: string;
-        telemetryId: string;
-        temperature: number;
-        threshold: number;
-        duration: number;
-        description: string;
-    }): Promise<void> {
-        await this.autoCreateIncidentReview({
-            orderId: payload.orderId,
-            riderId: payload.riderId,
-            rootCause: IncidentRootCause.COLD_CHAIN_FAILURE,
-            severity: IncidentSeverity.CRITICAL,
-            description: payload.description,
-            linkedOrderIds: [payload.orderId],
-            linkedTelemetryIds: [payload.telemetryId],
-            reportedByUserId: 'SYSTEM',
-            metadata: {
-                temperature: payload.temperature,
-                threshold: payload.threshold,
-                duration: payload.duration,
-            },
-        });
-    }
-
-    /**
-     * Event listener: Auto-create incident review from escrow dispute
-     */
-    @OnEvent('escrow.dispute.created')
-    async handleEscrowDispute(payload: {
-        disputeId: string;
-        orderId: string;
-        hospitalId?: string;
-        riderId?: string;
-        description: string;
-        amount: number;
-    }): Promise<void> {
-        await this.autoCreateIncidentReview({
-            orderId: payload.orderId,
-            riderId: payload.riderId,
-            hospitalId: payload.hospitalId,
-            rootCause: IncidentRootCause.ESCROW_DISPUTE,
-            severity: IncidentSeverity.HIGH,
-            description: payload.description,
-            linkedOrderIds: [payload.orderId],
-            reportedByUserId: 'SYSTEM',
-            metadata: {
-                disputeId: payload.disputeId,
-                amount: payload.amount,
-            },
-        });
+    private assignOwner(severity: IncidentSeverity, hospitalId?: string): string | null {
+        if (severity === IncidentSeverity.CRITICAL || severity === IncidentSeverity.HIGH) {
+            return hospitalId ?? 'SYSTEM';
+        }
+        return null;
     }
 }

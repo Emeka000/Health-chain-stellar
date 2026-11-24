@@ -204,14 +204,6 @@ import type Redis from 'ioredis';
     CorrelationIdService,
     {
       provide: APP_GUARD,
-      useClass: JwtAuthGuard,
-    },
-    {
-      provide: APP_GUARD,
-      useClass: PermissionsGuard,
-    },
-    {
-      provide: APP_GUARD,
       useClass: RoleAwareThrottlerGuard,
     },
     {
@@ -221,9 +213,7 @@ import type Redis from 'ioredis';
   ],
 })
 export class AppModule implements NestModule {
-  configure(consumer: MiddlewareConsumer) {
-    // CorrelationIdMiddleware is registered exactly once here. It is NOT also
-    // applied in main.ts, which previously caused it to run twice per request.
+  configure(consumer: MiddlewareConsumer): void {
     consumer.apply(CorrelationIdMiddleware).forRoutes('*');
   }
 }
