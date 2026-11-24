@@ -13,6 +13,7 @@ import { ContractEventIndexerService } from './contract-event-indexer.service';
 import {
   CursorResetDto,
   DiscardPoisonEventDto,
+  IngestBatchDto,
   IngestEventDto,
   QueryContractEventsDto,
   QuarantinePoisonEventDto,
@@ -42,13 +43,14 @@ export class ContractEventIndexerController {
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @RequirePermissions(Permission.ADMIN_ACCESS)
   @Post('ingest/batch')
-  ingestBatch(@Body() events: IngestEventDto[]) {
-    return this.service.ingestBatch(events);
+  ingestBatch(@Body() dto: IngestBatchDto) {
+    return this.service.ingestBatch(dto.events);
   }
 
   /** Query indexed contract events with optional filters */
   @ApiOperation({ summary: 'Get' })
   @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Get()
   findAll(@Query() query: QueryContractEventsDto) {
     return this.service.findAll(query);
@@ -57,6 +59,7 @@ export class ContractEventIndexerController {
   /** Get all events for a specific off-chain entity (order, donor, etc.) */
   @ApiOperation({ summary: 'Get entity :ref' })
   @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Get('entity/:ref')
   findByEntityRef(@Param('ref') ref: string) {
     return this.service.findByEntityRef(ref);
@@ -65,6 +68,7 @@ export class ContractEventIndexerController {
   /** Get current indexer cursor positions per domain+projection */
   @ApiOperation({ summary: 'Get cursors' })
   @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Get('cursors')
   getCursors() {
     return this.service.getCursors();
@@ -99,6 +103,7 @@ export class ContractEventIndexerController {
    */
   @ApiOperation({ summary: 'Post verify' })
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Post('verify')
   verifyIndexed(@Body() dto: VerifyIndexedDto) {
     return this.service.verifyIndexed(dto);

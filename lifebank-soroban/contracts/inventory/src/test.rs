@@ -2370,3 +2370,67 @@ fn test_release_reservation_by_contract_fails_on_unknown_reservation() {
     client.set_requests_contract(&admin, &trusted);
     client.release_reservation_by_contract(&trusted, &999);
 }
+
+// ── #1805: failed delivery compromises the reservation's units ───────────────
+
+#[test]
+fn test_compromise_reservation_by_ctr_marks_units_compromised() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let bank = admin.clone();
+
+    let u1 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-CMP-001"),
+        &BloodType::OPositive,
+        &450u32,
+        &None,
+    );
+    let u2 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-CMP-002"),
+        &BloodType::OPositive,
+        &450u32,
+        &None,
+    );
+    let reservation_id = client.reserve_blood(&bank, &bank, &vec![&env, u1, u2], &42, &3600);
+    // One unit already left the bank with the rider.
+    client.update_status(&u2, &BloodStatus::InTransit, &bank, &None);
+
+    let trusted = Address::generate(&env);
+    client.set_requests_contract(&admin, &trusted);
+    let compromised = client.compromise_reservation_by_ctr(
+        &trusted,
+        &reservation_id,
+        &String::from_str(&env, "cold-chain breach"),
+    );
+
+    assert_eq!(compromised, 2);
+    assert_eq!(client.get_blood_unit(&u1).status, BloodStatus::Compromised);
+    assert_eq!(client.get_blood_unit(&u2).status, BloodStatus::Compromised);
+    assert!(client.try_get_reservation(&reservation_id).is_err());
+}
+
+#[test]
+fn test_compromise_reservation_by_ctr_rejects_untrusted_caller() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let bank = admin.clone();
+    let unit = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-CMP-003"),
+        &BloodType::OPositive,
+        &450u32,
+        &None,
+    );
+    let reservation_id = client.reserve_blood(&bank, &bank, &vec![&env, unit], &42, &3600);
+    client.set_requests_contract(&admin, &Address::generate(&env));
+
+    let result = client.try_compromise_reservation_by_ctr(
+        &Address::generate(&env),
+        &reservation_id,
+        &String::from_str(&env, "x"),
+    );
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+    assert_eq!(client.get_blood_unit(&unit).status, BloodStatus::Reserved);
+}

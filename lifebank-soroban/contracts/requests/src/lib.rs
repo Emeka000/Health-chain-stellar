@@ -9,9 +9,9 @@ mod types;
 #[cfg(test)]
 mod test;
 #[cfg(test)]
-mod test_utils;
-#[cfg(test)]
 mod test_issues_1807_1810;
+#[cfg(test)]
+mod test_utils;
 
 pub use crate::error::ContractError;
 pub use crate::types::{
@@ -48,6 +48,12 @@ mod inventory_client {
             authorized_contract: Address,
             reservation_id: u64,
         );
+        fn compromise_reservation_by_ctr(
+            env: Env,
+            authorized_contract: Address,
+            reservation_id: u64,
+            reason: soroban_sdk::String,
+        ) -> u32;
     }
 }
 
@@ -135,6 +141,10 @@ impl RequestContract {
                 | (RequestStatus::Approved, RequestStatus::InProgress)
                 | (RequestStatus::Approved, RequestStatus::Fulfilled)
                 | (RequestStatus::InProgress, RequestStatus::Fulfilled)
+                // #1805: failed delivery. Back to Approved for a new rider, or
+                // Rejected with the reserved units marked Compromised.
+                | (RequestStatus::InProgress, RequestStatus::Approved)
+                | (RequestStatus::InProgress, RequestStatus::Rejected)
         )
     }
 
@@ -163,6 +173,37 @@ impl RequestContract {
                 soroban_sdk::Error::from_contract_error(INVENTORY_RESERVATION_NOT_FOUND);
             match inv_client.try_release_reservation_by_contract(&requests_contract, &res_id) {
                 Ok(Ok(())) => {}
+                Err(Ok(err)) if err == not_found => {}
+                _ => return Err(ContractError::InventoryReleaseFailed),
+            }
+            request.reservation_id = None;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Closes the request's reservation by having inventory mark its units
+    /// `Compromised` (#1805). Used when an InProgress request is rejected after
+    /// a failed delivery: units that left the bank with a rider, or that the
+    /// hospital refused, must not return to `Available` and be re-matched.
+    ///
+    /// Same return contract as `release_reservation_if_present`. A reservation
+    /// that inventory no longer has counts as closed.
+    fn compromise_reservation_if_present(
+        env: &Env,
+        request: &mut BloodRequest,
+        reason: &String,
+    ) -> Result<bool, ContractError> {
+        if let Some(res_id) = request.reservation_id {
+            let inventory_addr = storage::get_inventory_contract(env);
+            let inv_client = InventoryContractClient::new(env, &inventory_addr);
+            let requests_contract = env.current_contract_address();
+            let not_found =
+                soroban_sdk::Error::from_contract_error(INVENTORY_RESERVATION_NOT_FOUND);
+            match inv_client.try_compromise_reservation_by_ctr(&requests_contract, &res_id, reason)
+            {
+                Ok(Ok(_)) => {}
                 Err(Ok(err)) if err == not_found => {}
                 _ => return Err(ContractError::InventoryReleaseFailed),
             }
@@ -674,8 +715,33 @@ impl RequestContract {
         let mut released_reservation = false;
         let mut fulfilled_delta_ml = 0;
 
+        let failed_delivery = old_status == RequestStatus::InProgress
+            && matches!(
+                new_status,
+                RequestStatus::Approved | RequestStatus::Rejected
+            );
+        let mut failed_rider: Option<Address> = None;
+
         match new_status {
+            RequestStatus::Approved if failed_delivery => {
+                // Delivery failed, retry: the reservation is kept so the same
+                // units stay held for this request, but the rider assignment
+                // is cleared so a new rider must be assigned before pickup.
+                Self::ensure_non_empty_reason(&reason)?;
+                failed_rider = storage::get_request_rider(&env, request_id);
+                storage::clear_request_rider(&env, request_id);
+            }
             RequestStatus::Approved | RequestStatus::InProgress => {}
+            RequestStatus::Rejected if failed_delivery => {
+                // Delivery failed, give up: the units cannot be trusted any
+                // more, so inventory marks them Compromised instead of
+                // returning them to Available.
+                Self::ensure_non_empty_reason(&reason)?;
+                failed_rider = storage::get_request_rider(&env, request_id);
+                released_reservation =
+                    Self::compromise_reservation_if_present(&env, &mut request, &reason)?;
+                storage::clear_request_rider(&env, request_id);
+            }
             RequestStatus::Rejected => {
                 Self::ensure_non_empty_reason(&reason)?;
                 released_reservation = Self::release_reservation_if_present(env, request)?;
@@ -720,6 +786,17 @@ impl RequestContract {
             new_status,
             env.ledger().timestamp(),
         );
+        if failed_delivery {
+            events::emit_delivery_failed(
+                &env,
+                request_id,
+                &caller,
+                failed_rider,
+                new_status,
+                released_reservation,
+                env.ledger().timestamp(),
+            );
+        }
 
         Ok(())
     }
@@ -1033,7 +1110,15 @@ impl RequestContract {
         request.fulfilled_by = Some(org_id.clone());
         let status = request.status;
         Self::append_history(
-            &env, &mut request, &admin, status, false, status, reason, 0, false,
+            &env,
+            &mut request,
+            &admin,
+            status,
+            false,
+            status,
+            reason,
+            0,
+            false,
         );
         storage::set_request(&env, &request);
 
@@ -1221,3 +1306,6 @@ mod test_security_fixes;
 
 #[cfg(test)]
 mod test_lifecycle_fixes;
+
+#[cfg(test)]
+mod test_delivery_failure;

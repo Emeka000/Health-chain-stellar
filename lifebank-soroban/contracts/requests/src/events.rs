@@ -169,6 +169,26 @@ pub fn emit_request_expired(
     .publish(env);
 }
 
+pub fn emit_delivery_failed(
+    env: &Env,
+    request_id: u64,
+    actor: &Address,
+    rider: Option<Address>,
+    new_status: RequestStatus,
+    reservation_compromised: bool,
+    timestamp: u64,
+) {
+    DeliveryFailed {
+        request_id,
+        actor: actor.clone(),
+        rider,
+        new_status,
+        reservation_compromised,
+        timestamp,
+    }
+    .publish(env);
+}
+
 pub fn emit_request_status_updated(
     env: &Env,
     request_id: u64,

@@ -114,7 +114,7 @@ Admin-only. Transfers the locked amount back to the payer and marks the payment 
 pub fn update_status(env: Env, payment_id: u64, status: PaymentStatus) -> Result<(), Error>
 ```
 
-Transitions a payment to any status. Called by the coordinator during `settle_payment` (→ `Released`) and `rollback` (→ `Refunded`). Updates status indexes and aggregate stats. Emits `(payment, status)` event with `(payment_id, old_status, new_status)`.
+Bookkeeping payments only (`token == None`), and only `Pending → Released | Refunded | Cancelled`. Escrow payments return `EscrowSettlementRequired`; moving into `Disputed` returns `DisputeRecordRequired` (use `record_dispute`); leaving `Disputed` returns `DisputeResolutionRequired`; any other transition returns `InvalidStatusTransition`. `→ Released` fails with `PayeeNotFulfiller` when the request's `fulfilled_by` is set to another address. Called by the coordinator during `settle_payment` (→ `Released`) and `rollback` (→ `Refunded`). Updates status indexes and aggregate stats. Emits `(payment, status)` event with `(payment_id, old_status, new_status)`.
 
 ---
 
@@ -171,7 +171,48 @@ pub fn get_payments_by_payee(env: Env, payee: Address, page: u32, page_size: u32
 pub fn get_payments_by_status(env: Env, status: PaymentStatus, page: u32, page_size: u32) -> PaymentPage
 ```
 
-Paginated queries. `page` is zero-indexed. `page_size` defaults to 20 if 0 is passed.
+Paginated queries. `page` is zero-indexed. `page_size` defaults to 20 if 0 is passed and is capped at 100.
+
+Every index entry and payment record read by a query has its TTL extended (#1804), as do `get_payment`, `get_payment_by_request` and `get_payment_timeline`. A long-lived escrow or an old index page therefore stays live as long as it is being read. Note that a read only persists a TTL bump when it runs inside a submitted transaction; RPC simulation alone does not. `total` is always the index length; an entry is skipped only if its payment record is genuinely missing.
+
+---
+
+### Donation pledges
+
+```rust
+pub fn create_pledge(env, donor, amount_per_period: i128, interval_secs: u64,
+    payee_pool: String, cause: String, region: String, emergency_pool: bool) -> Result<u64, Error>
+pub fn get_pledge(env, pledge_id: u64) -> Result<DonationPledge, Error>
+pub fn get_pledges_by_donor(env, donor: Address, page: u32, page_size: u32) -> PledgePage
+pub fn set_pledge_active(env, pledge_id: u64, donor: Address, active: bool) -> Result<(), Error>
+```
+
+**Pledges are off-chain commitments.** A pledge records intent only: no token is transferred or escrowed, and nothing on-chain executes it every `interval_secs`. The backend (or the donor's wallet) makes each periodic donation as an ordinary payment and uses the pledge record and its events to schedule and reconcile them.
+
+- `payee_pool`, `cause` and `region` are limited to `MAX_PLEDGE_STRING_LEN` (64) bytes each; longer values fail with `StringTooLong`.
+- `get_pledges_by_donor` pages through a per-donor, append-only index, oldest first (`page_size` 0 → 20, capped at 100).
+- `set_pledge_active` (donor only) emits `("pledge", "status")` with `(pledge_id, donor, active)` when the flag changes; setting the current value is a no-op.
+
+---
+
+### Vesting
+
+```rust
+pub fn create_vesting(env, admin, donor, reward_token: Address, total_amount: i128,
+    cliff_secs: u64, duration_secs: u64) -> Result<u64, Error>          // returns schedule_id
+pub fn claim_vested(env, donor: Address, schedule_id: u64) -> Result<i128, Error>
+pub fn revoke_vesting(env, admin, donor: Address, schedule_id: u64) -> Result<i128, Error>
+pub fn get_vesting(env, donor: Address, schedule_id: u64) -> Result<VestingSchedule, Error>
+pub fn get_claimable_vested(env, donor: Address, schedule_id: u64) -> Result<i128, Error>
+```
+
+**Model: standard cliff vesting (#1803).** Tokens accrue linearly from `start_timestamp` (creation time) to `vest_end_timestamp`. The cliff only gates claims: before `cliff_timestamp` nothing can be claimed, and at the cliff everything accrued since the start becomes claimable at once. A 12-month schedule with a 3-month cliff releases 3/12 at the cliff and the rest linearly over the remaining 9 months.
+
+- A donor may hold several concurrent schedules, each addressed by `(donor, schedule_id)`. A schedule is removed once fully claimed.
+- `reward_token` must be on the token allowlist (`TokenNotAllowed` otherwise).
+- Vested amounts are computed exactly without intermediate overflow; any arithmetic failure is `Overflow`, never a silent 0.
+- `revoke_vesting` (admin only) stops accrual, transfers the unvested remainder back to the admin and releases it from the vesting reserve. Anything vested but unclaimed stays claimable by the donor. Revoking before the cliff returns everything. Fails with `VestingRevoked` if already revoked and `NothingToRevoke` if the schedule is fully vested.
+- Events: `("vest", "created")` `(schedule_id, donor, total_amount, start_timestamp, cliff_timestamp, vest_end_timestamp)`, `("vest", "claimed")` `(schedule_id, donor, claimable, new_claimed)`, `("vest", "revoked")` `(schedule_id, donor, unvested_returned, vested_remaining)`.
 
 ---
 
@@ -242,6 +283,10 @@ pub struct PaymentStats {
     pub count_locked: u32,
     pub count_released: u32,
     pub count_refunded: u32,
+    /// Escrowed funds under an open dispute. total_locked + total_disputed
+    /// equals the summed escrow reserve. Bookkeeping disputes are not counted.
+    pub total_disputed: i128,
+    pub count_disputed: u32,
 }
 ```
 
@@ -275,9 +320,11 @@ pub struct PaymentPage {
 | `(status_code, "si")` | Persistent | `Vec<u64>` | Payment IDs by status |
 | `(request_id, "ri")` | Persistent | `u64` | Active payment ID for a request |
 | `(request_id, "rt")` | Persistent | `Vec<u64>` | All payment IDs for a request (timeline) |
-| `(donor, "vest")` | Persistent | `VestingSchedule` | Donor vesting schedule |
+| `VEST_CTR` (symbol) | Instance | `u64` | Vesting schedule ID counter |
+| `IndexKey::DonorPledgeLen(donor)` / `DonorPledgeAt(donor, i)` | Persistent | `u32` / `u64` | Per-donor pledge index |
+| `(donor, schedule_id, "vest")` | Persistent | `VestingSchedule` | Vesting schedule |
 
-TTL bump: persistent entries are extended to ~60 days whenever remaining TTL falls below ~30 days.
+TTL bump: persistent entries are extended to ~60 days whenever remaining TTL falls below ~30 days, both when written and when read.
 
 ## Error codes
 
@@ -300,7 +347,11 @@ TTL bump: persistent entries are extended to ~60 days whenever remaining TTL fal
 | `NotEscrowPayment` | 514 | Payment has no token — not an escrow payment |
 | `PaymentNotLocked` | 515 | Payment is not Locked |
 | `DisputeNotExpired` | 516 | Dispute timeout has not elapsed |
-| `ActiveVestingExists` | 517 | Donor already has an unclaimed vesting schedule |
+| `ActiveVestingExists` | 517 | No longer returned (concurrent schedules are allowed); kept for ABI stability |
+| `TokenNotAllowed` | 525 | Token is not on the allowlist (escrow and vesting) |
+| `StringTooLong` | 529 | Pledge string exceeds 64 bytes |
+| `VestingRevoked` | 530 | Vesting schedule already revoked |
+| `NothingToRevoke` | 531 | Vesting schedule is fully vested |
 
 ## Constants
 

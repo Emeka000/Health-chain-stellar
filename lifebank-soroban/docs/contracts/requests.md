@@ -119,12 +119,16 @@ pub fn update_request_status(
 ) -> Result<(), ContractError>
 ```
 
-Admin-only. Transitions a request to `Approved`, `Rejected`, or `Fulfilled`.
+Admin-only, except that the rider assigned via `assign_rider` may drive `Approved → InProgress` (pickup).
 
-- `Approved`: only from `Pending`.
-- `Rejected`: from `Pending` or `Approved`; requires non-empty reason; releases any reservation (fails with `InventoryReleaseFailed` if inventory refuses).
+- `Approved`: from `Pending`, or from `InProgress` when a delivery failed and will be retried (#1805). The retry path requires a non-empty reason, keeps the reservation (the units stay held for this request), and clears the rider assignment, so `assign_rider` must be called again before the next pickup.
+- `InProgress`: from `Approved` (pickup by the assigned rider, or admin).
+- `Rejected`: from `Pending` or `Approved`; requires non-empty reason; releases any reservation back to `Available` (fails with `InventoryReleaseFailed` if inventory refuses).
+- `Rejected` from `InProgress` (failed delivery, giving up, #1805): requires non-empty reason; instead of releasing the reservation, the contract calls inventory's `compromise_reservation_by_ctr`, which marks the reserved/in-transit units `Compromised` so they cannot be re-matched, and removes the reservation. Fails with `InventoryReleaseFailed` (nothing changes) if inventory refuses. The rider assignment is cleared.
 - `Fulfilled`: from `Approved` or `InProgress`; sets `fulfilled_quantity_ml = quantity_ml`.
-- `InProgress`, `Pending`, `Cancelled` are not valid targets for this function.
+- `Pending` and `Cancelled` are not valid targets for this function.
+
+Records a history entry and emits `request_status_updated`. Both failed-delivery transitions additionally emit `delivery_failed` with `(request_id, actor, rider, new_status, reservation_compromised, timestamp)`.
 
 Records a history entry and emits `request_status_updated` event.
 

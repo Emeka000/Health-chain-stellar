@@ -11,6 +11,8 @@ import {
   Req,
 } from '@nestjs/common';
 
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+
 import { Request } from 'express';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
