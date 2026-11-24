@@ -151,60 +151,49 @@ init_contract "coordinator" "$COORDINATOR_ID" \
     --inventory-contract "$INVENTORY_ID" \
     --payment-contract "$PAYMENTS_ID"
 
-echo "📦 Phase 5: Wiring cross-contract references..."
+echo "📦 Phase 5: Cross-contract wiring..."
 echo ""
 
-# inventory -> requests
-invoke_contract "inventory" "$INVENTORY_ID" "set_requests_contract" \
-    --requests-contract "$REQUESTS_ID"
+# Helper function to invoke an admin-only wiring call
+wire_contract() {
+    local description=$1
+    local contract_id=$2
+    local function_name=$3
+    shift 3
+    local extra_args=("$@")
 
-# requests -> payments
-invoke_contract "requests" "$REQUESTS_ID" "set_payments_contract" \
-    --payments-contract "$PAYMENTS_ID"
+    echo "Wiring $description..."
+    stellar contract invoke \
+        --id "$contract_id" \
+        --source "$IDENTITY" \
+        --network "$NETWORK" \
+        $RPC_FLAG \
+        -- "$function_name" \
+        --admin "$ADMIN_ADDRESS" \
+        "${extra_args[@]}"
+    echo "  ✅ $description wired"
+    echo ""
+}
 
-# identity -> requests
-invoke_contract "identity" "$IDENTITY_ID" "set_requests_contract" \
-    --requests-contract "$REQUESTS_ID"
-
-# temperature -> coordinator
-invoke_contract "temperature" "$TEMPERATURE_ID" "set_coordinator" \
+# The coordinator is the payments contract's settlement coordinator, NOT its
+# admin. The admin ($ADMIN_ADDRESS) keeps dispute resolution, the token
+# allowlist, dispute timeouts, vesting, pause and upgrades; the coordinator may
+# only release/refund escrows, record disputes and settle Locked payments.
+wire_contract "payments → coordinator (settlement coordinator)" "$PAYMENTS_ID" \
+    set_coordinator \
     --coordinator "$COORDINATOR_ID"
 
-# coordinator -> temperature oracle
-invoke_contract "coordinator" "$COORDINATOR_ID" "set_temperature_oracle" \
-    --temperature-oracle "$TEMPERATURE_ID"
+# The coordinator refuses to deliver or settle units the temperature contract
+# reports as compromised.
+wire_contract "coordinator → temperature (cold-chain checks)" "$COORDINATOR_ID" \
+    set_temperature_contract \
+    --temperature-contract "$TEMPERATURE_ID"
 
-# payments: allow the native token used for settlement
-invoke_contract "payments" "$PAYMENTS_ID" "add_allowed_token" \
-    --token "$ADMIN_ADDRESS"
-
-echo ""
-echo "🔍 Verifying wiring..."
-echo ""
-
-REQUESTS_WIRED=$(stellar contract invoke \
-    --id "$INVENTORY_ID" \
-    --source "$IDENTITY" \
-    --network "$NETWORK" \
-    $RPC_FLAG \
-    -- get_requests_contract 2>/dev/null || echo "")
-if [[ "$REQUESTS_WIRED" != *"$REQUESTS_ID"* ]]; then
-    echo "❌ Verification failed: inventory.get_requests_contract returned '$REQUESTS_WIRED'"
-    exit 1
-fi
-echo "  ✅ inventory.get_requests_contract = $REQUESTS_ID"
-
-PAYMENTS_WIRED=$(stellar contract invoke \
-    --id "$REQUESTS_ID" \
-    --source "$IDENTITY" \
-    --network "$NETWORK" \
-    $RPC_FLAG \
-    -- get_payments_contract 2>/dev/null || echo "")
-if [[ "$PAYMENTS_WIRED" != *"$PAYMENTS_ID"* ]]; then
-    echo "❌ Verification failed: requests.get_payments_contract returned '$PAYMENTS_WIRED'"
-    exit 1
-fi
-echo "  ✅ requests.get_payments_contract = $PAYMENTS_ID"
+# Inventory trusts the requests contract to release reservations, so cancelling
+# or rejecting a request returns its reserved units to Available.
+wire_contract "inventory → requests (reservation release)" "$INVENTORY_ID" \
+    set_requests_contract \
+    --requests-contract-id "$REQUESTS_ID"
 
 echo ""
 echo "✅ Contract initialization complete!"

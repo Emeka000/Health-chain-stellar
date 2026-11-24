@@ -4,21 +4,17 @@
 /// Cross-contract coordinator for the HealthDonor workflow.
 ///
 /// Canonical workflow sequence enforced here:
-///   1. allocate_units  – Request must be Pending; reserves inventory units,
-///                        binds the Locked escrow payment to the workflow and
-///                        moves the request to Approved
-///   2. confirm_delivery – Workflow must be Allocated; marks units Delivered and
-///                        moves the request to InProgress
-///   3. settle_payment   – Workflow must be Delivered; releases escrowed payment
-///                        and marks the request Fulfilled
-///
-/// Rollback and expiry release the units, refund the escrow and cancel the
-/// request.
-///
-/// Deployment: the coordinator must be the payments contract's admin, and be
-/// registered as the trusted coordinator in inventory
-/// (`set_coordinator_contract`) and in requests (`set_coordinator_contract`).
-/// It authorizes every cross-contract call as itself.
+///   1. allocate_units  – Request must be Pending; reserves inventory units
+///                        through `inventory.reserve_blood`, approves the request,
+///                        records the reservation ID on it and binds the payment
+///                        to the workflow
+///   2. confirm_delivery – Workflow must be Allocated and no unit compromised;
+///                        marks units Delivered
+///   3. settle_payment   – Workflow must be Delivered; releases escrowed payment.
+///                        If the hospital has not yet confirmed receipt the
+///                        workflow moves to AwaitingReceipt, and
+///                        `finalize_settlement` marks it Settled once the
+///                        payment is Released.
 ///
 /// Any step that finds the prerequisite state missing returns an error and makes
 /// no state changes, providing safe rollback semantics within a single transaction.
@@ -48,6 +44,14 @@ use soroban_sdk::{
 /// within this window, anyone may call `expire_workflow` to roll back the
 /// allocation and free the reserved units and escrowed payment.
 const WORKFLOW_TIMEOUT_SECS: u64 = 6 * 60 * 60;
+
+/// Window the hospital has to call `confirm_receipt` after `settle_payment`
+/// recorded the coordinator's half of an escrow release (48 hours). Once it
+/// elapses, anyone may call `expire_workflow` to refund the still-Locked escrow.
+const RECEIPT_TIMEOUT_SECS: u64 = 48 * 60 * 60;
+
+/// Inventory's `ContractError::ReservationNotFound` discriminant.
+const INVENTORY_RESERVATION_NOT_FOUND: u32 = 150;
 
 const CONTRACT_VERSION: u32 = 1;
 
@@ -140,11 +144,13 @@ pub struct RequestHistoryEntry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BloodRequest {
     pub id: u64,
-    /// Hospital that raised the request; the bound payment must come from it.
     pub hospital_id: Address,
     /// Recipient blood type; every allocated unit must be able to donate to it.
     pub blood_type: BloodType,
+    /// Requested component. Inventory units do not record a component, so it
+    /// cannot be matched on-chain yet; it is mirrored to keep decoding exact.
     pub component: BloodComponent,
+    /// Requested volume; allocated units must cover what is still outstanding.
     pub quantity_ml: u32,
     pub urgency: Urgency,
     pub created_timestamp: u64,
@@ -225,19 +231,21 @@ mod request_client {
     #[allow(dead_code)]
     pub trait RequestContractInterface {
         fn get_request(env: Env, request_id: u64) -> BloodRequest;
-        fn update_status_by_contract(
+        fn get_admin(env: Env) -> Address;
+        fn update_request_status(
             env: Env,
-            caller_contract: Address,
+            caller: Address,
             request_id: u64,
             new_status: RequestStatus,
             reason: String,
         );
+        fn set_reservation_id(env: Env, caller: Address, request_id: u64, reservation_id: u64);
     }
 }
 
 mod inventory_client {
     use super::{BloodStatus, BloodUnit};
-    use soroban_sdk::{contractclient, Address, Env, String};
+    use soroban_sdk::{contractclient, Address, Env, String, Vec};
 
     #[contractclient(name = "InventoryContractClient")]
     #[allow(dead_code)]
@@ -256,6 +264,27 @@ mod inventory_client {
             authorized_by: Address,
             delivery_location: String,
         ) -> BloodUnit;
+        fn get_admin(env: Env) -> Address;
+        fn reserve_blood(
+            env: Env,
+            requester: Address,
+            hospital_id: Address,
+            unit_ids: Vec<u64>,
+            request_id: u64,
+            duration_seconds: u64,
+        ) -> u64;
+        fn release_reservation(env: Env, caller: Address, reservation_id: u64);
+        fn expire_reservation(env: Env, reservation_id: u64);
+    }
+}
+
+mod temperature_client {
+    use soroban_sdk::{contractclient, Env};
+
+    #[contractclient(name = "TemperatureContractClient")]
+    #[allow(dead_code)]
+    pub trait TemperatureContractInterface {
+        fn is_compromised(env: Env, unit_id: u64) -> bool;
     }
 }
 
@@ -295,6 +324,7 @@ mod payment_client {
 use inventory_client::InventoryContractClient;
 use payment_client::PaymentContractClient;
 use request_client::RequestContractClient;
+use temperature_client::TemperatureContractClient;
 
 // ── Contract events ───────────────────────────────────────────────────────────
 
@@ -323,6 +353,16 @@ pub struct CoordDelivered {
 
 #[contractevent(topics = ["coord", "settld"], data_format = "vec")]
 pub struct CoordSettled {
+    pub request_id: u64,
+    pub payment_id: u64,
+}
+
+/// settle_payment recorded the coordinator's half of a two-party escrow
+/// release; the funds stay Locked until the hospital calls `confirm_receipt`.
+/// Distinct from `coord/settld`, which is only emitted once the payment is
+/// actually Released.
+#[contractevent(topics = ["coord", "awt_rcpt"], data_format = "vec")]
+pub struct CoordAwaitingReceipt {
     pub request_id: u64,
     pub payment_id: u64,
 }
@@ -449,12 +489,17 @@ fn save_workflow(env: &Env, wf: &WorkflowRecord) {
 
 /// Release a payment to the payee on the coordinator's behalf.
 ///
-/// The coordinator contract must be the payments contract's admin. Escrow-backed
-/// payments cannot be released through `update_status` (the payments contract
-/// returns `EscrowSettlementRequired`), so they go through `release_escrow`,
-/// which records the coordinator's confirmation and moves the tokens once the
-/// hospital has also called `confirm_receipt`. Bookkeeping-only payments are
-/// marked Released directly.
+/// The coordinator contract must be registered as the payments contract's
+/// settlement coordinator (`payments.set_coordinator`). It must *not* be the
+/// payments admin: the admin stays a human or governance key that keeps dispute
+/// resolution, the token allowlist, timeouts and upgrades, while the
+/// coordinator role is limited to settlement (`release_escrow`,
+/// `refund_escrow`, `record_dispute`, and Locked → Released/Refunded for
+/// bookkeeping payments). Escrow-backed payments cannot be released through
+/// `update_status` (the payments contract returns `EscrowSettlementRequired`),
+/// so they go through `release_escrow`, which records the coordinator's
+/// confirmation and moves the tokens once the hospital has also called
+/// `confirm_receipt`. Bookkeeping-only payments are marked Released directly.
 fn release_payment(
     env: &Env,
     pay_client: &PaymentContractClient,
@@ -497,73 +542,94 @@ fn refund_payment(
     Ok(())
 }
 
-/// Read a request from the requests contract.
-fn fetch_request(
-    req_client: &RequestContractClient,
-    request_id: u64,
-) -> Result<BloodRequest, CoordinatorError> {
-    req_client
-        .try_get_request(&request_id)
-        .map_err(|_| CoordinatorError::RequestNotFound)?
-        .map_err(|_| CoordinatorError::RequestNotFound)
-}
-
-/// Move the request to `new_status` through the requests contract's
-/// trusted-coordinator entrypoint. The coordinator authorizes as itself, so
-/// no admin or hospital signature is needed.
-fn set_request_status(
-    env: &Env,
-    req_client: &RequestContractClient,
-    request_id: u64,
-    new_status: RequestStatus,
-    reason: &str,
-) -> Result<(), CoordinatorError> {
-    req_client
-        .try_update_status_by_contract(
-            &env.current_contract_address(),
-            &request_id,
-            &new_status,
-            &String::from_str(env, reason),
-        )
-        .map_err(|_| CoordinatorError::RequestUpdateFailed)?
-        .map_err(|_| CoordinatorError::RequestUpdateFailed)
-}
-
-/// Cancel the request after a rollback or expiry, unless it is already
-/// closed (e.g. the hospital cancelled it or `expire_request` ran first), so a
-/// stale workflow can always be unwound.
-fn cancel_request_if_open(
-    env: &Env,
-    req_client: &RequestContractClient,
-    request_id: u64,
-    reason: &str,
-) -> Result<(), CoordinatorError> {
-    let request = fetch_request(req_client, request_id)?;
-    match request.status {
-        RequestStatus::Pending | RequestStatus::Approved => {
-            set_request_status(env, req_client, request_id, RequestStatus::Cancelled, reason)
+/// Refuse to proceed if the configured temperature contract reports any unit
+/// as compromised. Skipped only while no temperature contract is configured
+/// (see `set_temperature_contract`).
+fn require_units_not_compromised(env: &Env, unit_ids: &Vec<u64>) -> Result<(), CoordinatorError> {
+    let temp_addr: Option<Address> = env.storage().instance().get(&DataKey::TemperatureContract);
+    if let Some(addr) = temp_addr {
+        let temp_client = TemperatureContractClient::new(env, &addr);
+        for i in 0..unit_ids.len() {
+            let uid = unit_ids.get(i).unwrap();
+            let compromised = temp_client
+                .try_is_compromised(&uid)
+                .map_err(|_| CoordinatorError::TemperatureCheckFailed)?
+                .map_err(|_| CoordinatorError::TemperatureCheckFailed)?;
+            if compromised {
+                return Err(CoordinatorError::UnitCompromised);
+            }
         }
-        _ => Ok(()),
     }
+    Ok(())
 }
 
-/// Release every unit of a rolled-back workflow back to `Available` and
-/// refund its payment if it is still Locked.
-fn unwind_workflow(env: &Env, wf: &WorkflowRecord) -> Result<(), CoordinatorError> {
-    let coordinator = env.current_contract_address();
+/// Return an Allocated workflow's units to `Available`.
+///
+/// Workflows allocated through `inventory.reserve_blood` hold an inventory
+/// reservation recorded on the request; releasing it frees every unit and
+/// removes the reservation record. When `expiring` is set and the reservation
+/// has reached its own expiry, the permissionless `expire_reservation` is used
+/// instead. A reservation that is already gone has nothing left to release.
+/// Workflows without a recorded reservation (allocated before reservations
+/// were used, or whose request was cancelled and its reservation released)
+/// fall back to per-unit status updates for units still Reserved.
+fn release_allocated_units(
+    env: &Env,
+    wf: &WorkflowRecord,
+    expiring: bool,
+) -> Result<(), CoordinatorError> {
     let inv_addr: Address = get_contract_address(env, &DataKey::InventoryContract)?;
     let inv_client = InventoryContractClient::new(env, &inv_addr);
 
+    let req_addr: Address = get_contract_address(env, &DataKey::RequestContract)?;
+    let req_client = RequestContractClient::new(env, &req_addr);
+    let reservation_id = req_client
+        .try_get_request(&wf.request_id)
+        .map_err(|_| CoordinatorError::RequestNotFound)?
+        .map_err(|_| CoordinatorError::RequestNotFound)?
+        .reservation_id;
+
+    if let Some(res_id) = reservation_id {
+        let result = if expiring {
+            inv_client.try_expire_reservation(&res_id)
+        } else {
+            let inv_admin = inv_client.get_admin();
+            inv_client.try_release_reservation(&inv_admin, &res_id)
+        };
+        let not_found = soroban_sdk::Error::from_contract_error(INVENTORY_RESERVATION_NOT_FOUND);
+        match result {
+            Ok(Ok(())) => {}
+            Err(Ok(err)) if err == not_found => {}
+            _ => return Err(CoordinatorError::InventoryUpdateFailed),
+        }
+        return Ok(());
+    }
+
+    let inv_admin = inv_client.get_admin();
     for i in 0..wf.unit_ids.len() {
         let uid = wf.unit_ids.get(i).unwrap();
+        // Units already released elsewhere (e.g. the request was cancelled,
+        // releasing its reservation) have nothing left to undo.
+        let unit = inv_client
+            .try_get_blood_unit(&uid)
+            .map_err(|_| CoordinatorError::UnitNotFound)?
+            .map_err(|_| CoordinatorError::UnitNotFound)?;
+        if unit.status != BloodStatus::Reserved {
+            continue;
+        }
         inv_client
-            .try_update_status(&uid, &BloodStatus::Available, &coordinator, &None)
+            .try_update_status(&uid, &BloodStatus::Available, &inv_admin, &None)
             .map_err(|_| CoordinatorError::InventoryUpdateFailed)?
             .map_err(|_| CoordinatorError::InventoryUpdateFailed)?;
     }
+    Ok(())
+}
 
-    let pay_addr: Address = get_contract_address(env, &DataKey::PaymentContract)?;
-    let pay_client = PaymentContractClient::new(env, &pay_addr);
+/// Load the workflow's bound payment, checking it still belongs to the request.
+fn load_bound_payment(
+    pay_client: &PaymentContractClient,
+    wf: &WorkflowRecord,
+) -> Result<Payment, CoordinatorError> {
     let payment = pay_client
         .try_get_payment(&wf.payment_id)
         .map_err(|_| CoordinatorError::PaymentNotFound)?
@@ -571,9 +637,38 @@ fn unwind_workflow(env: &Env, wf: &WorkflowRecord) -> Result<(), CoordinatorErro
     if payment.request_id != wf.request_id {
         return Err(CoordinatorError::PaymentRequestMismatch);
     }
+    Ok(payment)
+}
+
+/// Unwind an Allocated or AwaitingReceipt workflow: release the reserved units
+/// (Allocated only — once delivered they are physically at the hospital) and
+/// refund the payment if it is still Locked. An AwaitingReceipt workflow whose
+/// payment has already been Released is settled, not unwound.
+fn unwind_workflow(
+    env: &Env,
+    wf: &mut WorkflowRecord,
+    expiring: bool,
+) -> Result<(), CoordinatorError> {
+    let pay_addr: Address = get_contract_address(env, &DataKey::PaymentContract)?;
+    let pay_client = PaymentContractClient::new(env, &pay_addr);
+    let payment = load_bound_payment(&pay_client, wf)?;
+
+    match wf.status {
+        WorkflowStatus::Allocated => release_allocated_units(env, wf, expiring)?,
+        WorkflowStatus::AwaitingReceipt => {
+            if payment.status == PaymentStatus::Released {
+                return Err(CoordinatorError::CannotRollbackSettled);
+            }
+        }
+        _ => return Err(CoordinatorError::InvalidWorkflowState),
+    }
+
     if payment.status == PaymentStatus::Locked {
         refund_payment(env, &pay_client, &payment)?;
     }
+
+    wf.status = WorkflowStatus::RolledBack;
+    save_workflow(env, wf);
     Ok(())
 }
 
@@ -745,6 +840,34 @@ impl CoordinatorContract {
         Ok(())
     }
 
+    /// Configure the temperature contract consulted (via `is_compromised`) by
+    /// `confirm_delivery` and `settle_payment`. Admin only.
+    ///
+    /// Once set, a workflow with any compromised unit can neither be delivered
+    /// nor settled: an Allocated workflow can then be rolled back (refunding the
+    /// payment), and a Delivered one disputed and resolved on the payments
+    /// contract.
+    pub fn set_temperature_contract(
+        env: Env,
+        admin: Address,
+        temperature_contract: Address,
+    ) -> Result<(), CoordinatorError> {
+        admin.require_auth();
+        let stored = get_admin(&env)?;
+        if admin != stored {
+            return Err(CoordinatorError::Unauthorized);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::TemperatureContract, &temperature_contract);
+        Ok(())
+    }
+
+    /// Returns the configured temperature contract, if any.
+    pub fn get_temperature_contract(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::TemperatureContract)
+    }
+
     fn require_admin(env: &Env, caller: &Address) -> Result<(), CoordinatorError> {
         let stored = get_admin(env)?;
         if *caller != stored {
@@ -773,14 +896,19 @@ impl CoordinatorContract {
 
     /// Step 1 – Allocate inventory units to a pending request.
     ///
-    /// `payment_id` is bound to the workflow here and is the only payment
-    /// `settle_payment` will release. It must belong to `request_id`, be a
-    /// `Locked` escrow (token-backed) and have been paid by the request's
-    /// hospital. Every unit must be Available and ABO/Rh-compatible with the
-    /// request's blood type; each one is moved to Reserved so it cannot be
-    /// allocated to another workflow, and the request moves `Pending →
-    /// Approved` so it cannot be allocated again. Any failure aborts the whole
-    /// allocation.
+    /// `payment_id` is bound to the workflow here (it must belong to
+    /// `request_id`) and is the only payment `settle_payment` will release.
+    /// Every unit must be Available, ABO/Rh-compatible with the request's
+    /// blood type and owned by the same blood bank, and together the units
+    /// must cover the request's outstanding `quantity_ml` (partial allocations
+    /// are rejected).
+    ///
+    /// The units are reserved through `inventory.reserve_blood`, so a
+    /// `Reservation` record with an expiry is created (and the registry synced
+    /// when configured); the owning blood bank must authorize the call. The
+    /// request is then approved and the reservation ID recorded on it via
+    /// `requests.set_reservation_id`, so cancelling the request releases the
+    /// units. Any failure aborts the whole allocation.
     pub fn allocate_units(
         env: Env,
         request_id: u64,
@@ -840,14 +968,21 @@ impl CoordinatorContract {
             return Err(CoordinatorError::PaymentPayerMismatch);
         }
 
-        // Reserve each inventory unit. The coordinator is inventory's trusted
-        // coordinator contract and authorizes as itself.
-        let coordinator = env.current_contract_address();
+        // Validate every unit before reserving anything.
         let inv_addr: Address = get_contract_address(&env, &DataKey::InventoryContract)?;
         let inv_client = InventoryContractClient::new(&env, &inv_addr);
 
+        let mut bank: Option<Address> = None;
+        let mut total_ml: u32 = 0;
         for i in 0..unit_ids.len() {
             let uid = unit_ids.get(i).unwrap();
+            // A unit listed twice would be counted twice toward the volume.
+            for j in 0..i {
+                if unit_ids.get(j).unwrap() == uid {
+                    return Err(CoordinatorError::UnitNotAvailable);
+                }
+            }
+
             let unit = inv_client
                 .try_get_blood_unit(&uid)
                 .map_err(|_| CoordinatorError::UnitNotFound)?
@@ -861,21 +996,55 @@ impl CoordinatorContract {
                 return Err(CoordinatorError::IncompatibleBloodType);
             }
 
-            inv_client
-                .try_update_status(&uid, &BloodStatus::Reserved, &coordinator, &None)
-                .map_err(|_| CoordinatorError::InventoryUpdateFailed)?
-                .map_err(|_| CoordinatorError::InventoryUpdateFailed)?;
+            match bank.clone() {
+                None => bank = Some(unit.bank_id.clone()),
+                Some(b) if b != unit.bank_id => {
+                    return Err(CoordinatorError::MixedBloodBanks);
+                }
+                Some(_) => {}
+            }
+
+            total_ml = total_ml.saturating_add(unit.quantity_ml);
         }
 
-        // Take the request out of Pending so matching, the hospital and a
-        // second allocate_units all see it as being fulfilled.
-        set_request_status(
-            &env,
-            &req_client,
-            request_id,
-            RequestStatus::Approved,
-            "Units allocated by coordinator",
-        )?;
+        let outstanding_ml = request
+            .quantity_ml
+            .saturating_sub(request.fulfilled_quantity_ml);
+        if total_ml < outstanding_ml {
+            return Err(CoordinatorError::InsufficientQuantity);
+        }
+
+        // Reserve through inventory's reservation system (expiry, registry
+        // sync, ownership and duplicate checks). The reservation lasts as long
+        // as the workflow's own expiry window.
+        let bank = bank.ok_or(CoordinatorError::NoUnitsSpecified)?;
+        let reservation_id = inv_client
+            .try_reserve_blood(
+                &bank,
+                &request.hospital_id,
+                &unit_ids,
+                &request_id,
+                &WORKFLOW_TIMEOUT_SECS,
+            )
+            .map_err(|_| CoordinatorError::InventoryUpdateFailed)?
+            .map_err(|_| CoordinatorError::InventoryUpdateFailed)?;
+
+        // Approve the request and record the reservation on it, so that
+        // cancelling or rejecting the request releases the reserved units.
+        let req_admin = req_client.get_admin();
+        req_client
+            .try_update_request_status(
+                &req_admin,
+                &request_id,
+                &RequestStatus::Approved,
+                &String::from_str(&env, "Units allocated by coordinator"),
+            )
+            .map_err(|_| CoordinatorError::RequestUpdateFailed)?
+            .map_err(|_| CoordinatorError::RequestUpdateFailed)?;
+        req_client
+            .try_set_reservation_id(&req_admin, &request_id, &reservation_id)
+            .map_err(|_| CoordinatorError::RequestUpdateFailed)?
+            .map_err(|_| CoordinatorError::RequestUpdateFailed)?;
 
         CoordAllocated {
             request_id,
@@ -906,6 +1075,10 @@ impl CoordinatorContract {
     /// the confirmer.  It is stored in the workflow record and emitted in the
     /// event so off-chain auditors and cold-chain compliance tooling can verify
     /// where delivery occurred.
+    ///
+    /// Fails with `UnitCompromised` if the configured temperature contract
+    /// reports any unit as compromised; the workflow stays Allocated and can be
+    /// rolled back, refunding the payment.
     pub fn confirm_delivery(
         env: Env,
         request_id: u64,
@@ -925,26 +1098,8 @@ impl CoordinatorContract {
             return Err(CoordinatorError::InvalidWorkflowState);
         }
 
-        // The request must still be open: if the hospital cancelled it (or it
-        // expired) while the units were reserved, roll the workflow back
-        // instead of delivering.
-        let req_addr: Address = get_contract_address(&env, &DataKey::RequestContract)?;
-        let req_client = RequestContractClient::new(&env, &req_addr);
-        let request = fetch_request(&req_client, request_id)?;
-        match request.status {
-            RequestStatus::Approved => set_request_status(
-                &env,
-                &req_client,
-                request_id,
-                RequestStatus::InProgress,
-                "Delivery confirmed by coordinator",
-            )?,
-            // A rider already picked the request up.
-            RequestStatus::InProgress => {}
-            _ => return Err(CoordinatorError::InvalidRequestState),
-        }
+        require_units_not_compromised(&env, &wf.unit_ids)?;
 
-        let coordinator = env.current_contract_address();
         let inv_addr: Address = get_contract_address(&env, &DataKey::InventoryContract)?;
         let inv_client = InventoryContractClient::new(&env, &inv_addr);
 
@@ -978,11 +1133,18 @@ impl CoordinatorContract {
     /// Step 3 – Settle payment. Blocked if delivery not confirmed.
     ///
     /// Only the payment bound at allocation is released, after re-checking that
-    /// it still belongs to this request and is Locked. For an escrow-backed
-    /// payment this records the coordinator's half of the two-party release:
-    /// the tokens reach the payee once the hospital calls `confirm_receipt` on
-    /// the payments contract (immediately, if it already has). The request is
-    /// marked `Fulfilled` in the requests contract.
+    /// it still belongs to this request and is Locked, and that no unit has
+    /// since been reported compromised. For an escrow-backed payment this
+    /// records the coordinator's half of the two-party release: the tokens
+    /// reach the payee once the hospital calls `confirm_receipt` on the
+    /// payments contract (immediately, if it already has).
+    ///
+    /// The payment is re-read afterwards. The workflow becomes Settled (and
+    /// `coord/settld` is emitted) only if it is Released; otherwise it moves to
+    /// AwaitingReceipt (emitting `coord/awt_rcpt`) with a fresh
+    /// `RECEIPT_TIMEOUT_SECS` deadline, and `finalize_settlement` completes it
+    /// once the hospital confirms. An AwaitingReceipt workflow can still be
+    /// rolled back or expired.
     pub fn settle_payment(
         env: Env,
         request_id: u64,
@@ -1017,34 +1179,91 @@ impl CoordinatorContract {
             return Err(CoordinatorError::InvalidPaymentState);
         }
 
+        require_units_not_compromised(&env, &wf.unit_ids)?;
+
         release_payment(&env, &pay_client, &payment)?;
 
-        let req_addr: Address = get_contract_address(&env, &DataKey::RequestContract)?;
-        let req_client = RequestContractClient::new(&env, &req_addr);
-        if fetch_request(&req_client, request_id)?.status != RequestStatus::Fulfilled {
-            set_request_status(
-                &env,
-                &req_client,
+        // release_escrow only records the coordinator's confirmation until the
+        // hospital has called confirm_receipt, so check what actually happened.
+        let payment = load_bound_payment(&pay_client, &wf)?;
+        if payment.status == PaymentStatus::Released {
+            wf.status = WorkflowStatus::Settled;
+            save_workflow(&env, &wf);
+
+            CoordSettled {
                 request_id,
-                RequestStatus::Fulfilled,
-                "Payment settled by coordinator",
-            )?;
-        }
+                payment_id: wf.payment_id,
+            }
+            .publish(&env);
+        } else {
+            wf.status = WorkflowStatus::AwaitingReceipt;
+            wf.expires_at = env.ledger().timestamp() + RECEIPT_TIMEOUT_SECS;
+            save_workflow(&env, &wf);
 
-        wf.status = WorkflowStatus::Settled;
-        save_workflow(&env, &wf);
-
-        CoordSettled {
-            request_id,
-            payment_id: wf.payment_id,
+            CoordAwaitingReceipt {
+                request_id,
+                payment_id: wf.payment_id,
+            }
+            .publish(&env);
         }
-        .publish(&env);
 
         Ok(())
     }
 
-    /// Rollback – admin only. Releases units, refunds payment and cancels the
-    /// request (a hospital that still needs blood raises a new request).
+    /// Finalize an AwaitingReceipt workflow once the payments contract has
+    /// settled the escrow. Permissionless: it only mirrors the payment's state.
+    ///
+    /// * Payment Released (the hospital confirmed receipt) → workflow Settled,
+    ///   `coord/settld` emitted.
+    /// * Payment Refunded or Cancelled (e.g. a dispute was resolved in the
+    ///   payer's favour) → workflow RolledBack, `coord/rollbk` emitted.
+    ///
+    /// # Errors
+    /// - `WorkflowNotFound`     — no workflow exists for `request_id`
+    /// - `InvalidWorkflowState` — workflow is not AwaitingReceipt
+    /// - `ReceiptNotConfirmed`  — the payment is not yet settled
+    pub fn finalize_settlement(env: Env, request_id: u64) -> Result<(), CoordinatorError> {
+        Self::require_initialized(&env)?;
+        Self::require_not_paused(&env)?;
+        Self::require_not_emergency_halted(&env)?;
+
+        let mut wf = load_workflow(&env, request_id).ok_or(CoordinatorError::WorkflowNotFound)?;
+        if wf.status != WorkflowStatus::AwaitingReceipt {
+            return Err(CoordinatorError::InvalidWorkflowState);
+        }
+
+        let pay_addr: Address = get_contract_address(&env, &DataKey::PaymentContract)?;
+        let pay_client = PaymentContractClient::new(&env, &pay_addr);
+        let payment = load_bound_payment(&pay_client, &wf)?;
+
+        match payment.status {
+            PaymentStatus::Released => {
+                wf.status = WorkflowStatus::Settled;
+                save_workflow(&env, &wf);
+                CoordSettled {
+                    request_id,
+                    payment_id: wf.payment_id,
+                }
+                .publish(&env);
+            }
+            PaymentStatus::Refunded | PaymentStatus::Cancelled => {
+                wf.status = WorkflowStatus::RolledBack;
+                save_workflow(&env, &wf);
+                CoordRolledBack { request_id }.publish(&env);
+            }
+            _ => return Err(CoordinatorError::ReceiptNotConfirmed),
+        }
+
+        Ok(())
+    }
+
+    /// Rollback – admin only. Releases units and refunds payment.
+    ///
+    /// Allowed for an Allocated workflow (the inventory reservation is
+    /// released and a Locked payment refunded) and for an AwaitingReceipt one
+    /// (the delivered units stay where they are; a still-Locked escrow is
+    /// refunded). An AwaitingReceipt workflow whose payment was already
+    /// Released must be finalized instead.
     pub fn rollback(env: Env, request_id: u64) -> Result<(), CoordinatorError> {
         bump_instance_ttl(&env);
         let admin = get_admin(&env)?;
@@ -1058,21 +1277,18 @@ impl CoordinatorContract {
             return Err(CoordinatorError::CannotRollbackSettled);
         }
 
-        // Only an Allocated workflow can be rolled back. Once delivery has been
-        // confirmed the units are physically at the hospital, and a workflow
-        // that is already RolledBack must not release its units or refund twice.
-        if wf.status != WorkflowStatus::Allocated {
+        // Only Allocated and AwaitingReceipt workflows can be rolled back. A
+        // Delivered workflow's units are physically at the hospital with no
+        // settlement started, and a workflow that is already RolledBack must not
+        // release its units or refund twice.
+        if !matches!(
+            wf.status,
+            WorkflowStatus::Allocated | WorkflowStatus::AwaitingReceipt
+        ) {
             return Err(CoordinatorError::InvalidWorkflowState);
         }
 
-        unwind_workflow(&env, &wf)?;
-
-        let req_addr: Address = get_contract_address(&env, &DataKey::RequestContract)?;
-        let req_client = RequestContractClient::new(&env, &req_addr);
-        cancel_request_if_open(&env, &req_client, request_id, "Workflow rolled back")?;
-
-        wf.status = WorkflowStatus::RolledBack;
-        save_workflow(&env, &wf);
+        unwind_workflow(&env, &mut wf, false)?;
 
         CoordRolledBack { request_id }.publish(&env);
 
@@ -1082,45 +1298,38 @@ impl CoordinatorContract {
     /// Expire a stale workflow once its deadline has elapsed.
     ///
     /// Any caller may invoke this once `ledger.timestamp() >= record.expires_at`.
-    /// The workflow must be in the `Allocated` state (i.e. `confirm_delivery`
-    /// was never called).  On success the workflow is rolled back: reserved
-    /// inventory units are released back to `Available`, the escrowed
-    /// payment is refunded to the payer and the request is cancelled.
-    ///
-    /// No signature is required: the coordinator authorizes the inventory,
-    /// payments and requests sub-calls as itself.
+    /// The workflow must be `Allocated` (i.e. `confirm_delivery` was never
+    /// called) or `AwaitingReceipt` (the hospital never confirmed receipt
+    /// within `RECEIPT_TIMEOUT_SECS`). On success the workflow is rolled back:
+    /// an Allocated workflow's inventory reservation is expired, returning the
+    /// units to `Available`, and a still-Locked payment is refunded to the payer.
     ///
     /// # Errors
     /// - `WorkflowNotFound`    — no workflow exists for `request_id`
     /// - `WorkflowNotExpired`  — the expiry deadline has not yet passed
-    /// - `InvalidWorkflowState`— workflow is not in the `Allocated` state
-    ///   (already delivered, settled, or rolled back)
+    /// - `InvalidWorkflowState`— workflow is neither Allocated nor
+    ///   AwaitingReceipt (delivered without settlement, settled, or rolled back)
+    /// - `CannotRollbackSettled` — the escrow was already Released; call
+    ///   `finalize_settlement` instead
     pub fn expire_workflow(env: Env, request_id: u64) -> Result<(), CoordinatorError> {
         bump_instance_ttl(&env);
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
 
-        let wf = load_workflow(&env, request_id).ok_or(CoordinatorError::WorkflowNotFound)?;
+        let mut wf = load_workflow(&env, request_id).ok_or(CoordinatorError::WorkflowNotFound)?;
 
         if env.ledger().timestamp() < wf.expires_at {
             return Err(CoordinatorError::WorkflowNotExpired);
         }
 
-        if wf.status != WorkflowStatus::Allocated {
+        if !matches!(
+            wf.status,
+            WorkflowStatus::Allocated | WorkflowStatus::AwaitingReceipt
+        ) {
             return Err(CoordinatorError::InvalidWorkflowState);
         }
 
-        // Same unwinding as rollback. Every sub-call is authorized by the
-        // coordinator contract itself, so any caller can expire a stale workflow.
-        unwind_workflow(&env, &wf)?;
-
-        let req_addr: Address = get_contract_address(&env, &DataKey::RequestContract)?;
-        let req_client = RequestContractClient::new(&env, &req_addr);
-        cancel_request_if_open(&env, &req_client, request_id, "Workflow expired")?;
-
-        let mut expired_wf = wf;
-        expired_wf.status = WorkflowStatus::RolledBack;
-        save_workflow(&env, &expired_wf);
+        unwind_workflow(&env, &mut wf, true)?;
 
         CoordExpired { request_id }.publish(&env);
 
