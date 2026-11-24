@@ -21,6 +21,12 @@ import { Permission } from '../auth/enums/permission.enum';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 
+import {
+  AllocateUnitsDto,
+  ConfirmDeliveryDto,
+  RollbackWorkflowDto,
+  SettlePaymentDto,
+} from './dto/workflow.dto';
 import { WorkflowOrchestrationService } from './workflow-orchestration.service';
 
 export class AllocateUnitsDto {
@@ -104,6 +110,7 @@ export class WorkflowController {
   })
   confirmDelivery(
     @Param('requestId', ParseUUIDPipe) requestId: string,
+    @Body() _body: ConfirmDeliveryDto,
     @Request() req: { user: { stellarAddress?: string; sub: string } },
   ) {
     return this.service.confirmDelivery({
@@ -136,6 +143,7 @@ export class WorkflowController {
   })
   settle(
     @Param('requestId', ParseUUIDPipe) requestId: string,
+    @Body() _body: SettlePaymentDto,
     @Request() req: { user: { stellarAddress?: string; sub: string } },
   ) {
     return this.service.settlePayment({
@@ -166,7 +174,10 @@ export class WorkflowController {
     status: 403,
     description: 'Forbidden - insufficient permissions',
   })
-  rollback(@Param('requestId', ParseUUIDPipe) requestId: string) {
+  rollback(
+    @Param('requestId', ParseUUIDPipe) requestId: string,
+    @Body() _body: RollbackWorkflowDto,
+  ) {
     return this.service.rollback({ requestId });
   }
 }

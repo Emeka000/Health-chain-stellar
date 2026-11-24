@@ -349,13 +349,15 @@ export class SorobanService {
       },
     );
 
-    // Upsert the durable state row
-    let txState = await this.txStateRepo.findOne({
-      where: { transactionHash: callback.transactionHash },
-    });
-
-    if (!txState) {
-      txState = this.txStateRepo.create({
+    // Upsert the durable state row atomically. Concurrent callbacks for the
+    // same transaction (with different eventIds) must not race on the unique
+    // constraint, so insert with ON CONFLICT (transaction_hash) DO NOTHING and
+    // then load the row (either the one we just inserted or the existing one).
+    await this.txStateRepo
+      .createQueryBuilder()
+      .insert()
+      .into(OnChainTxStateEntity)
+      .values({
         transactionHash: callback.transactionHash,
         contractMethod: callback.contractMethod,
         status: OnChainTxStatus.PENDING,
@@ -363,7 +365,18 @@ export class SorobanService {
         finalityThreshold: this.confirmationService.finalityThreshold,
         emittedEvents: 0,
         metadata: callback.metadata ?? null,
-      });
+      })
+      .orIgnore()
+      .execute();
+
+    const txState = await this.txStateRepo.findOne({
+      where: { transactionHash: callback.transactionHash },
+    });
+
+    if (!txState) {
+      throw new Error(
+        `Failed to load on-chain tx state for ${callback.transactionHash}`,
+      );
     }
 
     if (callback.status === 'pending') {
