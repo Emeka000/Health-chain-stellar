@@ -62,11 +62,13 @@ echo ""
 # Deployment order: coordinator first (it's a dependency for other contracts)
 declare -A CONTRACT_IDS
 
+source "$(dirname "$0")/wasm-artifacts.sh"
+
 for contract in coordinator identity inventory payments requests temperature matching reputation delivery analytics; do
     echo "Deploying ${contract} contract..."
 
     CONTRACT_ID=$(stellar contract deploy \
-        --wasm target/wasm32-unknown-unknown/release/${contract}_contract.wasm \
+        --wasm "${WASM_DIR}/${WASM_ARTIFACTS[$contract]}.wasm" \
         --source ${STELLAR_IDENTITY} \
         --network ${NETWORK} \
         --rpc-url ${STELLAR_RPC_URL} \

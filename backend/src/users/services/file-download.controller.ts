@@ -12,9 +12,11 @@ import {
   NotFoundException,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { Public } from '../../auth/decorators/public.decorator';
 import { ArtifactAccessClass, resolveAccessClass, StorageService } from './storage.service';
 
 /**
@@ -33,6 +35,7 @@ import { ArtifactAccessClass, resolveAccessClass, StorageService } from './stora
 export class FileDownloadController {
   constructor(private readonly storageService: StorageService) {}
 
+  @Public()
   @ApiOperation({ summary: 'Get download' })
   @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get('download')
@@ -54,12 +57,13 @@ export class FileDownloadController {
       return this.serve(key, res);
     }
 
-    // Path 2: JWT-authenticated — delegate to the guarded handler.
-    // We call it directly here; the guard is on the sub-method.
+    // Path 2: no signed token — only PUBLIC artifacts may be served anonymously.
+    // INTERNAL/PROTECTED artifacts require a signed token or the JWT-guarded
+    // /files/download/auth endpoint; do not invoke the guarded handler directly.
     const subfolder = key.split('/')[0];
     const accessClass = resolveAccessClass(subfolder);
     if (accessClass !== ArtifactAccessClass.PUBLIC) {
-      return this.downloadWithJwt(key, req, res);
+      throw new UnauthorizedException('Authentication required');
     }
 
     return this.serve(key, res);

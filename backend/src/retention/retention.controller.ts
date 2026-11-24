@@ -1,5 +1,6 @@
 import { Controller, Post, Get, Patch, Param, Body, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery, ApiResponse } from '@nestjs/swagger';
+import { IsString, IsNotEmpty } from 'class-validator';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
@@ -10,6 +11,20 @@ import { RetentionService } from './retention.service';
 import { RetentionPolicyService } from './retention-policy.service';
 import { RetentionExecutorService } from './retention-executor.service';
 import { SensitiveDataService } from './sensitive-data.service';
+
+export class PlaceLegalHoldDto {
+  @IsString()
+  @IsNotEmpty()
+  entityType: string;
+
+  @IsString()
+  @IsNotEmpty()
+  entityId: string;
+
+  @IsString()
+  @IsNotEmpty()
+  reason: string;
+}
 
 @ApiTags('Retention')
 @Controller('retention')
@@ -61,7 +76,7 @@ export class RetentionController {
   @RequirePermissions(Permission.ADMIN_ACCESS)
   @ApiOperation({ summary: 'Place a legal hold on an entity to block retention actions' })
   async placeLegalHold(
-    @Body() body: { entityType: string; entityId: string; reason: string },
+    @Body() body: PlaceLegalHoldDto,
     @User('id') userId: string,
   ) {
     return this.retentionExecutorService.placeLegalHold(

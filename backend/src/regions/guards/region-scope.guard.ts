@@ -15,8 +15,11 @@ export const REGIONAL_ADMIN_ROLE = 'regional_admin';
  *
  * - Super admins and non-regional-admin roles pass through unrestricted.
  * - Regional admins must have a `regionCode` claim in their JWT payload.
- * - The request must carry a `region` query param or body field matching
- *   the admin's assigned region code.
+ * - The requested region is resolved from query/route/body params; when none
+ *   is provided the admin's own region is exposed via `request.regionScope`
+ *   (never by mutating `request.query`, which is a getter on Express 5).
+ * - Route handlers scoped by `:id` should compare the loaded region's code
+ *   against `request.regionScope` and return 403 on mismatch.
  */
 @Injectable()
 export class RegionScopeGuard implements CanActivate {
@@ -64,17 +67,18 @@ export class RegionScopeGuard implements CanActivate {
       request.body?.region ||
       request.body?.regionCode;
 
-    if (!requestedRegion) {
-      // No region filter provided — inject the admin's own region automatically
-      request.query = { ...request.query, region: adminRegion };
-      return true;
+    if (requestedRegion) {
+      if (requestedRegion.toUpperCase() !== adminRegion.toUpperCase()) {
+        throw new ForbiddenException(
+          `Access denied: you can only access data for region "${adminRegion}"`,
+        );
+      }
     }
 
-    if (requestedRegion.toUpperCase() !== adminRegion.toUpperCase()) {
-      throw new ForbiddenException(
-        `Access denied: you can only access data for region "${adminRegion}"`,
-      );
-    }
+    // Expose the admin's region scope without mutating req.query (Express 5
+    // makes req.query a getter-only property). Handlers can read this to
+    // filter results or to compare against a loaded region's code.
+    request.regionScope = adminRegion;
 
     return true;
   }

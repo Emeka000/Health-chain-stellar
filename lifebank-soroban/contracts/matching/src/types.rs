@@ -18,6 +18,17 @@ pub enum BloodType {
     ONegative,
 }
 
+/// Blood product type, mirrored from the inventory and requests contracts.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BloodComponent {
+    WholeBlood,
+    RedCells,
+    Plasma,
+    Platelets,
+    Cryoprecipitate,
+}
+
 /// Urgency levels for a blood request.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -60,6 +71,7 @@ pub enum BloodStatus {
 pub struct BloodUnit {
     pub id: u64,
     pub blood_type: BloodType,
+    pub component: BloodComponent,
     pub quantity_ml: u32,
     pub bank_id: Address,
     pub donor_id: Option<Address>,
@@ -67,17 +79,6 @@ pub struct BloodUnit {
     pub expiration_timestamp: u64,
     pub status: BloodStatus,
     pub metadata: Map<Symbol, String>,
-}
-
-/// Blood component type — mirrors requests contract's `BloodComponent`.
-#[contracttype]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BloodComponent {
-    WholeBlood,
-    RedCells,
-    Plasma,
-    Platelets,
-    Cryoprecipitate,
 }
 
 /// Blood request view returned by the requests contract.

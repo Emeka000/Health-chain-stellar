@@ -135,6 +135,10 @@ pub struct PaymentStats {
     pub count_locked: u32,
     pub count_released: u32,
     pub count_refunded: u32,
+    /// Escrowed funds under an open dispute. total_locked + total_disputed
+    /// equals the summed escrow reserve. Bookkeeping disputes are not counted.
+    pub total_disputed: i128,
+    pub count_disputed: u32,
 }
 ```
 
@@ -156,13 +160,16 @@ pub struct PaymentStats {
 
 ```
 Pending → Locked  (create_escrow / create_payment)
-Pending → Cancelled  (update_status, bookkeeping payments only)
+Pending → Released | Refunded | Cancelled  (update_status, bookkeeping payments only)
+Pending → Disputed  (record_dispute, bookkeeping payments)
 Locked  → Released  (release_escrow + confirm_receipt, two-party)
 Locked  → Refunded  (refund_escrow)
 Locked  → Disputed  (record_dispute)
 Disputed → Released  (resolve_dispute, release_to_payee=true)
 Disputed → Refunded  (resolve_dispute, release_to_payee=false)
-Disputed → Refunded  (process_expired_disputes, timeout)
+Disputed → Refunded | Released  (process_expired_disputes, timeout; outcome is
+                                  set_dispute_default for the dispute's opener,
+                                  RefundToPayer by default; escrow and bookkeeping)
 ```
 
 ---

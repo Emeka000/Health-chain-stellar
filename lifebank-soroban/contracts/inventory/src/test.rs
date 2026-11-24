@@ -1,13 +1,38 @@
 use crate::storage;
-use crate::types::{BloodStatus, BloodType};
+use crate::types::{BloodStatus, BloodType, BloodUnit, Role};
 use crate::{ContractError, InventoryContract, InventoryContractClient};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
-    vec, Address, Env, String,
+    testutils::{Address as _, Events as _, Ledger},
+    contract, contractimpl, contracttype, vec, Address, Env, IntoVal, Map, String, Symbol, TryFromVal,
 };
 
 /// Standard shelf life used by register_blood (35 days in seconds).
 const SHELF_LIFE_SECS: u64 = 35 * 86400;
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum MockRequestKey {
+    Approved(u64),
+}
+
+#[contract]
+struct MockRequestsContract;
+
+#[contractimpl]
+impl MockRequestsContract {
+    pub fn set_request_approved(env: Env, request_id: u64, approved: bool) {
+        env.storage()
+            .instance()
+            .set(&MockRequestKey::Approved(request_id), &approved);
+    }
+
+    pub fn is_request_approved(env: Env, request_id: u64) -> bool {
+        env.storage()
+            .instance()
+            .get(&MockRequestKey::Approved(request_id))
+            .unwrap_or(false)
+    }
+}
 
 fn create_test_contract<'a>() -> (Env, Address, InventoryContractClient<'a>, Address) {
     let env = Env::default();
@@ -31,6 +56,253 @@ fn test_initialize_success() {
     let stored_admin = env.as_contract(&contract_id, || storage::get_admin(&env));
 
     assert_eq!(stored_admin, admin);
+}
+
+#[test]
+fn test_reserve_blood_rejects_zero_duration_with_specific_error() {
+    let (env, bank, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-RESERVE-ZERO-DURATION"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
+
+    let result = client
+        .try_reserve_blood(&bank, &bank, &vec![&env, unit_id], &1, &0)
+        .err();
+    assert_eq!(
+        result,
+        Some(Ok(ContractError::ReservationDurationTooShort))
+    );
+}
+
+#[test]
+fn test_reserve_blood_rejects_empty_unit_list_with_specific_error() {
+    let (env, bank, client, _) = create_test_contract();
+
+    let result = client
+        .try_reserve_blood(&bank, &bank, &soroban_sdk::Vec::new(&env), &1, &60)
+        .err();
+    assert_eq!(result, Some(Ok(ContractError::EmptyReservation)));
+}
+
+#[test]
+fn test_reserve_blood_requires_approved_request_when_configured() {
+    let (env, bank, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-RESERVE-REQUEST"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
+    let requests_id = env.register(MockRequestsContract, ());
+    let requests = MockRequestsContractClient::new(&env, &requests_id);
+    client.set_requests_contract(&bank, &requests_id);
+
+    let result = client
+        .try_reserve_blood(&bank, &bank, &vec![&env, unit_id], &99, &60)
+        .err();
+    assert_eq!(result, Some(Ok(ContractError::RequestNotApproved)));
+
+    requests.set_request_approved(&99, &true);
+    let reservation = client.try_reserve_blood(&bank, &bank, &vec![&env, unit_id], &99, &60);
+    assert!(reservation.is_ok());
+}
+
+#[test]
+fn test_matching_input_cost_is_independent_of_historical_units() {
+    let (env, bank, client, contract_id) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-AVAILABLE-INDEX"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
+
+    env.as_contract(&contract_id, || {
+        for id in 2..=2001u64 {
+            let historical_unit = BloodUnit {
+                id,
+                blood_type: BloodType::APositive,
+                component: crate::types::BloodComponent::WholeBlood,
+                quantity_ml: 450,
+                bank_id: bank.clone(),
+                donor_id: None,
+                donation_timestamp: 1000,
+                expiration_timestamp: 2000,
+                status: BloodStatus::Delivered,
+                metadata: Map::new(&env),
+            };
+            storage::add_to_blood_type_index(&env, &historical_unit);
+        }
+    });
+
+    assert_eq!(
+        client.get_blood_type_page_count(&BloodType::APositive),
+        100
+    );
+
+    // Matching uses this page-count + page lookup instead of the full type index.
+    env.cost_estimate().budget().reset_default();
+    assert_eq!(
+        client.get_available_blood_type_page_count(&BloodType::APositive),
+        0
+    );
+    let available = client.get_available_units_by_blood_type_page(&BloodType::APositive, &0);
+    let memory_read_entries = env.cost_estimate().resources().memory_read_entries;
+
+    assert_eq!(available.len(), 1);
+    assert!(
+        memory_read_entries <= 10,
+        "available-index reads grew with historical units: {memory_read_entries}"
+    );
+}
+
+#[test]
+fn test_available_index_removes_reserved_units_and_readds_released_units() {
+    let (env, bank, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-AVAILABLE-RESERVATION"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
+
+    let reservation_id = client.reserve_blood(&bank, &bank, &vec![&env, unit_id], &42, &3600);
+    assert_eq!(
+        client
+            .get_available_units_by_blood_type_page(&BloodType::APositive, &0)
+            .len(),
+        0
+    );
+
+    client.release_reservation(&bank, &reservation_id);
+    let available = client.get_available_units_by_blood_type_page(&BloodType::APositive, &0);
+    assert_eq!(available.len(), 1);
+    assert_eq!(available.get(0).unwrap(), unit_id);
+}
+
+#[test]
+fn test_temperature_contract_compromises_available_inventory_unit() {
+    let (env, bank, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let temperature_contract = Address::generate(&env);
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-TEMP-COMPROMISED"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
+    client.set_temperature_contract(&bank, &temperature_contract);
+
+    client.mark_compromised_from_temperature(&temperature_contract, &unit_id);
+
+    assert_eq!(
+        client.get_blood_unit(&unit_id).status,
+        BloodStatus::Compromised
+    );
+    assert_eq!(
+        client
+            .get_available_units_by_blood_type_page(&BloodType::APositive, &0)
+            .len(),
+        0
+    );
+}
+
+#[test]
+fn test_assign_delivery_requires_expected_roles_and_emits_event() {
+    let (env, bank, client, contract_id) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    let rider = Address::generate(&env);
+    let hospital = Address::generate(&env);
+    client.grant_role(&bank, &rider, &Role::Rider);
+    client.grant_role(&bank, &hospital, &Role::Hospital);
+
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-ASSIGN-001"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
+
+    client.assign_delivery(&bank, &unit_id, &rider, &hospital);
+
+    let events = env.events().all();
+    let (event_contract, topics, data) = events.last().unwrap();
+    assert_eq!(event_contract, contract_id);
+    assert_eq!(
+        topics.get(0).unwrap(),
+        Symbol::new(&env, "delivery_assigned").into_val(&env)
+    );
+    let payload = soroban_sdk::Vec::<soroban_sdk::Val>::try_from_val(&env, &data).unwrap();
+    assert_eq!(payload.len(), 3);
+    assert_eq!(payload.get(0).unwrap(), unit_id.into_val(&env));
+    assert_eq!(payload.get(1).unwrap(), rider.into_val(&env));
+    assert_eq!(payload.get(2).unwrap(), hospital.into_val(&env));
+}
+
+#[test]
+fn test_assign_delivery_rejects_addresses_without_expected_roles() {
+    let (env, bank, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-ASSIGN-002"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
+    let rider = Address::generate(&env);
+    let hospital = Address::generate(&env);
+    client.grant_role(&bank, &rider, &Role::Rider);
+
+    let result = client.try_assign_delivery(&bank, &unit_id, &rider, &hospital);
+    assert_eq!(
+        result.err(),
+        Some(Ok(ContractError::InsufficientRolePermission))
+    );
+}
+
+#[test]
+fn test_assign_delivery_rejects_delivered_unit() {
+    let (env, bank, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    let rider = Address::generate(&env);
+    let hospital = Address::generate(&env);
+    client.grant_role(&bank, &rider, &Role::Rider);
+    client.grant_role(&bank, &hospital, &Role::Hospital);
+
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-ASSIGN-003"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
+    client.update_status(&unit_id, &BloodStatus::Reserved, &bank, &None);
+    client.update_status(&unit_id, &BloodStatus::InTransit, &bank, &None);
+    client.update_status(&unit_id, &BloodStatus::Delivered, &bank, &None);
+
+    let result = client.try_assign_delivery(&bank, &unit_id, &rider, &hospital);
+    assert_eq!(
+        result.err(),
+        Some(Ok(ContractError::InvalidStatusTransition))
+    );
 }
 
 #[test]
@@ -355,6 +627,7 @@ fn test_duplicate_registration_prevented() {
         let rogue_unit = BloodUnit {
             id: 3,
             blood_type: BloodType::ONegative,
+            component: crate::types::BloodComponent::WholeBlood,
             quantity_ml: 450,
             bank_id: bank.clone(),
             donor_id: None,
@@ -2369,4 +2642,68 @@ fn test_release_reservation_by_contract_fails_on_unknown_reservation() {
     let trusted = Address::generate(&env);
     client.set_requests_contract(&admin, &trusted);
     client.release_reservation_by_contract(&trusted, &999);
+}
+
+// ── #1805: failed delivery compromises the reservation's units ───────────────
+
+#[test]
+fn test_compromise_reservation_by_ctr_marks_units_compromised() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let bank = admin.clone();
+
+    let u1 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-CMP-001"),
+        &BloodType::OPositive,
+        &450u32,
+        &None,
+    );
+    let u2 = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-CMP-002"),
+        &BloodType::OPositive,
+        &450u32,
+        &None,
+    );
+    let reservation_id = client.reserve_blood(&bank, &bank, &vec![&env, u1, u2], &42, &3600);
+    // One unit already left the bank with the rider.
+    client.update_status(&u2, &BloodStatus::InTransit, &bank, &None);
+
+    let trusted = Address::generate(&env);
+    client.set_requests_contract(&admin, &trusted);
+    let compromised = client.compromise_reservation_by_ctr(
+        &trusted,
+        &reservation_id,
+        &String::from_str(&env, "cold-chain breach"),
+    );
+
+    assert_eq!(compromised, 2);
+    assert_eq!(client.get_blood_unit(&u1).status, BloodStatus::Compromised);
+    assert_eq!(client.get_blood_unit(&u2).status, BloodStatus::Compromised);
+    assert!(client.try_get_reservation(&reservation_id).is_err());
+}
+
+#[test]
+fn test_compromise_reservation_by_ctr_rejects_untrusted_caller() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let bank = admin.clone();
+    let unit = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-CMP-003"),
+        &BloodType::OPositive,
+        &450u32,
+        &None,
+    );
+    let reservation_id = client.reserve_blood(&bank, &bank, &vec![&env, unit], &42, &3600);
+    client.set_requests_contract(&admin, &Address::generate(&env));
+
+    let result = client.try_compromise_reservation_by_ctr(
+        &Address::generate(&env),
+        &reservation_id,
+        &String::from_str(&env, "x"),
+    );
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+    assert_eq!(client.get_blood_unit(&unit).status, BloodStatus::Reserved);
 }

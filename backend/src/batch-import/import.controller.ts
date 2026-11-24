@@ -17,6 +17,7 @@ import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
 
+import { CommitBatchDto } from './dto/commit-batch.dto';
 import { ImportEntityType, QuarantineReasonCode } from './enums/import.enum';
 import { ImportService } from './import.service';
 
@@ -74,7 +75,7 @@ export class ImportController {
   @ApiOperation({ summary: 'Commit valid rows (chunked, resumable)' })
   commit(
     @Param('batchId', ParseUUIDPipe) batchId: string,
-    @Body() body: { rowIds?: string[] },
+    @Body() body: CommitBatchDto,
     @Request() req: { user: { sub: string } },
   ) {
     return this.importService.commitBatch(batchId, req.user.sub, body.rowIds);

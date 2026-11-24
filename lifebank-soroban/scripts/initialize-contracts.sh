@@ -77,6 +77,24 @@ init_contract() {
     echo ""
 }
 
+# Helper function to invoke an arbitrary contract function
+invoke_contract() {
+    local contract_name=$1
+    local contract_id=$2
+    local function_name=$3
+    shift 3
+    local extra_args=("$@")
+
+    echo "  → $contract_name.$function_name"
+    stellar contract invoke \
+        --id "$contract_id" \
+        --source "$IDENTITY" \
+        --network "$NETWORK" \
+        $RPC_FLAG \
+        -- "$function_name" \
+        "${extra_args[@]}"
+}
+
 # Initialize contracts in dependency order
 
 echo "📦 Phase 1: Contracts with no dependencies..."
@@ -117,11 +135,12 @@ init_contract "matching" "$MATCHING_ID" \
     --inventory-contract "$INVENTORY_ID" \
     --requests-contract "$REQUESTS_ID"
 
-# analytics (needs inventory, requests, payments)
+# analytics (needs inventory, requests, payments, reputation)
 init_contract "analytics" "$ANALYTICS_ID" \
     --inventory-contract "$INVENTORY_ID" \
     --requests-contract "$REQUESTS_ID" \
-    --payments-contract "$PAYMENTS_ID"
+    --payments-contract "$PAYMENTS_ID" \
+    --reputation-contract "$REPUTATION_ID"
 
 echo "📦 Phase 4: Coordinator (depends on all domain contracts)..."
 echo ""
@@ -131,6 +150,50 @@ init_contract "coordinator" "$COORDINATOR_ID" \
     --request-contract "$REQUESTS_ID" \
     --inventory-contract "$INVENTORY_ID" \
     --payment-contract "$PAYMENTS_ID"
+
+echo "📦 Phase 5: Cross-contract wiring..."
+echo ""
+
+# Helper function to invoke an admin-only wiring call
+wire_contract() {
+    local description=$1
+    local contract_id=$2
+    local function_name=$3
+    shift 3
+    local extra_args=("$@")
+
+    echo "Wiring $description..."
+    stellar contract invoke \
+        --id "$contract_id" \
+        --source "$IDENTITY" \
+        --network "$NETWORK" \
+        $RPC_FLAG \
+        -- "$function_name" \
+        --admin "$ADMIN_ADDRESS" \
+        "${extra_args[@]}"
+    echo "  ✅ $description wired"
+    echo ""
+}
+
+# The coordinator is the payments contract's settlement coordinator, NOT its
+# admin. The admin ($ADMIN_ADDRESS) keeps dispute resolution, the token
+# allowlist, dispute timeouts, vesting, pause and upgrades; the coordinator may
+# only release/refund escrows, record disputes and settle Locked payments.
+wire_contract "payments → coordinator (settlement coordinator)" "$PAYMENTS_ID" \
+    set_coordinator \
+    --coordinator "$COORDINATOR_ID"
+
+# The coordinator refuses to deliver or settle units the temperature contract
+# reports as compromised.
+wire_contract "coordinator → temperature (cold-chain checks)" "$COORDINATOR_ID" \
+    set_temperature_contract \
+    --temperature-contract "$TEMPERATURE_ID"
+
+# Inventory trusts the requests contract to release reservations, so cancelling
+# or rejecting a request returns its reserved units to Available.
+wire_contract "inventory → requests (reservation release)" "$INVENTORY_ID" \
+    set_requests_contract \
+    --requests-contract-id "$REQUESTS_ID"
 
 echo ""
 echo "✅ Contract initialization complete!"

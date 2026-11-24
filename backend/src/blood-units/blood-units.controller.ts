@@ -38,6 +38,7 @@ import {
   LogTemperatureDto,
 } from './dto/blood-units.dto';
 import { QueryBloodInventoryDto } from './dto/query-blood-inventory.dto';
+import { InitiateTransferDto } from './dto/initiate-transfer.dto';
 import {
   BulkUpdateBloodStatusDto,
   ReserveBloodUnitDto,
@@ -161,7 +162,7 @@ export class BloodUnitsController {
   @HttpCode(HttpStatus.CREATED)
   async initiateTransfer(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { destinationOrgId: string; reason?: string },
+    @Body() body: InitiateTransferDto,
     @Req() request: Request & { user: { id: string; role: string; organizationId?: string } },
   ) {
     return this.bloodUnitsService.initiateOrganizationTransfer(

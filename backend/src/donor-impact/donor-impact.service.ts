@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { createHmac } from 'crypto';
 
 import { BloodUnitEntity } from '../blood-units/entities/blood-unit.entity';
 import { OrderEntity } from '../orders/entities/order.entity';
@@ -91,6 +93,7 @@ export class DonorImpactService {
     @InjectRepository(PledgeEntity)
     private readonly pledgeRepo: Repository<PledgeEntity>,
     private readonly attributionService: AttributionService,
+    private readonly configService: ConfigService,
   ) {}
 
   async getDonorImpact(donorId: string): Promise<DonorImpactSummary> {
@@ -113,16 +116,16 @@ export class DonorImpactService {
     const timeline: DonorImpactEvent[] = units.map((u) => ({
       date: u.createdAt,
       type: 'donation',
-      description: `Donated ${u.volumeMl}ml of ${u.bloodType}`,
+      description: `Donated ${u.quantityMl}ml of ${u.bloodType}`,
       bloodType: u.bloodType,
-      quantityMl: u.volumeMl,
-      onChainRef: u.blockchainTxHash ?? undefined,
+      quantityMl: u.quantityMl,
+      onChainRef: u.txHash ?? undefined,
     }));
 
     return {
       donorRef,
       totalDonations: units.length,
-      totalMlDonated: units.reduce((sum, u) => sum + u.volumeMl, 0),
+      totalMlDonated: units.reduce((sum, u) => sum + u.quantityMl, 0),
       requestsFulfilled: fulfilledOrders.length,
       estimatedPatientsSupported: units.length * 3,
       timeline: timeline.slice(0, 20),
@@ -226,6 +229,11 @@ export class DonorImpactService {
   }
 
   private anonymizeRef(donorId: string): string {
-    return `DONOR-${donorId.slice(0, 4).toUpperCase()}****`;
+    const secret =
+      this.configService.get<string>('DONOR_REF_HMAC_SECRET') ??
+      this.configService.get<string>('JWT_SECRET') ??
+      '';
+    const digest = createHmac('sha256', secret).update(donorId).digest('hex');
+    return `DONOR-${digest.slice(0, 12).toUpperCase()}`;
   }
 }

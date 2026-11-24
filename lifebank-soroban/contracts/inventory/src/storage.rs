@@ -1,4 +1,4 @@
-use crate::types::{BloodStatus, BloodUnit, DataKey, StatusChangeHistory};
+use crate::types::{BloodStatus, BloodType, BloodUnit, DataKey, StatusChangeHistory};
 use soroban_sdk::{Address, Env, String, Vec};
 
 pub const SECONDS_PER_DAY: u64 = 86400;
@@ -167,6 +167,147 @@ pub fn add_to_blood_type_index(env: &Env, blood_unit: &BloodUnit) {
         env.storage()
             .persistent()
             .extend_ttl(&page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+}
+
+/// Add an available unit to the compact, per-type index used by matching.
+pub fn add_to_available_blood_type_index(env: &Env, blood_unit: &BloodUnit) {
+    let meta_key = DataKey::AvailableBloodTypeIndexMeta(blood_unit.blood_type);
+    let current_page: u32 = env.storage().persistent().get(&meta_key).unwrap_or(0);
+    let page_key = DataKey::AvailableBloodTypeIndexPage(blood_unit.blood_type, current_page);
+    let mut page: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&page_key)
+        .unwrap_or(Vec::new(env));
+
+    if page.len() >= INDEX_PAGE_SIZE {
+        let next_page = current_page + 1;
+        env.storage().persistent().set(&meta_key, &next_page);
+        env.storage()
+            .persistent()
+            .extend_ttl(&meta_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        let new_page_key =
+            DataKey::AvailableBloodTypeIndexPage(blood_unit.blood_type, next_page);
+        let mut new_page: Vec<u64> = Vec::new(env);
+        new_page.push_back(blood_unit.id);
+        env.storage().persistent().set(&new_page_key, &new_page);
+        env.storage()
+            .persistent()
+            .extend_ttl(&new_page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        set_available_blood_type_index_slot(env, blood_unit.id, next_page, 0);
+    } else {
+        let slot = page.len();
+        page.push_back(blood_unit.id);
+        env.storage().persistent().set(&page_key, &page);
+        env.storage()
+            .persistent()
+            .extend_ttl(&page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        set_available_blood_type_index_slot(env, blood_unit.id, current_page, slot);
+    }
+}
+
+fn set_available_blood_type_index_slot(env: &Env, blood_unit_id: u64, page: u32, slot: u32) {
+    let slot_key = DataKey::AvailableBloodTypeIndexSlot(blood_unit_id);
+    env.storage().persistent().set(&slot_key, &(page, slot));
+    env.storage()
+        .persistent()
+        .extend_ttl(&slot_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+}
+
+/// Remove an available unit while keeping pages dense so reads scale only with
+/// the number of currently available units.
+pub fn remove_from_available_blood_type_index(
+    env: &Env,
+    blood_unit_id: u64,
+    blood_type: BloodType,
+) {
+    let slot_key = DataKey::AvailableBloodTypeIndexSlot(blood_unit_id);
+    let (page_number, slot): (u32, u32) =
+        match env.storage().persistent().get(&slot_key) {
+            Some(position) => position,
+            None => return,
+        };
+    let meta_key = DataKey::AvailableBloodTypeIndexMeta(blood_type);
+    let last_page_number: u32 = env.storage().persistent().get(&meta_key).unwrap_or(0);
+    let page_key = DataKey::AvailableBloodTypeIndexPage(blood_type, page_number);
+    let mut page: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&page_key)
+        .unwrap_or(Vec::new(env));
+    let last_page_key =
+        DataKey::AvailableBloodTypeIndexPage(blood_type, last_page_number);
+    let mut last_page: Vec<u64> = if page_number == last_page_number {
+        page.clone()
+    } else {
+        env.storage()
+            .persistent()
+            .get(&last_page_key)
+            .unwrap_or(Vec::new(env))
+    };
+
+    let last_slot = last_page.len() - 1;
+    let moved_id = last_page.get(last_slot).unwrap();
+    if page_number == last_page_number {
+        if slot != last_slot {
+            page.set(slot, moved_id);
+            set_available_blood_type_index_slot(env, moved_id, page_number, slot);
+        }
+        page.pop_back();
+        if page.is_empty() && last_page_number > 0 {
+            env.storage().persistent().remove(&page_key);
+            let previous_page = last_page_number - 1;
+            env.storage().persistent().set(&meta_key, &previous_page);
+            env.storage()
+                .persistent()
+                .extend_ttl(&meta_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        } else {
+            env.storage().persistent().set(&page_key, &page);
+            env.storage()
+                .persistent()
+                .extend_ttl(&page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        }
+    } else {
+        page.set(slot, moved_id);
+        set_available_blood_type_index_slot(env, moved_id, page_number, slot);
+        last_page.pop_back();
+        if last_page.is_empty() {
+            env.storage().persistent().remove(&last_page_key);
+            let previous_page = last_page_number - 1;
+            env.storage().persistent().set(&meta_key, &previous_page);
+            env.storage()
+                .persistent()
+                .extend_ttl(&meta_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        } else {
+            env.storage().persistent().set(&last_page_key, &last_page);
+            env.storage()
+                .persistent()
+                .extend_ttl(&last_page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        }
+        env.storage().persistent().set(&page_key, &page);
+        env.storage()
+            .persistent()
+            .extend_ttl(&page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+    env.storage().persistent().remove(&slot_key);
+}
+
+pub fn sync_available_blood_type_index(
+    env: &Env,
+    blood_unit: &BloodUnit,
+    old_status: BloodStatus,
+) {
+    match (
+        old_status == BloodStatus::Available,
+        blood_unit.status == BloodStatus::Available,
+    ) {
+        (true, false) => {
+            remove_from_available_blood_type_index(env, blood_unit.id, blood_unit.blood_type)
+        }
+        (false, true) => add_to_available_blood_type_index(env, blood_unit),
+        _ => {}
     }
 }
 
@@ -431,8 +572,8 @@ pub fn record_status_change(
         .extend_ttl(&count_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
-/// Return all history entries for a unit by iterating pages.
-/// Callers that only need recent entries should use `get_status_history_page`.
+/// Deprecated: this reads every history page in one invocation. Prefer
+/// `get_status_history_page` and `get_history_page_count` for bounded reads.
 pub fn get_status_history(env: &Env, blood_unit_id: u64) -> Vec<StatusChangeHistory> {
     let page_key = DataKey::StatusHistory(blood_unit_id);
     let last_page: u32 = env.storage().persistent().get(&page_key).unwrap_or(0);

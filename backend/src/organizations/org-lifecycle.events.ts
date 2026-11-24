@@ -3,7 +3,7 @@ import {
   OrgLifecycleStatus,
   RestrictionLevel,
   VerificationChangeReason,
-} from '../enums/org-lifecycle.enum';
+} from './enums/org-lifecycle.enum';
 
 export class OrgVerificationStatusChangedEvent {
   constructor(

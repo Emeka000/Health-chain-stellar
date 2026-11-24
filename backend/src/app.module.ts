@@ -22,6 +22,8 @@ import { BloodMatchingModule } from './blood-matching/blood-matching.module';
 import { BloodRequestsModule } from './blood-requests/blood-requests.module';
 import { BloodUnitsModule } from './blood-units/blood-units.module';
 import { ColdChainModule } from './cold-chain/cold-chain.module';
+import { ErrorsModule } from './common/errors/errors.module';
+import { LoggerModule } from './common/logger/logger.module';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { CorrelationIdService } from './common/middleware/correlation-id.service';
 import { ApiCompatibilityInterceptor } from './common/versioning/api-compatibility.interceptor';
@@ -73,6 +75,7 @@ import { TrackingModule } from './tracking/tracking.module';
 import { TransparencyModule } from './transparency/transparency.module';
 import { UsersModule } from './users/users.module';
 import { UssdModule } from './ussd-session/ussd.module';
+import { WorkflowModule } from './workflow/workflow.module';
 
 import type Redis from 'ioredis';
 
@@ -80,6 +83,10 @@ import type Redis from 'ioredis';
   imports: [
     // ── Single authoritative configuration bootstrap ──────────────────────
     AppConfigModule,
+
+    // ── Cross-cutting infrastructure (logging + error handling) ───────────
+    LoggerModule,
+    ErrorsModule,
 
     EventEmitterModule.forRoot(),
     ScheduleModule.forRoot(),
@@ -195,19 +202,12 @@ import type Redis from 'ioredis';
     TrackingModule,
     TransparencyModule,
     UssdModule,
+    WorkflowModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
     CorrelationIdService,
-    {
-      provide: APP_GUARD,
-      useClass: JwtAuthGuard,
-    },
-    {
-      provide: APP_GUARD,
-      useClass: PermissionsGuard,
-    },
     {
       provide: APP_GUARD,
       useClass: RoleAwareThrottlerGuard,
@@ -219,7 +219,7 @@ import type Redis from 'ioredis';
   ],
 })
 export class AppModule implements NestModule {
-  configure(consumer: MiddlewareConsumer) {
+  configure(consumer: MiddlewareConsumer): void {
     consumer.apply(CorrelationIdMiddleware).forRoutes('*');
   }
 }

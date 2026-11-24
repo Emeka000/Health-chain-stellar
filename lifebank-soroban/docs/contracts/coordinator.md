@@ -2,6 +2,27 @@
 
 The coordinator is the integration hub. It holds references to the requests, inventory, and payments contracts and enforces the canonical three-step delivery workflow. No blood unit can be delivered and no payment can be released without passing through this contract.
 
+## Deployment wiring
+
+The coordinator authorizes every cross-contract call as itself (a direct
+sub-call satisfies `require_auth` for the invoking contract), so a workflow
+step only needs the coordinator admin's signature and `expire_workflow` needs
+none. For that to work:
+
+- the coordinator must be the payments contract's admin;
+- inventory must trust it: `inventory.set_coordinator_contract(admin, coordinator)`;
+- requests must trust it: `requests.set_coordinator_contract(coordinator)`.
+
+The coordinator drives the request lifecycle through
+`requests.update_status_by_contract`:
+
+| Coordinator step | Request status |
+|---|---|
+| `allocate_units` | `Pending → Approved` |
+| `confirm_delivery` | `Approved → InProgress` |
+| `settle_payment` | `→ Fulfilled` |
+| `rollback` / `expire_workflow` | `→ Cancelled` (skipped if already closed) |
+
 ## State machine
 
 ```
@@ -19,12 +40,19 @@ The coordinator is the integration hub. It holds references to the requests, inv
                    │ Delivered │
                    └─────┬─────┘
                          │ settle_payment()
-                         ▼
-                    ┌─────────┐
+                         ├──────────────────────────────┐
+                         │ payment Released             │ escrow still Locked
+                         │                              ▼ (hospital has not
+                         │                    ┌─────────────────┐ confirmed receipt)
+                         │                    │ AwaitingReceipt │
+                         │                    └────────┬────────┘
+                         │                             │ finalize_settlement()
+                         ▼                             ▼ (payment Released)
+                    ┌─────────┐◄───────────────────────┘
                     │ Settled │  (terminal)
                     └─────────┘
 
-  Any non-Settled state ──► rollback() ──► RolledBack (terminal)
+  Allocated / AwaitingReceipt ──► rollback() / expire_workflow() ──► RolledBack (terminal)
 ```
 
 ## Public functions
@@ -54,7 +82,6 @@ pub fn allocate_units(
     unit_ids: Vec<u64>,
     payment_id: u64,
     caller: Address,
-    blood_type: BloodType,
 ) -> Result<(), CoordinatorError>
 ```
 
@@ -64,13 +91,21 @@ Step 1 of the workflow.
 - Verifies the request exists, is `Pending`, and that `blood_type` matches the
   request's blood type.
 - Verifies the payment exists and is bound to `request_id`.
-- Verifies each blood unit exists and is `Available` and compatible with
-  `blood_type`, then marks it `Reserved`.
+- Verifies each blood unit exists, is `Available`, is compatible with the
+  request's blood type and belongs to the same blood bank (`MixedBloodBanks`
+  otherwise), and that the units' total `quantity_ml` covers the request's
+  outstanding quantity (`InsufficientQuantity` otherwise — partial allocations
+  are rejected).
+- Reserves the units through `inventory.reserve_blood` (the owning bank must
+  authorize), so a `Reservation` with an expiry is created and the registry is
+  synced when configured.
+- Approves the request and records the reservation on it via
+  `requests.set_reservation_id`, so cancelling the request returns the units to
+  `Available`.
 - Creates a `WorkflowRecord` with status `Allocated`.
 - Emits `(coord, alloc, v1)` with `(request_id, unit_ids, unit_count)`.
 
-Fails if the contract is paused or halted, or a workflow for this `request_id`
-already exists in a non-terminal state.
+Fails if the contract is paused.
 
 ---
 
@@ -89,6 +124,9 @@ Step 2 of the workflow.
 
 - Requires `caller` auth.
 - Workflow must be `Allocated`.
+- If a temperature contract is configured, fails with `UnitCompromised` when
+  `is_compromised` is true for any unit (the workflow stays `Allocated` and can
+  be rolled back, refunding the payment).
 - Transitions each unit: `Reserved → InTransit`, then `InTransit → Delivered` (via `mark_delivered`).
 - Sets `delivery_confirmed = true` and stores `delivery_location`.
 - Emits `(coord, dlvrd, v1)` with `(request_id, location)`.
@@ -111,10 +149,39 @@ Step 3 of the workflow.
 
 - Requires `caller` auth.
 - Workflow must be `Delivered` with `delivery_confirmed == true`.
-- Payment must be `Locked`; transitions it to `Released`.
-- Emits `(coord, settld, v1)` with `(request_id, payment_id)`.
+- Payment must be `Locked`, and no unit may be reported compromised.
+- Releases the payment (`release_escrow` for escrows, which only records the
+  coordinator's half until the hospital calls `confirm_receipt`), then re-reads it:
+  - `Released` → workflow `Settled`, emits `(coord, settld)` with `(request_id, payment_id)`;
+  - otherwise → workflow `AwaitingReceipt` with a fresh 48 h `expires_at`, emits
+    `(coord, awt_rcpt)` with `(request_id, payment_id)`.
 
 Blocked by both `pause()` and `emergency_halt()`.
+
+---
+
+### finalize_settlement
+
+```rust
+pub fn finalize_settlement(env: Env, request_id: u64) -> Result<(), CoordinatorError>
+```
+
+Permissionless. Completes an `AwaitingReceipt` workflow from the payment's state:
+`Released` → `Settled` (emits `coord/settld`), `Refunded`/`Cancelled` →
+`RolledBack` (emits `coord/rollbk`). Returns `ReceiptNotConfirmed` while the
+payment is still `Locked`.
+
+---
+
+### set_temperature_contract
+
+```rust
+pub fn set_temperature_contract(env: Env, admin: Address, temperature_contract: Address) -> Result<(), CoordinatorError>
+pub fn get_temperature_contract(env: Env) -> Option<Address>
+```
+
+Admin-only. Sets the temperature contract consulted by `confirm_delivery` and
+`settle_payment`.
 
 ---
 
@@ -124,14 +191,28 @@ Blocked by both `pause()` and `emergency_halt()`.
 pub fn rollback(env: Env, request_id: u64) -> Result<(), CoordinatorError>
 ```
 
-Admin-only. Reverses an in-flight workflow.
+Admin-only. Reverses an `Allocated` or `AwaitingReceipt` workflow.
 
-- Returns all allocated units to `Available`.
+- `Allocated`: releases the inventory reservation, returning the units to `Available`.
+- `AwaitingReceipt`: delivered units are left as they are; returns
+  `CannotRollbackSettled` if the escrow has already been Released.
 - If the payment is `Locked`, transitions it to `Refunded`. Other payment states are left unchanged.
 - Sets workflow status to `RolledBack`.
 - Emits `(coord, rollbk, v1)` with `request_id`.
 
 Returns `CannotRollbackSettled` if the workflow has already settled.
+
+---
+
+### expire_workflow
+
+```rust
+pub fn expire_workflow(env: Env, request_id: u64) -> Result<(), CoordinatorError>
+```
+
+Permissionless: anyone may call it once `ledger.timestamp() >= expires_at` on
+an `Allocated` workflow. Performs the same unwinding as `rollback` without any
+signature. Emits `(coord, expired, v1)` with `request_id`.
 
 ---
 
@@ -230,6 +311,7 @@ pub enum WorkflowStatus {
     Delivered,
     Settled,
     RolledBack,
+    AwaitingReceipt,
 }
 ```
 
@@ -252,6 +334,8 @@ pub struct ExcursionSummary {
 | `DataKey::RequestContract` | Instance | `Address` | Requests contract address |
 | `DataKey::InventoryContract` | Instance | `Address` | Inventory contract address |
 | `DataKey::PaymentContract` | Instance | `Address` | Payments contract address |
+| `DataKey::TemperatureOracle` | Instance | `Address` | Address allowed to call `flag_temperature_breach` |
+| `DataKey::TemperatureContract` | Instance | `Address` | Temperature contract queried via `is_compromised` |
 | `DataKey::Paused` | Instance | `bool` | Pause flag |
 | `DataKey::EmergencyHalt` | Instance | `bool` | Emergency halt flag |
 | `DataKey::Workflow(request_id)` | Persistent | `WorkflowRecord` | Per-request workflow state |
@@ -264,7 +348,7 @@ pub struct ExcursionSummary {
 | `NotInitialized` | 801 | Contract not yet initialized |
 | `Unauthorized` | 802 | Caller is not admin |
 | `WorkflowNotFound` | 810 | No workflow for this request_id |
-| `WorkflowAlreadyStarted` | 811 | Workflow exists and is not Pending |
+| `WorkflowAlreadyStarted` | 811 | A workflow (terminal or not) already exists for this request |
 | `InvalidWorkflowState` | 812 | Wrong workflow state for this step |
 | `CannotRollbackSettled` | 813 | Workflow already settled |
 | `RequestNotFound` | 820 | Cross-contract: request not found |
@@ -274,8 +358,29 @@ pub struct ExcursionSummary {
 | `PaymentNotFound` | 824 | Cross-contract: payment not found |
 | `InvalidPaymentState` | 825 | Payment is not in expected state |
 | `DeliveryNotConfirmed` | 826 | settle_payment called before confirm_delivery |
+| `IncompatibleBloodType` | 827 | Unit cannot donate to the request's blood type |
+| `NoUnitsSpecified` | 828 | `unit_ids` is empty |
+| `PaymentRequestMismatch` | 829 | Payment belongs to another request |
 | `InventoryUpdateFailed` | 830 | Cross-contract call to inventory failed |
 | `PaymentUpdateFailed` | 831 | Cross-contract call to payments failed |
 | `PaymentFlagFailed` | 832 | Cross-contract dispute recording failed |
+| `RequestUpdateFailed` | 833 | Requests contract refused a lifecycle transition |
 | `ContractPaused` | 840 | Contract is paused |
 | `EmergencyHalted` | 841 | Emergency halt is active |
+| `WorkflowNotExpired` | 842 | `expire_workflow` called before the deadline |
+| `InsufficientQuantity` | 850 | Allocated volume is below the request's outstanding quantity |
+| `MixedBloodBanks` | 851 | Allocated units belong to more than one blood bank |
+| `UnitCompromised` | 852 | Temperature contract reports a unit as compromised |
+| `TemperatureCheckFailed` | 853 | Cross-contract `is_compromised` call failed |
+| `RequestUpdateFailed` | 854 | Cross-contract call to requests failed |
+| `ReceiptNotConfirmed` | 855 | `finalize_settlement` called before the escrow was released |
+
+## Payments authority
+
+The coordinator must be registered on the payments contract with
+`set_coordinator`, not made its admin. The settlement coordinator may only call
+`release_escrow`, `refund_escrow`, `record_dispute`, and move a Locked
+bookkeeping payment to `Released`/`Refunded` via `update_status`. The payments
+admin stays a human or governance key and keeps `resolve_dispute`, the token
+allowlist, dispute timeouts, `process_expired_disputes`, vesting, `pause` and
+`upgrade`.

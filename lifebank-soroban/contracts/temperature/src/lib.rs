@@ -37,6 +37,12 @@ pub struct OracleRemoved {
     pub oracle: Address,
 }
 
+#[contractevent(topics = ["oracle", "assigned"], data_format = "vec")]
+pub struct OracleAssigned {
+    pub unit_id: u64,
+    pub oracle: Address,
+}
+
 #[contractevent(topics = ["tmp_excur"], data_format = "vec")]
 pub struct ExcursionReported {
     pub unit_id: u64,
@@ -47,6 +53,13 @@ pub struct ExcursionReported {
 #[contractevent(topics = ["temp", "reset"], data_format = "single-value")]
 pub struct CompromisedReset {
     pub unit_id: u64,
+}
+
+#[contractevent(topics = ["temp", "compromised"], data_format = "vec")]
+pub struct UnitCompromised {
+    pub unit_id: u64,
+    pub streak: u32,
+    pub timestamp: u64,
 }
 
 #[contractevent(topics = ["tmp_viol"], data_format = "vec")]
@@ -101,9 +114,20 @@ pub trait CoordinatorContractInterface {
     ) -> Result<bool, soroban_sdk::Error>;
 }
 
+/// Trusted inventory interface for temperature-triggered compromise updates.
+#[contractclient(name = "InventoryContractClient")]
+pub trait InventoryContractInterface {
+    fn mark_compromised_from_temperature(
+        env: Env,
+        temperature_contract: Address,
+        unit_id: u64,
+    ) -> Result<(), soroban_sdk::Error>;
+}
+
 #[contractimpl]
 impl TemperatureContract {
     pub fn initialize(env: Env, admin: Address) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
 
         if env.storage().instance().has(&DataKey::Admin) {
@@ -114,7 +138,8 @@ impl TemperatureContract {
         Ok(())
     }
 
-    pub fn version(_env: Env) -> u32 {
+    pub fn version(env: Env) -> u32 {
+        storage::bump_instance_ttl(&env);
         CONTRACT_VERSION
     }
 
@@ -140,6 +165,7 @@ impl TemperatureContract {
         min_celsius_x100: i32,
         max_celsius_x100: i32,
     ) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_not_paused(&env)?;
         // Verify the caller is the stored admin, not just that they signed
@@ -192,6 +218,7 @@ impl TemperatureContract {
 
     /// Pause all state-mutating functions. Admin only.
     pub fn pause(env: Env, admin: Address) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {
@@ -215,6 +242,7 @@ impl TemperatureContract {
     /// - `ChangeNotReady`: Time-lock period has not elapsed yet
     /// - `InvalidThreshold`: The pending change is outside the allowed band
     pub fn apply_threshold_change(env: Env, unit_id: u64) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         Self::require_not_paused(&env)?;
         let pending_change: PendingThresholdChange = env
             .storage()
@@ -258,6 +286,7 @@ impl TemperatureContract {
 
     /// Get pending threshold change for a unit (if any)
     pub fn get_pending_threshold_change(env: Env, unit_id: u64) -> Option<PendingThresholdChange> {
+        storage::bump_instance_ttl(&env);
         env.storage()
             .persistent()
             .get(&DataKey::PendingThresholdChange(unit_id))
@@ -265,6 +294,7 @@ impl TemperatureContract {
 
     /// Unpause the contract. Admin only.
     pub fn unpause(env: Env, admin: Address) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {
@@ -276,6 +306,7 @@ impl TemperatureContract {
 
     /// Returns whether the contract is currently paused.
     pub fn is_paused(env: Env) -> bool {
+        storage::bump_instance_ttl(&env);
         env.storage()
             .instance()
             .get(&DataKey::Paused)
@@ -326,6 +357,7 @@ impl TemperatureContract {
         min_celsius_x100: i32,
         max_celsius_x100: i32,
     ) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_not_paused(&env)?;
 
@@ -354,28 +386,77 @@ impl TemperatureContract {
     ///
     /// Only the assigned oracle (or the admin) may log readings for the unit,
     /// so a single compromised sensor key cannot fabricate excursions for, or
-    /// mask violations on, every other unit.
+    /// mask violations on, every other unit. The oracle must be whitelisted.
     pub fn assign_oracle(
         env: Env,
         admin: Address,
         unit_id: u64,
         oracle: Address,
     ) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {
             return Err(ContractError::Unauthorized);
         }
+        let is_approved: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OracleApproved(oracle.clone()))
+            .unwrap_or(false);
+        if !is_approved {
+            return Err(ContractError::OracleNotWhitelisted);
+        }
+
         let key = DataKey::AssignedOracle(unit_id);
+        let previous: Option<Address> = env.storage().persistent().get(&key);
+        if previous.as_ref() == Some(&oracle) {
+            return Ok(());
+        }
+        if let Some(previous_oracle) = previous {
+            Self::unindex_unit(&env, &previous_oracle, unit_id);
+        }
+
         env.storage().persistent().set(&key, &oracle);
         env.storage()
             .persistent()
             .extend_ttl(&key, ORACLE_BUMP_THRESHOLD, ORACLE_BUMP_TO);
+
+        let units_key = DataKey::OracleUnits(oracle.clone());
+        let mut units: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&units_key)
+            .unwrap_or_else(|| Vec::new(&env));
+        units.push_back(unit_id);
+        env.storage().persistent().set(&units_key, &units);
+        env.storage()
+            .persistent()
+            .extend_ttl(&units_key, ORACLE_BUMP_THRESHOLD, ORACLE_BUMP_TO);
+
+        OracleAssigned { unit_id, oracle }.publish(&env);
         Ok(())
+    }
+
+    /// Drop `unit_id` from the reverse index of `oracle`, if present.
+    fn unindex_unit(env: &Env, oracle: &Address, unit_id: u64) {
+        let units_key = DataKey::OracleUnits(oracle.clone());
+        let mut units: Vec<u64> = match env.storage().persistent().get(&units_key) {
+            Some(units) => units,
+            None => return,
+        };
+        if let Some(index) = units.first_index_of(unit_id) {
+            units.remove(index);
+        }
+        env.storage().persistent().set(&units_key, &units);
+        env.storage()
+            .persistent()
+            .extend_ttl(&units_key, ORACLE_BUMP_THRESHOLD, ORACLE_BUMP_TO);
     }
 
     /// Return the oracle assigned to `unit_id`, if any.
     pub fn get_assigned_oracle(env: Env, unit_id: u64) -> Option<Address> {
+        storage::bump_instance_ttl(&env);
         env.storage()
             .persistent()
             .get(&DataKey::AssignedOracle(unit_id))
@@ -387,6 +468,7 @@ impl TemperatureContract {
         unit_id: u64,
         temperature_celsius_x100: i32,
     ) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         oracle.require_auth();
         Self::require_not_paused(&env)?;
 
@@ -413,7 +495,7 @@ impl TemperatureContract {
                 .get(&DataKey::AssignedOracle(unit_id));
             if let Some(assigned_oracle) = assigned {
                 if assigned_oracle != oracle {
-                    return Err(ContractError::OracleNotAssigned);
+                    return Err(ContractError::OracleNotAssignedToUnit);
                 }
             }
         }
@@ -472,15 +554,42 @@ impl TemperatureContract {
             .persistent()
             .extend_ttl(&streak_key, ORACLE_BUMP_THRESHOLD, ORACLE_BUMP_TO);
 
-        // Check if unit should be compromised (3 consecutive violations)
-        if new_streak >= 3 {
-            let compromised_key = DataKey::IsCompromised(unit_id);
+        // Only publish and notify inventory on the transition into compromised.
+        let compromised_key = DataKey::IsCompromised(unit_id);
+        let was_compromised: bool = env
+            .storage()
+            .persistent()
+            .get(&compromised_key)
+            .unwrap_or(false);
+        if new_streak >= 3 && !was_compromised {
             env.storage().persistent().set(&compromised_key, &true);
             env.storage().persistent().extend_ttl(
                 &compromised_key,
                 ORACLE_BUMP_THRESHOLD,
                 ORACLE_BUMP_TO,
             );
+
+            UnitCompromised {
+                unit_id,
+                streak: new_streak,
+                timestamp,
+            }
+            .publish(&env);
+
+            if let Some(inventory_address) = env
+                .storage()
+                .instance()
+                .get::<_, Address>(&DataKey::InventoryContract)
+            {
+                let inventory = InventoryContractClient::new(&env, &inventory_address);
+                inventory
+                    .try_mark_compromised_from_temperature(
+                        &env.current_contract_address(),
+                        &unit_id,
+                    )
+                    .map_err(|_| ContractError::InventoryCallFailed)?
+                    .map_err(|_| ContractError::InventoryCallFailed)?;
+            }
         }
 
         // Use the cached "current page" cursor so insertion is O(1) instead
@@ -518,6 +627,7 @@ impl TemperatureContract {
         page: u32,
         page_size: u32,
     ) -> Result<Vec<TemperatureReading>, ContractError> {
+        storage::bump_instance_ttl(&env);
         let page_size = page_size.min(100);
         let mut violations = Vec::new(&env);
         let mut collected = 0u32;
@@ -564,6 +674,7 @@ impl TemperatureContract {
         page: u32,
         page_size: u32,
     ) -> Result<Vec<TemperatureReading>, ContractError> {
+        storage::bump_instance_ttl(&env);
         let page_size = page_size.min(100);
         let mut all_readings = Vec::new(&env);
         let mut collected = 0u32;
@@ -609,6 +720,7 @@ impl TemperatureContract {
         env: Env,
         unit_id: u64,
     ) -> Result<TemperatureSummary, ContractError> {
+        storage::bump_instance_ttl(&env);
         let mut count: u32 = 0;
         let mut sum: i64 = 0; // Use i64 to prevent overflow
         let mut min_temp: i32 = i32::MAX;
@@ -675,6 +787,7 @@ impl TemperatureContract {
     /// # Returns
     /// Current consecutive violation count
     pub fn get_consecutive_violation_streak(env: Env, unit_id: u64) -> u32 {
+        storage::bump_instance_ttl(&env);
         let streak_key = DataKey::ConsecutiveViolationStreak(unit_id);
         let streak = env.storage().persistent().get(&streak_key).unwrap_or(0);
         if streak > 0 {
@@ -695,6 +808,7 @@ impl TemperatureContract {
     /// # Returns
     /// `true` if unit has 3 or more consecutive violations (compromised), `false` otherwise
     pub fn is_compromised(env: Env, unit_id: u64) -> bool {
+        storage::bump_instance_ttl(&env);
         let compromised_key = DataKey::IsCompromised(unit_id);
         let is_compromised = env
             .storage()
@@ -724,6 +838,7 @@ impl TemperatureContract {
         admin: Address,
         unit_id: u64,
     ) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         Self::require_not_paused(&env)?;
 
@@ -754,12 +869,30 @@ impl TemperatureContract {
 
     // ── Coordinator integration ────────────────────────────────────────────────
 
+    /// Configure the inventory contract that receives compromise transitions.
+    /// Admin only.
+    pub fn set_inventory_contract(
+        env: Env,
+        admin: Address,
+        inventory: Address,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        if admin != storage::get_admin(&env) {
+            return Err(ContractError::Unauthorized);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::InventoryContract, &inventory);
+        Ok(())
+    }
+
     /// Configure the coordinator contract address. Admin only.
     pub fn set_coordinator(
         env: Env,
         admin: Address,
         coordinator: Address,
     ) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {
@@ -782,6 +915,7 @@ impl TemperatureContract {
     /// without growing instance storage or impacting unrelated contract calls.
     /// Membership checks are O(1) regardless of whitelist size.
     pub fn add_oracle(env: Env, admin: Address, oracle: Address) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {
@@ -802,6 +936,10 @@ impl TemperatureContract {
     /// Use this for oracle rotation (replacing a compromised sensor) or
     /// temporary suspension (taking a sensor offline for maintenance).
     ///
+    /// Every unit bound to the oracle is unassigned, so none is left pointing
+    /// at an oracle that can no longer log. Those units accept readings from
+    /// any whitelisted oracle until the admin assigns them again.
+    ///
     /// # Arguments
     /// * `admin`  - Admin address performing the removal
     /// * `oracle` - Oracle address to de-whitelist
@@ -809,10 +947,21 @@ impl TemperatureContract {
     /// # Errors
     /// - `Unauthorized` - Caller is not the admin
     pub fn remove_oracle(env: Env, admin: Address, oracle: Address) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {
             return Err(ContractError::Unauthorized);
+        }
+        // shortcut: unindexing walks every unit the oracle owns in one call, so this is O(units per oracle) and can hit instruction limits for very large fleets; upgrade to paged unassignment when a single oracle covers thousands of units.
+        let units_key = DataKey::OracleUnits(oracle.clone());
+        if let Some(units) = env.storage().persistent().get::<_, Vec<u64>>(&units_key) {
+            for unit_id in units.iter() {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::AssignedOracle(unit_id));
+            }
+            env.storage().persistent().remove(&units_key);
         }
         let key = DataKey::OracleApproved(oracle.clone());
         env.storage().persistent().remove(&key);
@@ -827,6 +976,7 @@ impl TemperatureContract {
     ///
     /// O(1) — reads a single persistent() entry regardless of whitelist size.
     pub fn is_oracle(env: Env, address: Address) -> bool {
+        storage::bump_instance_ttl(&env);
         let stored_admin = storage::get_admin(&env);
         if address == stored_admin {
             return true;
@@ -859,6 +1009,7 @@ impl TemperatureContract {
         payment_id: u64,
         excursion_summary: ExcursionSummary,
     ) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         caller.require_auth();
         Self::require_not_paused(&env)?;
 
@@ -881,6 +1032,12 @@ impl TemperatureContract {
         // for an unrelated one.
         if excursion_summary.unit_id != unit_id {
             return Err(ContractError::ExcursionSummaryMismatch);
+        }
+
+        // Only an active compromise (live streak >= threshold) may dispute a
+        // payment. Stale violations after a streak reset must not count.
+        if !Self::is_compromised(env.clone(), unit_id) {
+            return Err(ContractError::UnitNotCompromised);
         }
 
         // Bind the payment to the unit: the coordinator must confirm that
@@ -994,6 +1151,7 @@ impl TemperatureContract {
         admin: Address,
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), ContractError> {
+        storage::bump_instance_ttl(&env);
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {
@@ -1007,8 +1165,54 @@ impl TemperatureContract {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::testutils::{Address as _, Events as _};
-    use soroban_sdk::{Symbol, TryFromVal};
+    use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
+    use soroban_sdk::{contract, contractimpl, contracttype, Symbol, TryFromVal};
+
+    #[contracttype]
+    #[derive(Clone)]
+    enum InventoryMockKey {
+        TemperatureContract,
+        Compromised(u64),
+    }
+
+    #[contract]
+    struct InventoryMock;
+
+    #[contractimpl]
+    impl InventoryMock {
+        pub fn set_temperature_contract(env: Env, temperature_contract: Address) {
+            env.storage()
+                .instance()
+                .set(&InventoryMockKey::TemperatureContract, &temperature_contract);
+        }
+
+        pub fn mark_compromised_from_temperature(
+            env: Env,
+            temperature_contract: Address,
+            unit_id: u64,
+        ) -> Result<(), soroban_sdk::Error> {
+            temperature_contract.require_auth();
+            let trusted: Address = env
+                .storage()
+                .instance()
+                .get(&InventoryMockKey::TemperatureContract)
+                .unwrap();
+            if trusted != temperature_contract {
+                return Err(soroban_sdk::Error::from_contract_error(1));
+            }
+            env.storage()
+                .instance()
+                .set(&InventoryMockKey::Compromised(unit_id), &true);
+            Ok(())
+        }
+
+        pub fn is_compromised(env: Env, unit_id: u64) -> bool {
+            env.storage()
+                .instance()
+                .get(&InventoryMockKey::Compromised(unit_id))
+                .unwrap_or(false)
+        }
+    }
 
     fn create_test_contract<'a>() -> (Env, Address, Address, TemperatureContractClient<'a>) {
         let env = Env::default();
@@ -1027,6 +1231,60 @@ mod tests {
         client.add_oracle(&admin, &oracle);
 
         (env, admin, oracle, client)
+    }
+
+    #[test]
+    fn third_consecutive_violation_emits_event_and_compromises_inventory_unit() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let inventory_id = env.register(InventoryMock, ());
+        let inventory = InventoryMockClient::new(&env, &inventory_id);
+
+        let temperature_id = env.register(TemperatureContract, ());
+        let client = TemperatureContractClient::new(&env, &temperature_id);
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let unit_id = 42u64;
+        env.ledger().set_timestamp(1000);
+        client.initialize(&admin);
+        client.add_oracle(&admin, &oracle);
+        client.set_threshold(&admin, &unit_id, &200, &600);
+        inventory.set_temperature_contract(&temperature_id);
+        client.set_inventory_contract(&admin, &inventory_id);
+        client.assign_oracle(&admin, &unit_id, &oracle);
+
+        client.log_reading(&oracle, &unit_id, &900);
+        client.log_reading(&oracle, &unit_id, &900);
+        client.log_reading(&oracle, &unit_id, &900);
+
+        assert!(client.is_compromised(&unit_id));
+        assert!(inventory.is_compromised(&unit_id));
+        let compromised_event = env
+            .events()
+            .all()
+            .iter()
+            .find(|(_, topics, _)| {
+                topics.iter().any(|topic| {
+                    Symbol::try_from_val(&env, &topic)
+                        == Ok(Symbol::new(&env, "compromised"))
+                })
+            })
+            .expect("Expected UnitCompromised event");
+        let payload =
+            Vec::<soroban_sdk::Val>::try_from_val(&env, &compromised_event.2).unwrap();
+        assert_eq!(
+            u64::try_from_val(&env, &payload.get(0).unwrap()).unwrap(),
+            unit_id
+        );
+        assert_eq!(
+            u32::try_from_val(&env, &payload.get(1).unwrap()).unwrap(),
+            3
+        );
+        assert_eq!(
+            u64::try_from_val(&env, &payload.get(2).unwrap()).unwrap(),
+            1000
+        );
     }
 
     #[test]
@@ -1944,7 +2202,7 @@ mod tests {
         client.assign_oracle(&admin, &unit_b, &other);
         assert_eq!(
             client.try_log_reading(&oracle, &unit_b, &400),
-            Err(Ok(ContractError::OracleNotAssigned))
+            Err(Ok(ContractError::OracleNotAssignedToUnit))
         );
 
         // Admin may still log for any unit.
@@ -1964,5 +2222,34 @@ mod tests {
         let pending = client.get_pending_threshold_change(&unit_id).unwrap();
         assert_eq!(pending.new_min_celsius_x100, 200);
         assert_eq!(pending.new_max_celsius_x100, 600);
+    }
+
+    /// Instance storage (admin, paused flag, coordinator) must not archive
+    /// between calls: advance well past the default instance TTL and past the
+    /// bump threshold several times and check the contract still works.
+    #[test]
+    fn test_instance_ttl_extended_across_long_ledger_gaps() {
+        use soroban_sdk::testutils::Ledger as _;
+
+        let (env, admin, _oracle, client) = create_test_contract();
+        let advance = |env: &Env| {
+            env.ledger().with_mut(|li| {
+                li.sequence_number += 600_000;
+                li.timestamp += 600_000 * 5;
+            });
+        };
+
+        advance(&env);
+        assert!(!client.is_paused());
+        client.pause(&admin);
+
+        advance(&env);
+        assert!(client.is_paused());
+        client.unpause(&admin);
+
+        advance(&env);
+        assert!(!client.is_paused());
+        let coordinator = Address::generate(&env);
+        client.set_coordinator(&admin, &coordinator);
     }
 }

@@ -12,6 +12,7 @@ import {
   Req,
   ForbiddenException,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
@@ -86,11 +87,10 @@ export class DispatchController {
     @Body('accepted') accepted: boolean,
     @Req() req: any,
   ) {
-    const riderId = req.user?.riderId ?? req.user?.id;
-    if (!riderId) {
+    if (!req.user?.id) {
       throw new ForbiddenException('Authenticated rider context is required');
     }
-    return this.dispatchService.respondToAssignment(orderId, riderId, accepted, req.user);
+    return this.dispatchService.respondToAssignment(orderId, req.user, accepted);
   }
 
   @RequirePermissions(Permission.UPDATE_DISPATCH)

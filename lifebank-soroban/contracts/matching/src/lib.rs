@@ -10,7 +10,9 @@ mod test;
 
 pub use error::MatchingError;
 pub use matching::{
-    compatible_donor_types, is_compatible, score_unit, select_units, sort_by_expiration,
+    compatible_donor_types, compatible_donor_types_for_component, is_compatible,
+    is_compatible_for_component, score_unit, select_units, select_units_for_component,
+    sort_by_expiration,
 };
 pub use types::{
     BloodComponent, BloodRequest, BloodStatus, BloodType, BloodUnit, DataKey, MatchKind,
@@ -66,7 +68,12 @@ pub struct Unpaused {
 #[contractclient(name = "InventoryContractClient")]
 pub trait InventoryContractInterface {
     fn get_blood_unit(env: Env, blood_unit_id: u64) -> BloodUnit;
-    fn get_units_by_blood_type(env: Env, blood_type: BloodType) -> Vec<u64>;
+    fn get_available_units_by_blood_type_page(
+        env: Env,
+        blood_type: BloodType,
+        page: u32,
+    ) -> Vec<u64>;
+    fn get_available_blood_type_page_count(env: Env, blood_type: BloodType) -> u32;
 }
 
 /// Minimal interface we need from the requests contract.
@@ -321,31 +328,44 @@ impl MatchingContract {
             .unwrap();
         let inv_client = InventoryContractClient::new(env, &inv_addr);
 
-        let compatible_types = compatible_donor_types(env, request.blood_type);
+        let compatible_types =
+            compatible_donor_types_for_component(env, request.blood_type, request.component);
         let now = env.ledger().timestamp();
 
         let mut candidates: Vec<BloodUnit> = Vec::new(env);
         for i in 0..compatible_types.len() {
+            if candidates.len() >= MAX_MATCH_CANDIDATES.try_into().unwrap() {
+                break;
+            }
             let bt = compatible_types.get(i).unwrap();
-            let unit_ids = inv_client
-                .try_get_units_by_blood_type(&bt)
-                .unwrap_or(Ok(Vec::new(env)))
-                .unwrap_or(Vec::new(env));
+            let last_page = inv_client
+                .try_get_available_blood_type_page_count(&bt)
+                .unwrap_or(Ok(0))
+                .unwrap_or(0);
 
-            for j in 0..unit_ids.len() {
+            for page in 0..=last_page {
                 if candidates.len() >= MAX_MATCH_CANDIDATES.try_into().unwrap() {
                     break;
                 }
-                let uid = unit_ids.get(j).unwrap();
-                if excluded.contains(uid) {
-                    continue;
-                }
-                if let Ok(Ok(unit)) = inv_client.try_get_blood_unit(&uid) {
-                    // Only usable units count toward the cap (#1457). The type
-                    // index also holds Reserved/Delivered/Expired/... units;
-                    // letting them fill the cap would hide Available units
-                    if unit.status == BloodStatus::Available {
-                        candidates.push_back(unit);
+                let unit_ids = inv_client
+                    .try_get_available_units_by_blood_type_page(&bt, &page)
+                    .unwrap_or(Ok(Vec::new(env)))
+                    .unwrap_or(Vec::new(env));
+
+                for j in 0..unit_ids.len() {
+                    if candidates.len() >= MAX_MATCH_CANDIDATES.try_into().unwrap() {
+                        break;
+                    }
+                    let uid = unit_ids.get(j).unwrap();
+                    if excluded.contains(uid) {
+                        continue;
+                    }
+                    if let Ok(Ok(unit)) = inv_client.try_get_blood_unit(&uid) {
+                        if unit.status == BloodStatus::Available
+                            && unit.component == request.component
+                        {
+                            candidates.push_back(unit);
+                        }
                     }
                 }
             }
@@ -353,10 +373,11 @@ impl MatchingContract {
 
         // `select_units` already filters, orders (exact before compatible, FIFO)
         // and scores the candidates, returning ready-to-use `MatchedUnit`s.
-        let matched = select_units(
+        let matched = select_units_for_component(
             env,
             candidates,
             request.blood_type,
+            request.component,
             request.urgency,
             request.quantity_ml,
             None,

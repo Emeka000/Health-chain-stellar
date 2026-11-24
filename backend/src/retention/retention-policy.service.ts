@@ -1,7 +1,7 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 
 import Redis from 'ioredis';
 import { Repository, LessThan, DataSource } from 'typeorm';
@@ -25,6 +25,9 @@ const THREE_YEARS_MS = 3 * 365 * 24 * 60 * 60 * 1000;
 const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
 const TEN_YEARS_MS = 10 * 365 * 24 * 60 * 60 * 1000;
 
+/** Distributed lock TTL for the scheduled retention job (covers the job body). */
+const RETENTION_JOB_LOCK_TTL_MS = 30 * 60 * 1000;
+
 @Injectable()
 export class RetentionPolicyService {
   private readonly logger = new Logger(RetentionPolicyService.name);
@@ -41,8 +44,48 @@ export class RetentionPolicyService {
 
   @Cron(FIRST_SUNDAY_CRON, { name: 'retention-policy-job', timeZone: 'UTC' })
   async runScheduled(): Promise<void> {
-    this.logger.log('Scheduled retention policy job starting');
-    await this.run(false);
+    const lockKey = 'singleton-job:retention-policy-job';
+    const token = randomUUID();
+
+    let acquired: string | null;
+    try {
+      acquired = await this.redis.set(
+        lockKey,
+        token,
+        'PX',
+        RETENTION_JOB_LOCK_TTL_MS,
+        'NX',
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Could not acquire retention-policy-job lock, skipping tick: ${(err as Error).message}`,
+      );
+      return;
+    }
+
+    if (acquired !== 'OK') {
+      this.logger.debug('retention-policy-job already running on another replica, skipping');
+      return;
+    }
+
+    try {
+      this.logger.log('Scheduled retention policy job starting');
+      await this.run(false);
+    } finally {
+      // Release only if we still own the lock (avoid deleting a re-acquired lock).
+      try {
+        await this.redis.eval(
+          'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end',
+          1,
+          lockKey,
+          token,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Failed to release retention-policy-job lock: ${(err as Error).message}`,
+        );
+      }
+    }
   }
 
   /**

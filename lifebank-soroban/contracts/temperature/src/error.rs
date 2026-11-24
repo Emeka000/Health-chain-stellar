@@ -28,4 +28,6 @@ pub enum ContractError {
     ThresholdAlreadyPending = 614,
     /// payment_id is not bound to the given unit_id
     PaymentUnitMismatch = 615,
+    /// Cross-contract call to inventory failed
+    InventoryCallFailed = 616,
 }

@@ -10,7 +10,9 @@
 ///   return whatever we found rather than failing.
 use soroban_sdk::{Env, Vec};
 
-use crate::types::{BloodStatus, BloodType, BloodUnit, MatchKind, MatchedUnit, Urgency};
+use crate::types::{
+    BloodComponent, BloodStatus, BloodType, BloodUnit, MatchKind, MatchedUnit, Urgency,
+};
 
 // ---------------------------------------------------------------------------
 // ABO / Rh compatibility
@@ -22,56 +24,149 @@ use crate::types::{BloodStatus, BloodType, BloodUnit, MatchKind, MatchedUnit, Ur
 /// compatible donors ordered from most-preferred to least-preferred
 /// (Rh-negative before Rh-positive to preserve rare O- stock).
 pub fn compatible_donor_types(env: &Env, recipient: BloodType) -> Vec<BloodType> {
+    compatible_donor_types_for_component(env, recipient, BloodComponent::RedCells)
+}
+
+/// Returns compatible donor types for a specific blood component.
+pub fn compatible_donor_types_for_component(
+    env: &Env,
+    recipient: BloodType,
+    component: BloodComponent,
+) -> Vec<BloodType> {
     let mut types = Vec::new(env);
-    match recipient {
-        BloodType::OPositive => {
-            types.push_back(BloodType::OPositive);
-            types.push_back(BloodType::ONegative);
+    let order: &[BloodType] = match (component, recipient) {
+        (BloodComponent::Plasma | BloodComponent::Cryoprecipitate, BloodType::ABPositive) => {
+            &[BloodType::ABPositive, BloodType::ABNegative]
         }
-        BloodType::ONegative => {
-            types.push_back(BloodType::ONegative);
+        (BloodComponent::Plasma | BloodComponent::Cryoprecipitate, BloodType::ABNegative) => {
+            &[BloodType::ABNegative, BloodType::ABPositive]
         }
-        BloodType::APositive => {
-            types.push_back(BloodType::APositive);
-            types.push_back(BloodType::ANegative);
-            types.push_back(BloodType::OPositive);
-            types.push_back(BloodType::ONegative);
+        (BloodComponent::Plasma | BloodComponent::Cryoprecipitate, BloodType::APositive) => {
+            &[
+                BloodType::APositive,
+                BloodType::ANegative,
+                BloodType::ABPositive,
+                BloodType::ABNegative,
+            ]
         }
-        BloodType::ANegative => {
-            types.push_back(BloodType::ANegative);
-            types.push_back(BloodType::ONegative);
+        (BloodComponent::Plasma | BloodComponent::Cryoprecipitate, BloodType::ANegative) => {
+            &[
+                BloodType::ANegative,
+                BloodType::APositive,
+                BloodType::ABNegative,
+                BloodType::ABPositive,
+            ]
         }
-        BloodType::BPositive => {
-            types.push_back(BloodType::BPositive);
-            types.push_back(BloodType::BNegative);
-            types.push_back(BloodType::OPositive);
-            types.push_back(BloodType::ONegative);
+        (BloodComponent::Plasma | BloodComponent::Cryoprecipitate, BloodType::BPositive) => {
+            &[
+                BloodType::BPositive,
+                BloodType::BNegative,
+                BloodType::ABPositive,
+                BloodType::ABNegative,
+            ]
         }
-        BloodType::BNegative => {
-            types.push_back(BloodType::BNegative);
-            types.push_back(BloodType::ONegative);
+        (BloodComponent::Plasma | BloodComponent::Cryoprecipitate, BloodType::BNegative) => {
+            &[
+                BloodType::BNegative,
+                BloodType::BPositive,
+                BloodType::ABNegative,
+                BloodType::ABPositive,
+            ]
         }
-        BloodType::ABPositive => {
-            types.push_back(BloodType::ABPositive);
-            types.push_back(BloodType::ABNegative);
-            types.push_back(BloodType::APositive);
-            types.push_back(BloodType::ANegative);
-            types.push_back(BloodType::BPositive);
-            types.push_back(BloodType::BNegative);
-            types.push_back(BloodType::OPositive);
-            types.push_back(BloodType::ONegative);
+        (BloodComponent::Plasma | BloodComponent::Cryoprecipitate, BloodType::OPositive) => {
+            &[
+                BloodType::OPositive,
+                BloodType::ONegative,
+                BloodType::APositive,
+                BloodType::ANegative,
+                BloodType::BPositive,
+                BloodType::BNegative,
+                BloodType::ABPositive,
+                BloodType::ABNegative,
+            ]
         }
-        BloodType::ABNegative => {
-            types.push_back(BloodType::ABNegative);
-            types.push_back(BloodType::ANegative);
-            types.push_back(BloodType::BNegative);
-            types.push_back(BloodType::ONegative);
+        (BloodComponent::Plasma | BloodComponent::Cryoprecipitate, BloodType::ONegative) => {
+            &[
+                BloodType::ONegative,
+                BloodType::OPositive,
+                BloodType::APositive,
+                BloodType::ANegative,
+                BloodType::BPositive,
+                BloodType::BNegative,
+                BloodType::ABPositive,
+                BloodType::ABNegative,
+            ]
         }
+        (BloodComponent::Platelets, recipient) => match recipient {
+            BloodType::APositive => &[BloodType::APositive, BloodType::ANegative],
+            BloodType::ANegative => &[BloodType::ANegative, BloodType::APositive],
+            BloodType::BPositive => &[BloodType::BPositive, BloodType::BNegative],
+            BloodType::BNegative => &[BloodType::BNegative, BloodType::BPositive],
+            BloodType::ABPositive => &[BloodType::ABPositive, BloodType::ABNegative],
+            BloodType::ABNegative => &[BloodType::ABNegative, BloodType::ABPositive],
+            BloodType::OPositive => &[BloodType::OPositive, BloodType::ONegative],
+            BloodType::ONegative => &[BloodType::ONegative, BloodType::OPositive],
+        },
+        (_, BloodType::OPositive) => &[BloodType::OPositive, BloodType::ONegative],
+        (_, BloodType::ONegative) => &[BloodType::ONegative],
+        (_, BloodType::APositive) => &[
+            BloodType::APositive,
+            BloodType::ANegative,
+            BloodType::OPositive,
+            BloodType::ONegative,
+        ],
+        (_, BloodType::ANegative) => &[BloodType::ANegative, BloodType::ONegative],
+        (_, BloodType::BPositive) => &[
+            BloodType::BPositive,
+            BloodType::BNegative,
+            BloodType::OPositive,
+            BloodType::ONegative,
+        ],
+        (_, BloodType::BNegative) => &[BloodType::BNegative, BloodType::ONegative],
+        (_, BloodType::ABPositive) => &[
+            BloodType::ABPositive,
+            BloodType::ABNegative,
+            BloodType::APositive,
+            BloodType::ANegative,
+            BloodType::BPositive,
+            BloodType::BNegative,
+            BloodType::OPositive,
+            BloodType::ONegative,
+        ],
+        (_, BloodType::ABNegative) => &[
+            BloodType::ABNegative,
+            BloodType::ANegative,
+            BloodType::BNegative,
+            BloodType::ONegative,
+        ],
+    };
+    for donor in order {
+        types.push_back(*donor);
     }
     types
 }
 
-/// Returns true if `donor` can safely donate to `recipient`.
+/// Returns whether a donor product can be safely issued to a recipient.
+pub fn is_compatible_for_component(
+    donor: BloodType,
+    recipient: BloodType,
+    component: BloodComponent,
+) -> bool {
+    match component {
+        BloodComponent::WholeBlood | BloodComponent::RedCells => is_compatible(donor, recipient),
+        BloodComponent::Plasma | BloodComponent::Cryoprecipitate => match abo_group(recipient) {
+            3 => abo_group(donor) == 3,
+            1 => matches!(abo_group(donor), 1 | 3),
+            2 => matches!(abo_group(donor), 2 | 3),
+            _ => true,
+        },
+        // Conservative platelet matching: require an ABO-identical product;
+        // Rh does not change platelet ABO compatibility.
+        BloodComponent::Platelets => abo_group(donor) == abo_group(recipient),
+    }
+}
+
+/// Returns true if `donor` can safely donate red cells to `recipient`.
 pub fn is_compatible(donor: BloodType, recipient: BloodType) -> bool {
     // O- is universal donor
     if donor == BloodType::ONegative {
@@ -92,6 +187,16 @@ pub fn is_compatible(donor: BloodType, recipient: BloodType) -> bool {
             | (ABNegative, ABNegative | ABPositive)
             | (ABPositive, ABPositive)
     )
+}
+
+/// Returns whether a donor can safely donate to a recipient for the given product.
+fn abo_group(blood_type: BloodType) -> u8 {
+    match blood_type {
+        BloodType::OPositive | BloodType::ONegative => 0,
+        BloodType::APositive | BloodType::ANegative => 1,
+        BloodType::BPositive | BloodType::BNegative => 2,
+        BloodType::ABPositive | BloodType::ABNegative => 3,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +302,28 @@ pub fn select_units(
     bank_hint: Option<&soroban_sdk::Address>,
     now_timestamp: u64,
 ) -> Vec<MatchedUnit> {
+    select_units_for_component(
+        env,
+        candidates,
+        request_blood_type,
+        BloodComponent::RedCells,
+        request_urgency,
+        needed_ml,
+        bank_hint,
+        now_timestamp,
+    )
+}
+
+pub fn select_units_for_component(
+    env: &Env,
+    candidates: Vec<BloodUnit>,
+    request_blood_type: BloodType,
+    request_component: BloodComponent,
+    request_urgency: Urgency,
+    needed_ml: u32,
+    bank_hint: Option<&soroban_sdk::Address>,
+    now_timestamp: u64,
+) -> Vec<MatchedUnit> {
     // Partition into exact / compatible buckets
     let mut exact: Vec<BloodUnit> = Vec::new(env);
     let mut compatible: Vec<BloodUnit> = Vec::new(env);
@@ -206,12 +333,19 @@ pub fn select_units(
         if unit.status != BloodStatus::Available {
             continue;
         }
+        if unit.component != request_component {
+            continue;
+        }
         if unit.expiration_timestamp <= now_timestamp {
             continue;
         }
         if unit.blood_type == request_blood_type {
             exact.push_back(unit);
-        } else if is_compatible(unit.blood_type, request_blood_type) {
+        } else if is_compatible_for_component(
+            unit.blood_type,
+            request_blood_type,
+            request_component,
+        ) {
             compatible.push_back(unit);
         }
     }

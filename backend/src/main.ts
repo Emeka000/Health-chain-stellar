@@ -2,12 +2,12 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { AppErrorFilter } from './common/filters/irrecoverable-error.filter';
 import { ValidationExceptionFilter } from './common/filters/validation-exception.filter';
-import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { createCorsOptions } from './config/cors-options';
 import { DatabaseSyncGuard } from './config/database-sync.guard';
 import { validateEnv } from './config/validate-env';
@@ -28,15 +28,19 @@ async function bootstrap() {
   DatabaseSyncGuard.validateSynchronizeConfig(nodeEnv, synchronize);
 
   const app = await NestFactory.create(AppModule);
+
+  // Route all Nest logs through Winston (daily rotation + secret redaction).
+  app.useLogger(app.get(WINSTON_MODULE_NEST_PROVIDER));
+
   const configService = app.get(ConfigService);
   const logger = new Logger('Bootstrap');
   const isProduction =
     configService.get<string>('NODE_ENV', 'development') === 'production';
 
-  const correlationIdMiddleware = new CorrelationIdMiddleware();
-  app.use((req, res, next) => correlationIdMiddleware.use(req, res, next));
+  // CorrelationIdMiddleware is registered once via AppModule.configure().
 
-  if (configService.get<string>('TRUST_PROXY', 'false') === 'true') {
+  const trustProxy = configService.get<boolean>('TRUST_PROXY', false);
+  if (trustProxy) {
     app.getHttpAdapter().getInstance().set('trust proxy', 1);
   }
 
@@ -70,8 +74,7 @@ async function bootstrap() {
   // Swagger/OpenAPI configuration
   // Only mount Swagger outside production, or when explicitly enabled.
   const enableSwagger =
-    !isProduction ||
-    configService.get<string>('ENABLE_SWAGGER', 'false') === 'true';
+    !isProduction || configService.get<boolean>('ENABLE_SWAGGER', false);
 
   if (enableSwagger) {
     const swaggerConfig = new DocumentBuilder()

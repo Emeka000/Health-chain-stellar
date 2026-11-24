@@ -29,6 +29,17 @@ pub enum BloodType {
     ONegative,
 }
 
+/// Blood product stored in an inventory unit.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BloodComponent {
+    WholeBlood,
+    RedCells,
+    Plasma,
+    Platelets,
+    Cryoprecipitate,
+}
+
 /// Blood unit status representing its current state in the supply chain
 ///
 /// Status transitions follow this flow:
@@ -70,6 +81,9 @@ pub struct BloodUnit {
 
     /// Blood type (A+, A-, B+, B-, AB+, AB-, O+, O-)
     pub blood_type: BloodType,
+
+    /// Product component; legacy registration defaults to WholeBlood.
+    pub component: BloodComponent,
 
     /// Volume in milliliters (ml)
     /// Standard unit: 450ml ± 10% for whole blood
@@ -352,6 +366,11 @@ pub enum DataKey {
     /// `release_reservation_by_contract`. Only this address is permitted;
     /// any other address is rejected regardless of `require_auth`.
     RequestsContractId,
+
+    AvailableBloodTypeIndexMeta(BloodType),
+    AvailableBloodTypeIndexPage(BloodType, u32),
+    AvailableBloodTypeIndexSlot(u64),
+    TemperatureContractId,
 }
 
 /// Reservation record for blood units locked for a specific requester
@@ -644,6 +663,7 @@ mod tests {
         let unit = BloodUnit {
             id: 1,
             blood_type: BloodType::APositive,
+            component: BloodComponent::WholeBlood,
             quantity_ml: 450,
             bank_id: bank,
             donor_id: None,
@@ -665,6 +685,7 @@ mod tests {
         let unit = BloodUnit {
             id: 1,
             blood_type: BloodType::APositive,
+            component: BloodComponent::WholeBlood,
             quantity_ml: 50, // Too low
             bank_id: bank,
             donor_id: None,
@@ -689,6 +710,7 @@ mod tests {
         let unit = BloodUnit {
             id: 1,
             blood_type: BloodType::APositive,
+            component: BloodComponent::WholeBlood,
             quantity_ml: 700, // Too high
             bank_id: bank,
             donor_id: None,
@@ -713,6 +735,7 @@ mod tests {
         let unit = BloodUnit {
             id: 1,
             blood_type: BloodType::APositive,
+            component: BloodComponent::WholeBlood,
             quantity_ml: 450,
             bank_id: bank,
             donor_id: None,
@@ -737,6 +760,7 @@ mod tests {
         let unit = BloodUnit {
             id: 1,
             blood_type: BloodType::APositive,
+            component: BloodComponent::WholeBlood,
             quantity_ml: 450,
             bank_id: bank,
             donor_id: None,
@@ -762,6 +786,7 @@ mod tests {
         let unit = BloodUnit {
             id: 1,
             blood_type: BloodType::APositive,
+            component: BloodComponent::WholeBlood,
             quantity_ml: 450,
             bank_id: bank,
             donor_id: None,
@@ -791,6 +816,7 @@ mod tests {
         let unit = BloodUnit {
             id: 1,
             blood_type: BloodType::APositive,
+            component: BloodComponent::WholeBlood,
             quantity_ml: 450,
             bank_id: bank,
             donor_id: None,

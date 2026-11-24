@@ -9,9 +9,9 @@ mod types;
 #[cfg(test)]
 mod test;
 #[cfg(test)]
-mod test_utils;
-#[cfg(test)]
 mod test_issues_1807_1810;
+#[cfg(test)]
+mod test_utils;
 
 pub use crate::error::ContractError;
 pub use crate::types::{
@@ -48,6 +48,12 @@ mod inventory_client {
             authorized_contract: Address,
             reservation_id: u64,
         );
+        fn compromise_reservation_by_ctr(
+            env: Env,
+            authorized_contract: Address,
+            reservation_id: u64,
+            reason: soroban_sdk::String,
+        ) -> u32;
     }
 }
 
@@ -135,6 +141,10 @@ impl RequestContract {
                 | (RequestStatus::Approved, RequestStatus::InProgress)
                 | (RequestStatus::Approved, RequestStatus::Fulfilled)
                 | (RequestStatus::InProgress, RequestStatus::Fulfilled)
+                // #1805: failed delivery. Back to Approved for a new rider, or
+                // Rejected with the reserved units marked Compromised.
+                | (RequestStatus::InProgress, RequestStatus::Approved)
+                | (RequestStatus::InProgress, RequestStatus::Rejected)
         )
     }
 
@@ -163,6 +173,37 @@ impl RequestContract {
                 soroban_sdk::Error::from_contract_error(INVENTORY_RESERVATION_NOT_FOUND);
             match inv_client.try_release_reservation_by_contract(&requests_contract, &res_id) {
                 Ok(Ok(())) => {}
+                Err(Ok(err)) if err == not_found => {}
+                _ => return Err(ContractError::InventoryReleaseFailed),
+            }
+            request.reservation_id = None;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Closes the request's reservation by having inventory mark its units
+    /// `Compromised` (#1805). Used when an InProgress request is rejected after
+    /// a failed delivery: units that left the bank with a rider, or that the
+    /// hospital refused, must not return to `Available` and be re-matched.
+    ///
+    /// Same return contract as `release_reservation_if_present`. A reservation
+    /// that inventory no longer has counts as closed.
+    fn compromise_reservation_if_present(
+        env: &Env,
+        request: &mut BloodRequest,
+        reason: &String,
+    ) -> Result<bool, ContractError> {
+        if let Some(res_id) = request.reservation_id {
+            let inventory_addr = storage::get_inventory_contract(env);
+            let inv_client = InventoryContractClient::new(env, &inventory_addr);
+            let requests_contract = env.current_contract_address();
+            let not_found =
+                soroban_sdk::Error::from_contract_error(INVENTORY_RESERVATION_NOT_FOUND);
+            match inv_client.try_compromise_reservation_by_ctr(&requests_contract, &res_id, reason)
+            {
+                Ok(Ok(_)) => {}
                 Err(Ok(err)) if err == not_found => {}
                 _ => return Err(ContractError::InventoryReleaseFailed),
             }
@@ -647,6 +688,20 @@ impl RequestContract {
             return Err(ContractError::Unauthorized);
         }
 
+        Self::apply_status_transition(&env, &mut request, &caller, new_status, reason)
+    }
+
+    /// Shared body of `update_request_status` and
+    /// `update_status_by_contract`, run once the caller is authorized.
+    fn apply_status_transition(
+        env: &Env,
+        request: &mut BloodRequest,
+        caller: &Address,
+        new_status: RequestStatus,
+        reason: String,
+    ) -> Result<(), ContractError> {
+        let request_id = request.id;
+
         if request.status == new_status {
             return Err(ContractError::InvalidRequestStatus);
         }
@@ -660,11 +715,36 @@ impl RequestContract {
         let mut released_reservation = false;
         let mut fulfilled_delta_ml = 0;
 
+        let failed_delivery = old_status == RequestStatus::InProgress
+            && matches!(
+                new_status,
+                RequestStatus::Approved | RequestStatus::Rejected
+            );
+        let mut failed_rider: Option<Address> = None;
+
         match new_status {
+            RequestStatus::Approved if failed_delivery => {
+                // Delivery failed, retry: the reservation is kept so the same
+                // units stay held for this request, but the rider assignment
+                // is cleared so a new rider must be assigned before pickup.
+                Self::ensure_non_empty_reason(&reason)?;
+                failed_rider = storage::get_request_rider(&env, request_id);
+                storage::clear_request_rider(&env, request_id);
+            }
             RequestStatus::Approved | RequestStatus::InProgress => {}
+            RequestStatus::Rejected if failed_delivery => {
+                // Delivery failed, give up: the units cannot be trusted any
+                // more, so inventory marks them Compromised instead of
+                // returning them to Available.
+                Self::ensure_non_empty_reason(&reason)?;
+                failed_rider = storage::get_request_rider(&env, request_id);
+                released_reservation =
+                    Self::compromise_reservation_if_present(&env, &mut request, &reason)?;
+                storage::clear_request_rider(&env, request_id);
+            }
             RequestStatus::Rejected => {
                 Self::ensure_non_empty_reason(&reason)?;
-                released_reservation = Self::release_reservation_if_present(&env, &mut request)?;
+                released_reservation = Self::release_reservation_if_present(env, request)?;
             }
             RequestStatus::Fulfilled => {
                 let remaining = request
@@ -680,9 +760,9 @@ impl RequestContract {
 
         request.status = new_status;
         Self::append_history(
-            &env,
-            &mut request,
-            &caller,
+            env,
+            request,
+            caller,
             old_status,
             false,
             new_status,
@@ -690,24 +770,106 @@ impl RequestContract {
             fulfilled_delta_ml,
             released_reservation,
         );
-        storage::set_request(&env, &request);
+        storage::set_request(env, request);
         if matches!(
             new_status,
             RequestStatus::Rejected | RequestStatus::Fulfilled
         ) {
-            storage::remove_from_hospital_requests(&env, &request.hospital_id, request_id);
+            storage::remove_from_hospital_requests(env, &request.hospital_id, request_id);
         }
 
         events::emit_request_status_updated(
-            &env,
+            env,
             request_id,
-            &caller,
+            caller,
             old_status,
             new_status,
             env.ledger().timestamp(),
         );
+        if failed_delivery {
+            events::emit_delivery_failed(
+                &env,
+                request_id,
+                &caller,
+                failed_rider,
+                new_status,
+                released_reservation,
+                env.ledger().timestamp(),
+            );
+        }
 
         Ok(())
+    }
+
+    /// Configure the coordinator contract trusted to drive the request
+    /// lifecycle via `update_status_by_contract`. Admin only; may be
+    /// called again to rotate.
+    pub fn set_coordinator_contract(
+        env: Env,
+        coordinator_contract: Address,
+    ) -> Result<(), ContractError> {
+        storage::require_initialized(&env)?;
+        storage::get_admin(&env).require_auth();
+        storage::set_coordinator_contract(&env, &coordinator_contract);
+        events::emit_coordinator_contract_set(&env, &coordinator_contract);
+        Ok(())
+    }
+
+    pub fn get_coordinator_contract(env: Env) -> Result<Option<Address>, ContractError> {
+        storage::require_initialized(&env)?;
+        Ok(storage::get_coordinator_contract(&env))
+    }
+
+    /// Move a request through its lifecycle on behalf of the trusted
+    /// coordinator contract, which drives the allocate → deliver → settle
+    /// workflow:
+    ///   * allocation:  `Pending → Approved`
+    ///   * delivery:    `Approved → InProgress`
+    ///   * settlement:  `Approved | InProgress → Fulfilled`
+    ///   * rollback / expiry: `Pending | Approved → Cancelled`
+    ///
+    /// Mirrors `cancel_request_by_contract`: `caller_contract` must authorize
+    /// the call (automatic for the direct invoking contract) and must equal
+    /// the coordinator configured via `set_coordinator_contract`. Transitions
+    /// follow the same state machine as `update_request_status`.
+    pub fn update_status_by_contract(
+        env: Env,
+        caller_contract: Address,
+        request_id: u64,
+        new_status: RequestStatus,
+        reason: String,
+    ) -> Result<(), ContractError> {
+        storage::require_initialized(&env)?;
+        storage::require_not_paused(&env)?;
+        caller_contract.require_auth();
+
+        match storage::get_coordinator_contract(&env) {
+            Some(ref trusted) if *trusted == caller_contract => {}
+            Some(_) => return Err(ContractError::Unauthorized),
+            None => return Err(ContractError::CoordinatorContractNotSet),
+        }
+
+        let mut request =
+            storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
+
+        match new_status {
+            RequestStatus::Approved | RequestStatus::InProgress | RequestStatus::Fulfilled => {
+                Self::apply_status_transition(
+                    &env,
+                    &mut request,
+                    &caller_contract,
+                    new_status,
+                    reason,
+                )
+            }
+            RequestStatus::Cancelled => {
+                Self::ensure_non_empty_reason(&reason)?;
+                Self::cancel_internal(&env, &mut request, &caller_contract, reason)
+            }
+            RequestStatus::Pending | RequestStatus::Rejected => {
+                Err(ContractError::InvalidRequestStatus)
+            }
+        }
     }
 
     /// Register partial fulfillment. Admin only.
@@ -948,7 +1110,15 @@ impl RequestContract {
         request.fulfilled_by = Some(org_id.clone());
         let status = request.status;
         Self::append_history(
-            &env, &mut request, &admin, status, false, status, reason, 0, false,
+            &env,
+            &mut request,
+            &admin,
+            status,
+            false,
+            status,
+            reason,
+            0,
+            false,
         );
         storage::set_request(&env, &request);
 
@@ -996,6 +1166,15 @@ impl RequestContract {
     pub fn get_request(env: Env, request_id: u64) -> Result<BloodRequest, ContractError> {
         storage::require_initialized(&env)?;
         storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)
+    }
+
+    /// Return whether `request_id` exists and is approved for reservation.
+    ///
+    /// This read-only endpoint is intended for trusted inventory validation.
+    pub fn is_request_approved(env: Env, request_id: u64) -> bool {
+        storage::get_request(&env, request_id)
+            .map(|request| request.status == RequestStatus::Approved)
+            .unwrap_or(false)
     }
 
     /// Returns the rider assigned to `request_id` via `assign_rider`, if any.
@@ -1136,3 +1315,6 @@ mod test_security_fixes;
 
 #[cfg(test)]
 mod test_lifecycle_fixes;
+
+#[cfg(test)]
+mod test_delivery_failure;

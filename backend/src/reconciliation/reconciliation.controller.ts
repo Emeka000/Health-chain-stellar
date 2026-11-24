@@ -6,6 +6,8 @@ import {
   Body,
   Query,
   UseGuards,
+  Headers,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
@@ -20,6 +22,15 @@ import {
   MismatchResolution,
 } from './enums/reconciliation.enum';
 import { ReconciliationService } from './reconciliation.service';
+
+const MAX_PAGE_SIZE = 100;
+
+function clampLimit(value: number | undefined, fallback: number): number {
+  if (value === undefined || Number.isNaN(value)) {
+    return fallback;
+  }
+  return Math.min(Math.max(value, 1), MAX_PAGE_SIZE);
+}
 
 @ApiTags('Reconciliation')
 @ApiBearerAuth()
@@ -50,8 +61,8 @@ export class ReconciliationController {
   @Get('runs')
   @RequirePermissions(Permission.READ_ANALYTICS)
   @ApiOperation({ summary: 'List reconciliation runs' })
-  getRuns(@Query('limit') limit?: string) {
-    return this.service.getRuns(limit ? parseInt(limit, 10) : 20);
+  getRuns(@Query('limit', new ParseIntPipe({ optional: true })) limit?: number) {
+    return this.service.getRuns(clampLimit(limit, 20));
   }
 
   @Get('mismatches')
@@ -64,13 +75,13 @@ export class ReconciliationController {
     @Query('runId') runId?: string,
     @Query('resolution') resolution?: MismatchResolution,
     @Query('exceptionCategory') exceptionCategory?: ExceptionCategory,
-    @Query('limit') limit?: string,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
   ) {
     return this.service.getMismatches(
       runId,
       resolution,
       exceptionCategory,
-      limit ? parseInt(limit, 10) : 50,
+      clampLimit(limit, 50),
     );
   }
 

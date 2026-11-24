@@ -10,9 +10,18 @@ mod validation;
 use crate::error::ContractError;
 use crate::types::{DataKey, Reservation, Role};
 
-pub use crate::types::{BloodStatus, BloodType, BloodUnit};
+pub use crate::types::{BloodComponent, BloodStatus, BloodType, BloodUnit};
 
 use soroban_sdk::{contract, contractimpl, Address, Env, Map, String, Vec};
+
+mod requests_client {
+    use soroban_sdk::{contractclient, Env};
+
+    #[contractclient(name = "RequestsContractClient")]
+    pub trait RequestsContractInterface {
+        fn is_request_approved(env: Env, request_id: u64) -> bool;
+    }
+}
 
 /// Cross-contract client for the authoritative HealthChainContract (BloodUnitRegistry).
 ///
@@ -75,6 +84,8 @@ pub struct InventoryContract;
 #[contractimpl]
 impl InventoryContract {
     const MAX_RESERVATION_DURATION_SECS: u64 = 86_400 * 7;
+    /// Minimum reservation window to prevent immediately expired reservations.
+    const MIN_RESERVATION_SECS: u64 = 60;
     const MAX_BATCH_SIZE: u32 = 50;
     const CONTRACT_VERSION: u32 = 1;
 
@@ -261,6 +272,30 @@ impl InventoryContract {
         }
     }
 
+    /// Whether `address` is the trusted coordinator contract configured via
+    /// `set_coordinator_contract`.
+    fn is_coordinator_contract(env: &Env, address: &Address) -> bool {
+        let coordinator: Option<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::CoordinatorContractId);
+        coordinator.as_ref() == Some(address)
+    }
+
+    /// The coordinator may only drive the workflow transitions it owns:
+    /// reserve (`Reserved`), ship (`InTransit`), deliver (`Delivered`) and
+    /// release a rolled-back reservation (`Available`). Expiry, compromise and
+    /// disposal stay with the admin and the owning blood bank.
+    fn assert_coordinator_can_transition(new_status: &BloodStatus) -> Result<(), ContractError> {
+        match new_status {
+            BloodStatus::Available
+            | BloodStatus::Reserved
+            | BloodStatus::InTransit
+            | BloodStatus::Delivered => Ok(()),
+            _ => Err(ContractError::InsufficientRolePermission),
+        }
+    }
+
     fn require_not_paused(env: &Env) -> Result<(), ContractError> {
         if env
             .storage()
@@ -315,6 +350,29 @@ impl InventoryContract {
             bank_id,
             serial_number,
             blood_type,
+            BloodComponent::WholeBlood,
+            quantity_ml,
+            donor_id,
+        )
+    }
+
+    /// Register a blood unit with an explicit component type.
+    pub fn register_blood_component(
+        env: Env,
+        bank_id: Address,
+        serial_number: String,
+        blood_type: BloodType,
+        component: BloodComponent,
+        quantity_ml: u32,
+        donor_id: Option<Address>,
+    ) -> Result<u64, ContractError> {
+        bank_id.require_auth();
+        Self::register_blood_after_auth(
+            env,
+            bank_id,
+            serial_number,
+            blood_type,
+            component,
             quantity_ml,
             donor_id,
         )
@@ -325,6 +383,7 @@ impl InventoryContract {
         bank_id: Address,
         serial_number: String,
         blood_type: BloodType,
+        component: BloodComponent,
         quantity_ml: u32,
         donor_id: Option<Address>,
     ) -> Result<u64, ContractError> {
@@ -388,6 +447,7 @@ impl InventoryContract {
         let blood_unit = BloodUnit {
             id: blood_unit_id,
             blood_type,
+            component,
             quantity_ml,
             bank_id: bank_id.clone(),
             donor_id: donor_id.clone(),
@@ -413,6 +473,7 @@ impl InventoryContract {
 
         // Update indexes for efficient querying
         storage::add_to_blood_type_index(&env, &blood_unit);
+        storage::add_to_available_blood_type_index(&env, &blood_unit);
         storage::add_to_bank_index(&env, &blood_unit);
         storage::add_to_status_index(&env, &blood_unit);
         storage::add_to_donor_index(&env, &blood_unit);
@@ -446,7 +507,10 @@ impl InventoryContract {
         storage::get_blood_unit(&env, blood_unit_id).ok_or(ContractError::NotFound)
     }
 
-    /// Return all blood unit IDs indexed under `blood_type`, across all index pages.
+    /// Deprecated: returns every blood unit ID across all index pages and can
+    /// exceed ledger resource limits as registrations grow. Prefer the
+    /// `get_units_by_blood_type_page` API for bounded reads.
+    ///
     ///
     /// Fixes #1318: the matching contract's `InventoryContractInterface` declares
     /// this function but it was never exposed as a public entrypoint, causing every
@@ -514,6 +578,65 @@ impl InventoryContract {
         env.storage().persistent().get(&meta_key).unwrap_or(0u32)
     }
 
+    /// Return one page of currently available units for matching.
+    pub fn get_available_units_by_blood_type_page(
+        env: Env,
+        blood_type: BloodType,
+        page: u32,
+    ) -> Vec<u64> {
+        let page_key = DataKey::AvailableBloodTypeIndexPage(blood_type, page);
+        env.storage()
+            .persistent()
+            .get(&page_key)
+            .unwrap_or(Vec::new(&env))
+    }
+
+    /// Return the last (highest) available-unit page for `blood_type`.
+    ///
+    /// The total page count is this value plus one, except that a newly
+    /// initialized empty index also returns zero and has an empty page zero.
+    pub fn get_available_blood_type_page_count(env: Env, blood_type: BloodType) -> u32 {
+        let meta_key = DataKey::AvailableBloodTypeIndexMeta(blood_type);
+        env.storage().persistent().get(&meta_key).unwrap_or(0u32)
+    }
+
+    /// Backfill one page of the historical blood-type index into the available
+    /// index after upgrading from a version that did not maintain it.
+    ///
+    /// The admin should call this for every existing blood-type page before
+    /// relying on matching against the available index. It is safe to repeat.
+    pub fn backfill_available_blood_type_index_page(
+        env: Env,
+        admin: Address,
+        blood_type: BloodType,
+        source_page: u32,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        if admin != storage::get_admin(&env) {
+            return Err(ContractError::Unauthorized);
+        }
+
+        let source_key = DataKey::BloodTypeIndexPage(blood_type, source_page);
+        let unit_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&source_key)
+            .unwrap_or(Vec::new(&env));
+        for i in 0..unit_ids.len() {
+            let unit_id = unit_ids.get(i).ok_or(ContractError::NotFound)?;
+            let slot_key = DataKey::AvailableBloodTypeIndexSlot(unit_id);
+            if env.storage().persistent().has(&slot_key) {
+                continue;
+            }
+            if let Some(unit) = storage::get_blood_unit(&env, unit_id) {
+                if unit.status == BloodStatus::Available {
+                    storage::add_to_available_blood_type_index(&env, &unit);
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn update_status(
         env: Env,
         unit_id: u64,
@@ -527,40 +650,49 @@ impl InventoryContract {
 
         let blood_unit = storage::get_blood_unit(&env, unit_id).ok_or(ContractError::NotFound)?;
 
-        // The owning blood bank acts with the implicit BloodBank role unless a
-        // different role was explicitly stored for it.
-        let role = match Self::get_role(&env, &authorized_by) {
-            Role::Unprivileged if authorized_by == blood_unit.bank_id => Role::BloodBank,
-            role => role,
-        };
-        Self::assert_can_transition(&role, &new_status)?;
+        if Self::is_coordinator_contract(&env, &authorized_by) {
+            // The trusted coordinator contract authorizes as itself: a direct
+            // sub-call satisfies `require_auth` for the invoking contract, so
+            // workflow steps (including the permissionless expire_workflow)
+            // need no inventory-admin signature.
+            Self::assert_coordinator_can_transition(&new_status)?;
+        } else {
+            // The owning blood bank acts with the implicit BloodBank role unless a
+            // different role was explicitly stored for it.
+            let role = match Self::get_role(&env, &authorized_by) {
+                Role::Unprivileged if authorized_by == blood_unit.bank_id => Role::BloodBank,
+                role => role,
+            };
+            Self::assert_can_transition(&role, &new_status)?;
 
-        // Allow the transition when:
-        //   (a) the caller is the admin, OR
-        //   (b) the caller is the owning blood bank, OR
-        //   (c) the caller holds a delegated role (Rider / Hospital) whose
-        //       permission to perform this specific transition was already
-        //       confirmed by assert_can_transition above, and who was assigned
-        //       to this unit by its owning bank (see assert_delegate_assigned).
-        //
-        // Without branch (c) a granted Rider / Hospital address could never
-        // pass this gate because their address is never equal to bank_id,
-        // making grant_role effectively dead code (issue #1316).
-        let delegated_role = matches!(role, Role::Rider | Role::Hospital);
-        if role != Role::Admin && authorized_by != blood_unit.bank_id && !delegated_role {
-            return Err(ContractError::Unauthorized);
-        }
-        if delegated_role {
-            Self::assert_delegate_assigned(&env, unit_id, &role, &authorized_by)?;
-        }
+            // Allow the transition when:
+            //   (a) the caller is the admin, OR
+            //   (b) the caller is the owning blood bank, OR
+            //   (c) the caller holds a delegated role (Rider / Hospital) whose
+            //       permission to perform this specific transition was already
+            //       confirmed by assert_can_transition above, and who was assigned
+            //       to this unit by its owning bank (see assert_delegate_assigned).
+            //
+            // Without branch (c) a granted Rider / Hospital address could never
+            // pass this gate because their address is never equal to bank_id,
+            // making grant_role effectively dead code (issue #1316).
+            let delegated_role = matches!(role, Role::Rider | Role::Hospital);
+            if role != Role::Admin && authorized_by != blood_unit.bank_id && !delegated_role {
+                return Err(ContractError::Unauthorized);
+            }
+            if delegated_role {
+                Self::assert_delegate_assigned(&env, unit_id, &role, &authorized_by)?;
+            }
 
-        // Reject a blood bank whose authorization has been revoked since it
-        // registered this unit. register_blood and reserve_blood gate on
-        // is_authorized_bank; update_status must enforce the same invariant so
-        // that authorize_bank(..., false) actually strips all write access.
-        if authorized_by == blood_unit.bank_id && !storage::is_authorized_bank(&env, &authorized_by)
-        {
-            return Err(ContractError::NotAuthorizedBloodBank);
+            // Reject a blood bank whose authorization has been revoked since it
+            // registered this unit. register_blood and reserve_blood gate on
+            // is_authorized_bank; update_status must enforce the same invariant so
+            // that authorize_bank(..., false) actually strips all write access.
+            if authorized_by == blood_unit.bank_id
+                && !storage::is_authorized_bank(&env, &authorized_by)
+            {
+                return Err(ContractError::NotAuthorizedBloodBank);
+            }
         }
 
         let mut blood_unit = blood_unit;
@@ -602,6 +734,7 @@ impl InventoryContract {
         // Keep status index consistent: remove from old bucket, add to new bucket.
         storage::remove_from_status_index(&env, unit_id, old_status);
         storage::add_to_status_index(&env, &blood_unit);
+        storage::sync_available_blood_type_index(&env, &blood_unit, old_status);
 
         storage::record_status_change(
             &env,
@@ -631,6 +764,8 @@ impl InventoryContract {
     /// - `NotFound`: Blood unit with given ID doesn't exist
     /// - `NotUnitOwner`: `bank_id` does not own the unit
     /// - `NotAuthorizedBloodBank`: `bank_id` has been de-authorized
+    /// - `InvalidStatusTransition`: Unit is not `Available` or `Reserved`
+    /// - `InsufficientRolePermission`: Rider or hospital lacks the required role
     pub fn assign_delivery(
         env: Env,
         bank_id: Address,
@@ -648,6 +783,17 @@ impl InventoryContract {
         if !storage::is_authorized_bank(&env, &bank_id) {
             return Err(ContractError::NotAuthorizedBloodBank);
         }
+        if !matches!(
+            blood_unit.status,
+            BloodStatus::Available | BloodStatus::Reserved
+        ) {
+            return Err(ContractError::InvalidStatusTransition);
+        }
+        if Self::get_role(&env, &rider) != Role::Rider
+            || Self::get_role(&env, &hospital) != Role::Hospital
+        {
+            return Err(ContractError::InsufficientRolePermission);
+        }
 
         let rider_key = DataKey::UnitRider(unit_id);
         env.storage().persistent().set(&rider_key, &rider);
@@ -664,6 +810,8 @@ impl InventoryContract {
             storage::TTL_THRESHOLD,
             storage::TTL_EXTEND_TO,
         );
+
+        events::emit_delivery_assigned(&env, unit_id, &rider, &hospital);
 
         Ok(())
     }
@@ -795,6 +943,7 @@ impl InventoryContract {
 
             storage::remove_from_status_index(&env, unit_id, old_status);
             storage::add_to_status_index(&env, &blood_unit);
+            storage::sync_available_blood_type_index(&env, &blood_unit, old_status);
 
             storage::record_status_change(
                 &env,
@@ -820,6 +969,8 @@ impl InventoryContract {
         Ok(updated_count)
     }
 
+    /// Deprecated: reads every history page in one invocation. Prefer
+    /// `get_status_history_page` and `get_history_page_count`.
     pub fn get_status_history(env: Env, unit_id: u64) -> Vec<crate::types::StatusChangeHistory> {
         storage::get_status_history(&env, unit_id)
     }
@@ -872,6 +1023,7 @@ impl InventoryContract {
                 bank_id.clone(),
                 serial_number,
                 blood_type,
+                BloodComponent::WholeBlood,
                 quantity_ml,
                 donor_id,
             )?;
@@ -906,6 +1058,10 @@ impl InventoryContract {
     /// - `BloodUnitExpired`: One or more units have expired (issue #845 fix)
     /// - `RegistryNotConfigured`: caller must set a registry contract first
     /// - `RegistryCallFailed`: the registry rejected the unit status check or update
+    /// - `EmptyReservation`: no unit IDs were supplied
+    /// - `ReservationDurationTooShort`: duration is below `MIN_RESERVATION_SECS`
+    /// - `RequestNotApproved`: configured requests contract does not recognize an approved request
+    /// - `RequestsCallFailed`: request validation call failed
     pub fn reserve_blood(
         env: Env,
         requester: Address,
@@ -944,8 +1100,29 @@ impl InventoryContract {
 
         let current_time = env.ledger().timestamp();
 
+        if unit_ids.is_empty() {
+            return Err(ContractError::EmptyReservation);
+        }
+        if duration_seconds < Self::MIN_RESERVATION_SECS {
+            return Err(ContractError::ReservationDurationTooShort);
+        }
         if duration_seconds > Self::MAX_RESERVATION_DURATION_SECS {
             return Err(ContractError::InvalidInput);
+        }
+
+        if let Some(requests_address) = env
+            .storage()
+            .instance()
+            .get::<_, Address>(&DataKey::RequestsContractId)
+        {
+            let requests = requests_client::RequestsContractClient::new(&env, &requests_address);
+            let approved = requests
+                .try_is_request_approved(&request_id)
+                .map_err(|_| ContractError::RequestsCallFailed)?
+                .map_err(|_| ContractError::RequestsCallFailed)?;
+            if !approved {
+                return Err(ContractError::RequestNotApproved);
+            }
         }
 
         // ── Cross-contract synchronisation with BloodUnitRegistry ─────────────
@@ -1015,6 +1192,7 @@ impl InventoryContract {
             storage::set_blood_unit(&env, &unit);
             storage::remove_from_status_index(&env, unit_id, old_status);
             storage::add_to_status_index(&env, &unit);
+            storage::sync_available_blood_type_index(&env, &unit, old_status);
         }
 
         // ── Phase 2: sync each unit's status to the authoritative registry ────
@@ -1086,6 +1264,81 @@ impl InventoryContract {
         )?;
 
         Ok(())
+    }
+
+    /// Close a reservation by marking its units `Compromised` rather than
+    /// returning them to `Available`. Called by the trusted requests contract
+    /// when an InProgress request is rejected after a failed delivery
+    /// (cold-chain breach, accident, refused units): those units must not
+    /// re-enter matching.
+    ///
+    /// Same trust model as `release_reservation_by_contract`: the caller must
+    /// authorize as `authorized_contract`, which must equal the requests
+    /// contract configured via `set_requests_contract`.
+    ///
+    /// Units in `Reserved` or `InTransit` move to `Compromised`; units already
+    /// in a terminal or end-of-life state (`Delivered`, `Expired`,
+    /// `Compromised`, `Disposed`) or back in `Available` are left alone. The
+    /// reservation is removed. Returns the number of units compromised.
+    ///
+    /// # Errors
+    /// - `ContractPaused` if the contract is paused
+    /// - `Unauthorized` if `authorized_contract` is not the trusted requests contract
+    /// - `ReservationNotFound` if the reservation does not exist
+    pub fn compromise_reservation_by_ctr(
+        env: Env,
+        authorized_contract: Address,
+        reservation_id: u64,
+        reason: String,
+    ) -> Result<u32, ContractError> {
+        Self::require_not_paused(&env)?;
+        authorized_contract.require_auth();
+
+        let trusted: Option<Address> = env.storage().instance().get(&DataKey::RequestsContractId);
+        match trusted {
+            Some(ref requests_contract) if *requests_contract == authorized_contract => {}
+            _ => return Err(ContractError::Unauthorized),
+        }
+
+        let reservation = storage::get_reservation(&env, reservation_id)
+            .ok_or(ContractError::ReservationNotFound)?;
+
+        let mut compromised: u32 = 0;
+        for i in 0..reservation.unit_ids.len() {
+            let unit_id = reservation.unit_ids.get(i).ok_or(ContractError::NotFound)?;
+            if let Some(mut unit) = storage::get_blood_unit(&env, unit_id) {
+                let old_status = unit.status;
+                if !matches!(old_status, BloodStatus::Reserved | BloodStatus::InTransit) {
+                    continue;
+                }
+                unit.status = BloodStatus::Compromised;
+                storage::set_blood_unit(&env, &unit);
+                storage::remove_from_status_index(&env, unit_id, old_status);
+                storage::add_to_status_index(&env, &unit);
+                storage::record_status_change(
+                    &env,
+                    unit_id,
+                    old_status,
+                    BloodStatus::Compromised,
+                    &authorized_contract,
+                    Some(reason.clone()),
+                );
+                events::emit_status_change(
+                    &env,
+                    unit_id,
+                    old_status,
+                    BloodStatus::Compromised,
+                    &authorized_contract,
+                    Some(reason.clone()),
+                );
+                compromised += 1;
+            }
+        }
+
+        storage::remove_reservation(&env, reservation_id);
+        events::emit_reservation_compromised(&env, reservation_id, compromised);
+
+        Ok(compromised)
     }
 
     /// Release a reservation, returning all units to `Available`.
@@ -1235,6 +1488,11 @@ impl InventoryContract {
                     storage::set_blood_unit(env, &unit);
                     storage::remove_from_status_index(env, unit_id, BloodStatus::Reserved);
                     storage::add_to_status_index(env, &unit);
+                    storage::sync_available_blood_type_index(
+                        env,
+                        &unit,
+                        BloodStatus::Reserved,
+                    );
                     storage::record_status_change(
                         env,
                         unit_id,
@@ -1376,6 +1634,74 @@ impl InventoryContract {
     /// Get the configured requests contract address, if any.
     pub fn get_requests_contract(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::RequestsContractId)
+    }
+
+    /// Configure the trusted temperature contract that can mark units
+    /// compromised following a sustained cold-chain excursion.
+    pub fn set_temperature_contract(
+        env: Env,
+        admin: Address,
+        temperature_contract_id: Address,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        if admin != storage::get_admin(&env) {
+            return Err(ContractError::Unauthorized);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::TemperatureContractId, &temperature_contract_id);
+        storage::extend_instance_ttl(&env);
+        Ok(())
+    }
+
+    /// Apply a compromise transition requested by the configured temperature
+    /// contract. The status/history/event update is idempotent.
+    pub fn mark_compromised_from_temperature(
+        env: Env,
+        temperature_contract: Address,
+        unit_id: u64,
+    ) -> Result<(), ContractError> {
+        Self::require_not_paused(&env)?;
+        temperature_contract.require_auth();
+        let trusted: Option<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::TemperatureContractId);
+        if trusted.as_ref() != Some(&temperature_contract) {
+            return Err(ContractError::Unauthorized);
+        }
+
+        let mut unit = storage::get_blood_unit(&env, unit_id).ok_or(ContractError::NotFound)?;
+        if unit.status == BloodStatus::Compromised {
+            return Ok(());
+        }
+        let old_status = unit.status;
+        validation::validate_status_transition(old_status, BloodStatus::Compromised)?;
+
+        unit.status = BloodStatus::Compromised;
+        storage::set_blood_unit(&env, &unit);
+        storage::remove_from_status_index(&env, unit_id, old_status);
+        storage::add_to_status_index(&env, &unit);
+        storage::sync_available_blood_type_index(&env, &unit, old_status);
+
+        let reason = String::from_str(&env, "Temperature violation streak reached threshold");
+        storage::record_status_change(
+            &env,
+            unit_id,
+            old_status,
+            BloodStatus::Compromised,
+            &temperature_contract,
+            Some(reason.clone()),
+        );
+        events::emit_status_change(
+            &env,
+            unit_id,
+            old_status,
+            BloodStatus::Compromised,
+            &temperature_contract,
+            Some(reason),
+        );
+        Ok(())
     }
 
     /// Upgrade the contract to a new WASM hash. Only admin can call this.
