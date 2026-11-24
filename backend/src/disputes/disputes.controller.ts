@@ -7,7 +7,7 @@ import { Permission } from '../auth/enums/permission.enum';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { DisputesService } from './disputes.service';
-import { AddNoteDto, AssignDisputeDto, OpenDisputeDto, ResolveDisputeDto } from './dto/dispute.dto';
+import { AddEvidenceDto, AddNoteDto, AssignDisputeDto, OpenDisputeDto, ResolveDisputeDto } from './dto/dispute.dto';
 import { DisputeSeverity, DisputeStatus } from './enums/dispute.enum';
 
 @ApiTags('Disputes')
@@ -99,7 +99,7 @@ export class DisputesController {
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post(':id/evidence')
   @RequirePermissions(Permission.DISPUTE_RESOLVE)
-  addEvidence(@Param('id') id: string, @Body() body: { type: string; url: string }) {
+  addEvidence(@Param('id') id: string, @Body() body: AddEvidenceDto) {
     return this.service.addEvidence(id, body);
   }
 }

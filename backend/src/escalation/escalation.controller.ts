@@ -8,8 +8,25 @@ import {
   Request,
   UseGuards,
 } from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
+import { IsOptional, IsString } from 'class-validator';
 import { EscalationService } from './escalation.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
+export class AddEscalationLinksDto {
+  @IsOptional()
+  @IsString()
+  incidentReviewId?: string;
+
+  @IsOptional()
+  @IsString()
+  remediationTaskId?: string;
+}
 
 @UseGuards(JwtAuthGuard)
 @ApiTags('Escalations')
@@ -75,11 +92,7 @@ export class EscalationController {
   @Post(':id/links')
   addLinks(
     @Param('id') id: string,
-    @Body()
-    body: {
-      incidentReviewId?: string;
-      remediationTaskId?: string;
-    },
+    @Body() body: AddEscalationLinksDto,
     @Request() req: any,
   ) {
     return this.escalationService.addLinks(

@@ -10,9 +10,11 @@ import {
 import {
   ApiBearerAuth,
   ApiOperation,
+  ApiProperty,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { IsArray, IsNotEmpty, IsString, IsUUID } from 'class-validator';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
@@ -20,6 +22,21 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 
 import { WorkflowOrchestrationService } from './workflow-orchestration.service';
+
+export class AllocateUnitsDto {
+  @ApiProperty({
+    description: 'IDs of the blood units to allocate',
+    type: [String],
+  })
+  @IsArray()
+  @IsUUID('4', { each: true })
+  unitIds: string[];
+
+  @ApiProperty({ description: 'Payment identifier for the allocation' })
+  @IsString()
+  @IsNotEmpty()
+  paymentId: string;
+}
 
 @ApiTags('Workflow')
 @ApiBearerAuth()
@@ -52,7 +69,7 @@ export class WorkflowController {
   })
   allocate(
     @Param('requestId', ParseUUIDPipe) requestId: string,
-    @Body() body: { unitIds: string[]; paymentId: string },
+    @Body() body: AllocateUnitsDto,
     @Request() req: { user: { stellarAddress?: string; sub: string } },
   ) {
     return this.service.allocateUnits({

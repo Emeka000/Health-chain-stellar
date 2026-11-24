@@ -12,7 +12,10 @@ import * as QRCode from 'qrcode';
 import { DataSource, Repository } from 'typeorm';
 
 import { PermissionsService } from '../auth/permissions.service';
-import { DonorEligibilityService } from '../donor-eligibility/donor-eligibility.service';
+import {
+  DonorEligibilityService,
+  DonorProfile,
+} from '../donor-eligibility/donor-eligibility.service';
 import { NotificationChannel } from '../notifications/enums/notification-channel.enum';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ActorRegistryService, ActorType } from '../registry/actor-registry.service';
@@ -32,6 +35,7 @@ import { BloodStatus } from './enums/blood-status.enum';
 import { QuarantineReasonCode, QuarantineTriggerSource } from './enums/quarantine.enums';
 import { QuarantineService } from './services/quarantine.service';
 import { OrganizationEntity } from '../organizations/entities/organization.entity';
+import { UserEntity } from '../users/entities/user.entity';
 
 
 
@@ -80,7 +84,8 @@ export class BloodUnitsService {
 
     // Block registration if donor is not eligible
     if (dto.donorId) {
-      await this.donorEligibilityService.assertEligible(dto.donorId);
+      const profile = await this.loadDonorProfile(dto.donorId);
+      await this.donorEligibilityService.assertEligible(dto.donorId, profile);
     }
 
     const unitNumber = await this.generateUniqueUnitNumber(dto.bloodType);
@@ -128,6 +133,27 @@ export class BloodUnitsService {
       blockchainTransactionHash: result.transactionHash,
       barcodeData: savedUnit.barcodeData,
       message: 'Blood unit registered successfully',
+    };
+  }
+
+  /**
+   * Builds the donor eligibility profile from server-side data only:
+   * the donor's stored date of birth and the most recent blood unit
+   * registered for the donor (used as the last donation date).
+   */
+  private async loadDonorProfile(donorId: string): Promise<DonorProfile> {
+    const donor = await this.dataSource
+      .getRepository(UserEntity)
+      .findOne({ where: { id: donorId } });
+
+    const lastUnit = await this.bloodUnitRepository.findOne({
+      where: { donorId },
+      order: { createdAt: 'DESC' },
+    });
+
+    return {
+      dateOfBirth: donor?.dateOfBirth ?? null,
+      lastDonationDate: lastUnit?.createdAt ?? null,
     };
   }
 
