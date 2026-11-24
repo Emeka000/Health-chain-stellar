@@ -3,6 +3,22 @@
  */
 
 /* eslint-disable @typescript-eslint/no-unused-vars */
+
+export type PaymentStatus =
+  | 'Pending'
+  | 'Locked'
+  | 'Released'
+  | 'Refunded'
+  | 'Disputed'
+  | 'Cancelled';
+
+export interface Payment {
+  payment_id: bigint;
+  status: PaymentStatus;
+  amount: bigint;
+  timestamp: bigint;
+}
+
 export class Client {
   contractId: string;
 
@@ -10,9 +26,7 @@ export class Client {
     this.contractId = opts.contractId ?? '';
   }
 
-  get_payment(
-    ...args: unknown[]
-  ): Promise<{ status: string; amount?: number; timestamp?: string } | null> {
+  get_payment(paymentId: bigint): Promise<Payment | null> {
     return Promise.resolve(null);
   }
 }

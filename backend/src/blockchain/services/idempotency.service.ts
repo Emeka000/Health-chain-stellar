@@ -1,38 +1,35 @@
 import { Injectable, Inject, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import type { RedisClientType } from 'redis';
+import type Redis from 'ioredis';
 
 @Injectable()
 export class IdempotencyService {
-  private redis: RedisClientType;
+  private redis: Redis;
   private readonly IDEMPOTENCY_PREFIX = 'idempotency:';
   private readonly IDEMPOTENCY_TTL = 86400 * 7; // 7 days
 
   constructor(
     private configService: ConfigService,
-    @Optional() @Inject('REDIS_CLIENT') redis?: RedisClientType,
+    @Optional() @Inject('REDIS_CLIENT') redis?: Redis,
   ) {
-    if (redis) {
-      this.redis = redis;
-    } else {
-      // Lazy load Redis only if not provided (for testing)
-      const { createClient } = require('redis');
-      this.redis = createClient({
-        socket: {
-          host: this.configService.get<string>('REDIS_HOST') || 'localhost',
-          port: this.configService.get<number>('REDIS_PORT') || 6379,
-        },
-      });
+    if (!redis) {
+      throw new Error(
+        'IdempotencyService requires the shared REDIS_CLIENT provider; ensure RedisModule is imported',
+      );
     }
+    this.redis = redis;
   }
 
   async checkAndSetIdempotencyKey(key: string): Promise<boolean> {
     const fullKey = `${this.IDEMPOTENCY_PREFIX}${key}`;
-    const result = await this.redis.set(fullKey, '1', {
-      EX: this.IDEMPOTENCY_TTL,
-      NX: true,
-    });
+    const result = await this.redis.set(
+      fullKey,
+      '1',
+      'EX',
+      this.IDEMPOTENCY_TTL,
+      'NX',
+    );
     return result === 'OK';
   }
 

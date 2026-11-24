@@ -39,6 +39,14 @@ pub enum ContractError {
     ReservationOwnerMismatch = 321,
     /// A blood bank may only claim a request whose reservation it owns.
     ReservationRequired = 322,
+    /// The inventory contract refused to release the request's reservation
+    /// (e.g. inventory is paused). The transition is aborted so the
+    /// reservation is never orphaned; retry once inventory accepts releases.
+    InventoryReleaseFailed = 323,
+    /// `expire_request` was called before the request's `required_by_timestamp` passed.
+    RequestNotExpired = 324,
+    /// No trusted coordinator contract has been configured.
+    CoordinatorContractNotSet = 325,
 }
 
 #[cfg(test)]
@@ -73,6 +81,9 @@ mod tests {
             ContractError::ReservationRequestMismatch,
             ContractError::ReservationOwnerMismatch,
             ContractError::ReservationRequired,
+            ContractError::InventoryReleaseFailed,
+            ContractError::RequestNotExpired,
+            ContractError::CoordinatorContractNotSet,
         ];
 
         for i in 0..all.len() {

@@ -445,7 +445,7 @@ fn test_authorized_rider_can_set_inprogress() {
     client.authorize_rider(&rider);
 
     // #1626: the rider must be assigned to the request before pickup.
-    client.assign_rider(&request_id, &rider);
+    client.assign_rider(&admin, &request_id, &rider);
 
     client.update_request_status(
         &rider,
@@ -594,7 +594,7 @@ fn test_cancel_request_by_contract_rejects_inprogress() {
 
     let rider = Address::generate(&env);
     client.authorize_rider(&rider);
-    client.assign_rider(&request_id, &rider);
+    client.assign_rider(&admin, &request_id, &rider);
     client.update_request_status(
         &rider,
         &request_id,

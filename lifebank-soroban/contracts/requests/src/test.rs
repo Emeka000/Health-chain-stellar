@@ -509,7 +509,7 @@ fn test_assign_rider_emits_event() {
         &RequestStatus::Approved,
         &String::from_str(&env, "Approved"),
     );
-    client.assign_rider(&request_id, &rider);
+    client.assign_rider(&admin, &request_id, &rider);
 
     let events = env.events().all();
     let last = events.last().unwrap();
@@ -538,7 +538,13 @@ fn test_cancel_request_with_reservation_id() {
     );
 
     let reservation_id = 42u64;
-    seed_reservation(&env, &client, reservation_id, request_id, &Address::generate(&env));
+    seed_reservation(
+        &env,
+        &client,
+        reservation_id,
+        request_id,
+        &Address::generate(&env),
+    );
     client.set_reservation_id(&admin, &request_id, &reservation_id);
 
     client.cancel_request(

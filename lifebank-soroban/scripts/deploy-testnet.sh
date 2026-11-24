@@ -31,8 +31,10 @@ echo ""
 
 CONTRACTS_TO_DEPLOY=(coordinator identity inventory payments requests temperature matching reputation delivery analytics)
 
+source "$(dirname "$0")/wasm-artifacts.sh"
+
 for contract in "${CONTRACTS_TO_DEPLOY[@]}"; do
-    WASM_FILE="target/wasm32-unknown-unknown/release/${contract}_contract.wasm"
+    WASM_FILE="${WASM_DIR}/${WASM_ARTIFACTS[$contract]}.wasm"
     if [[ ! -f "$WASM_FILE" ]]; then
         echo "❌ Error: Missing WASM binary for $contract"
         echo "   Expected: $WASM_FILE"
@@ -124,7 +126,7 @@ for contract in "${CONTRACTS_TO_DEPLOY[@]}"; do
     echo "Deploying ${contract} contract..."
 
     CONTRACT_ID=$(stellar contract deploy \
-        --wasm target/wasm32-unknown-unknown/release/${contract}_contract.wasm \
+        --wasm "${WASM_DIR}/${WASM_ARTIFACTS[$contract]}.wasm" \
         --source ${IDENTITY} \
         --network ${NETWORK})
 

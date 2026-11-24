@@ -1,189 +1,260 @@
 import { Injectable, Logger } from '@nestjs/common';
-import * as ExcelJS from 'exceljs';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, Between, MoreThanOrEqual, LessThanOrEqual } from 'typeorm';
+import { BloodRequest } from '../../blood-requests/entities/blood-request.entity';
 import * as PDFDocument from 'pdfkit';
-import { BloodRequestEntity } from '../../blood-requests/entities/blood-request.entity';
-
-export interface ReportMetadata {
-  title: string;
-  hospitalName?: string;
-  hospitalId?: string;
-  startDate?: Date;
-  endDate?: Date;
-  generatedBy: string;
-}
+import * as ExcelJS from 'exceljs';
+import {
+  ReportType,
+  ReportFormat,
+  ReportPeriod,
+  ReportData,
+  ReportMetadata,
+} from '../interfaces/report.interface';
 
 @Injectable()
 export class ReportGeneratorService {
   private readonly logger = new Logger(ReportGeneratorService.name);
 
-  async generateBloodRequestsCSV(data: BloodRequestEntity[]): Promise<Buffer> {
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Blood Requests');
+  constructor(
+    @InjectRepository(BloodRequest)
+    private readonly bloodRequestRepository: Repository<BloodRequest>,
+  ) {}
 
-    sheet.columns = [
-      { header: 'Request Number', key: 'requestNumber', width: 20 },
-      { header: 'Hospital ID', key: 'hospitalId', width: 20 },
-      { header: 'Status', key: 'status', width: 15 },
-      { header: 'Urgency', key: 'urgency', width: 15 },
-      { header: 'Required By', key: 'requiredBy', width: 25 },
-      { header: 'Created At', key: 'createdAt', width: 25 },
-      { header: 'Fulfillment %', key: 'fulfillment', width: 15 },
-      { header: 'Items', key: 'items', width: 40 },
-    ];
+  async generateReport(
+    type: ReportType,
+    format: ReportFormat,
+    period: ReportPeriod,
+  ): Promise<Buffer> {
+    const data = await this.collectReportData(type, period);
 
-    data.forEach((req) => {
-      const progress = req.getProgress();
-      const itemsStr = req.items
-        ?.map((i) => `${i.bloodType} (${i.quantityMl}ml)`)
-        .join(', ');
-
-      sheet.addRow({
-        requestNumber: req.requestNumber,
-        hospitalId: req.hospitalId,
-        status: req.status,
-        urgency: req.urgency,
-        requiredBy: req.requiredByTimestamp
-          ? new Date(Number(req.requiredByTimestamp)).toISOString()
-          : 'N/A',
-        createdAt: req.createdAt.toISOString(),
-        fulfillment: `${Math.round(progress.percentage)}%`,
-        items: itemsStr,
-      });
-    });
-
-    return workbook.csv.writeBuffer() as Promise<Buffer>;
+    switch (format) {
+      case ReportFormat.PDF:
+        return this.generatePDF(data);
+      case ReportFormat.EXCEL:
+        return this.generateExcel(data);
+      case ReportFormat.CSV:
+        return this.generateCSV(data);
+      case ReportFormat.JSON:
+        return this.generateJSON(data);
+      default:
+        throw new Error(`Unsupported report format: ${format}`);
+    }
   }
 
-  async generateBloodRequestsPDF(
-    data: BloodRequestEntity[],
-    metadata: ReportMetadata,
-  ): Promise<Buffer> {
+  private async collectReportData(
+    type: ReportType,
+    period: ReportPeriod,
+  ): Promise<ReportData> {
+    const { startDate, endDate } = this.getPeriodDates(period);
+
+    const requests = await this.bloodRequestRepository.find({
+      where: {
+        createdAt: Between(startDate, endDate),
+      },
+      relations: ['requester', 'donor'],
+    });
+
+    const metadata: ReportMetadata = {
+      type,
+      period,
+      startDate,
+      endDate,
+      generatedAt: new Date(),
+      totalRecords: requests.length,
+    };
+
+    return {
+      metadata,
+      data: requests,
+      summary: this.calculateSummary(requests),
+    };
+  }
+
+  private getPeriodDates(period: ReportPeriod): {
+    startDate: Date;
+    endDate: Date;
+  } {
+    const endDate = new Date();
+    const startDate = new Date();
+
+    switch (period) {
+      case ReportPeriod.DAILY:
+        startDate.setDate(startDate.getDate() - 1);
+        break;
+      case ReportPeriod.WEEKLY:
+        startDate.setDate(startDate.getDate() - 7);
+        break;
+      case ReportPeriod.MONTHLY:
+        startDate.setMonth(startDate.getMonth() - 1);
+        break;
+      case ReportPeriod.QUARTERLY:
+        startDate.setMonth(startDate.getMonth() - 3);
+        break;
+      case ReportPeriod.YEARLY:
+        startDate.setFullYear(startDate.getFullYear() - 1);
+        break;
+      default:
+        startDate.setMonth(startDate.getMonth() - 1);
+    }
+
+    return { startDate, endDate };
+  }
+
+  private calculateSummary(requests: BloodRequest[]): Record<string, any> {
+    const totalRequests = requests.length;
+    const completedRequests = requests.filter(
+      (r) => r.status === 'completed',
+    ).length;
+    const pendingRequests = requests.filter(
+      (r) => r.status === 'pending',
+    ).length;
+    const cancelledRequests = requests.filter(
+      (r) => r.status === 'cancelled',
+    ).length;
+
+    const bloodTypeDistribution = requests.reduce(
+      (acc, request) => {
+        const bloodType = request.bloodType;
+        acc[bloodType] = (acc[bloodType] || 0) + 1;
+        return acc;
+      },
+      {} as Record<string, number>,
+    );
+
+    return {
+      totalRequests,
+      completedRequests,
+      pendingRequests,
+      cancelledRequests,
+      completionRate:
+        totalRequests > 0 ? (completedRequests / totalRequests) * 100 : 0,
+      bloodTypeDistribution,
+    };
+  }
+
+  private async generatePDF(data: ReportData): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       try {
-        const doc = new PDFDocument({ margin: 50, size: 'A4' });
+        const doc = new PDFDocument({ margin: 50 });
         const chunks: Buffer[] = [];
 
-        doc.on('data', (chunk) => chunks.push(chunk));
+        doc.on('data', (chunk: Buffer) => chunks.push(chunk));
         doc.on('end', () => resolve(Buffer.concat(chunks)));
+        doc.on('error', reject);
 
-        // Header
-        doc
-          .fillColor('#444444')
-          .fontSize(20)
-          .text(metadata.title, 110, 57)
-          .fontSize(10)
-          .text(`Hospital: ${metadata.hospitalName || metadata.hospitalId || 'All'}`, 200, 65, { align: 'right' })
-          .text(`Generated by: ${metadata.generatedBy}`, 200, 80, { align: 'right' })
-          .text(`Date: ${new Date().toLocaleString()}`, 200, 95, { align: 'right' })
-          .moveDown();
+        doc.fontSize(20).text('Blood Request Report', { align: 'center' });
+        doc.moveDown();
 
-        if (metadata.startDate || metadata.endDate) {
-          const range = `Range: ${metadata.startDate?.toLocaleDateString() || '...'} to ${metadata.endDate?.toLocaleDateString() || '...'}`;
-          doc.text(range, 50, 115);
-        }
+        doc.fontSize(12).text(`Report Type: ${data.metadata.type}`);
+        doc.text(`Period: ${data.metadata.period}`);
+        doc.text(`Start Date: ${data.metadata.startDate.toISOString()}`);
+        doc.text(`End Date: ${data.metadata.endDate.toISOString()}`);
+        doc.text(`Generated At: ${data.metadata.generatedAt.toISOString()}`);
+        doc.text(`Total Records: ${data.metadata.totalRecords}`);
+        doc.moveDown();
 
-        doc.lineCap('butt').moveTo(50, 135).lineTo(550, 135).stroke();
-
-        // Summary Stats
-        const total = data.length;
-        const fulfilled = data.filter((r) => r.isFulfilled()).length;
-        const compliance = total > 0 ? (fulfilled / total) * 100 : 0;
-
-        doc
-          .fontSize(12)
-          .text('Summary Statistics', 50, 150)
-          .fontSize(10)
-          .text(`Total Requests: ${total}`, 60, 170)
-          .text(`Fulfilled: ${fulfilled}`, 60, 185)
-          .text(`SLA Compliance: ${Math.round(compliance)}%`, 60, 200)
-          .moveDown();
-
-        // Table Header
-        const tableTop = 230;
-        doc.font('Helvetica-Bold');
-        this.generateTableRow(
-          doc,
-          tableTop,
-          'Request #',
-          'Urgency',
-          'Status',
-          'Required By',
-          'Fulfill %',
-        );
-        this.generateHr(doc, tableTop + 20);
-        doc.font('Helvetica');
-
-        // Table Rows
-        let i = 0;
-        data.forEach((req) => {
-          const position = tableTop + 30 + i * 30;
-          
-          // Check if we need a new page
-          if (position > 700) {
-            doc.addPage();
-            i = 0;
-            // Redraw header on new page? (Keep it simple for now)
+        doc.fontSize(16).text('Summary', { underline: true });
+        doc.moveDown();
+        doc.fontSize(12);
+        Object.entries(data.summary).forEach(([key, value]) => {
+          if (typeof value === 'object') {
+            doc.text(`${key}:`);
+            Object.entries(value as Record<string, any>).forEach(
+              ([subKey, subValue]) => {
+                doc.text(`  ${subKey}: ${subValue}`);
+              },
+            );
+          } else {
+            doc.text(`${key}: ${value}`);
           }
-
-          const progress = req.getProgress();
-          this.generateTableRow(
-            doc,
-            position,
-            req.requestNumber,
-            req.urgency,
-            req.status,
-            req.requiredByTimestamp ? new Date(Number(req.requiredByTimestamp)).toLocaleDateString() : 'N/A',
-            `${Math.round(progress.percentage)}%`,
-          );
-          this.generateHr(doc, position + 20);
-          i++;
         });
 
-        // Footer
-        const range = doc.bufferedPageRange();
-        for (let j = 0; j < range.count; j++) {
-          doc.switchToPage(j);
-          doc
-            .fontSize(10)
-            .text(
-              `Page ${j + 1} of ${range.count}`,
-              50,
-              doc.page.height - 50,
-              { align: 'center', width: 500 },
-            );
-        }
-
         doc.end();
-      } catch (err) {
-        reject(err);
+      } catch (error) {
+        this.logger.error('Failed to generate PDF report', error);
+        reject(error);
       }
     });
   }
 
-  private generateTableRow(
-    doc: PDFKit.PDFDocument,
-    y: number,
-    id: string,
-    urgency: string,
-    status: string,
-    requiredBy: string,
-    fulfillment: string,
-  ) {
-    doc
-      .fontSize(10)
-      .text(id, 50, y)
-      .text(urgency, 150, y)
-      .text(status, 250, y)
-      .text(requiredBy, 350, y)
-      .text(fulfillment, 450, y, { align: 'right' });
+  private async generateExcel(data: ReportData): Promise<Buffer> {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Report');
+
+    worksheet.addRow(['Blood Request Report']);
+    worksheet.addRow([]);
+    worksheet.addRow(['Report Type', data.metadata.type]);
+    worksheet.addRow(['Period', data.metadata.period]);
+    worksheet.addRow(['Start Date', data.metadata.startDate.toISOString()]);
+    worksheet.addRow(['End Date', data.metadata.endDate.toISOString()]);
+    worksheet.addRow(['Generated At', data.metadata.generatedAt.toISOString()]);
+    worksheet.addRow(['Total Records', data.metadata.totalRecords]);
+    worksheet.addRow([]);
+
+    worksheet.addRow(['Summary']);
+    Object.entries(data.summary).forEach(([key, value]) => {
+      if (typeof value === 'object') {
+        worksheet.addRow([key, JSON.stringify(value)]);
+      } else {
+        worksheet.addRow([key, value]);
+      }
+    });
+
+    worksheet.addRow([]);
+    worksheet.addRow(['Data']);
+
+    if (data.data.length > 0) {
+      const headers = Object.keys(data.data[0]);
+      worksheet.addRow(headers);
+
+      data.data.forEach((row) => {
+        worksheet.addRow(headers.map((header) => row[header]));
+      });
+    }
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    return Buffer.from(buffer);
   }
 
-  private generateHr(doc: PDFKit.PDFDocument, y: number) {
-    doc
-      .strokeColor('#aaaaaa')
-      .lineWidth(1)
-      .moveTo(50, y)
-      .lineTo(550, y)
-      .stroke();
+  private async generateCSV(data: ReportData): Promise<Buffer> {
+    const lines: string[] = [];
+
+    lines.push('Blood Request Report');
+    lines.push('');
+    lines.push(`Report Type,${data.metadata.type}`);
+    lines.push(`Period,${data.metadata.period}`);
+    lines.push(`Start Date,${data.metadata.startDate.toISOString()}`);
+    lines.push(`End Date,${data.metadata.endDate.toISOString()}`);
+    lines.push(`Generated At,${data.metadata.generatedAt.toISOString()}`);
+    lines.push(`Total Records,${data.metadata.totalRecords}`);
+    lines.push('');
+
+    lines.push('Summary');
+    Object.entries(data.summary).forEach(([key, value]) => {
+      if (typeof value === 'object') {
+        lines.push(`${key},${JSON.stringify(value)}`);
+      } else {
+        lines.push(`${key},${value}`);
+      }
+    });
+
+    lines.push('');
+    lines.push('Data');
+
+    if (data.data.length > 0) {
+      const headers = Object.keys(data.data[0]);
+      lines.push(headers.join(','));
+
+      data.data.forEach((row) => {
+        lines.push(headers.map((header) => row[header]).join(','));
+      });
+    }
+
+    return Buffer.from(lines.join('\n'), 'utf-8');
+  }
+
+  private async generateJSON(data: ReportData): Promise<Buffer> {
+    return Buffer.from(JSON.stringify(data, null, 2), 'utf-8');
   }
 }

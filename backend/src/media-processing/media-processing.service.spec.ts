@@ -12,6 +12,8 @@
  *  8. Signed URL expiry enforcement
  *  9. Signed URL owner mismatch rejection
  * 10. Signed URL not found rejection
+ * 11. Scanner unavailable → fail closed (quarantine)
+ * 12. Scanner name/version recorded in metadata
  */
 
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
@@ -213,47 +215,84 @@ describe('MediaProcessingService (#640)', () => {
     expect(result.state).toBe('approved');
     expect(result.detectedMimeType).toBe('image/png');
     // The stored file should not contain the tEXt chunk
-    const stored = require('fs').readFileSync(result.storagePath);
-    expect(stored.toString('hex')).not.toContain(Buffer.from('tEXt').toString('hex'));
+    const stored = require('fs')
+      .readFileSync(result.storagePath);
+    expect(stored.includes(Buffer.from('tEXt'))).toBe(false);
   });
 
-  // ── 8. Signed URL expiry ──────────────────────────────────────────────────
+  // ── 8. Signed URL expiry enforcement ──────────────────────────────────────
 
-  it('rejects an expired signed URL', () => {
-    // Issue a URL then manually expire it by manipulating the internal store
-    const signed = service.issueSignedUrl('file-1', 'user-1', 'http://localhost');
-    const token = signed.url.split('/').pop()!;
-
-    // Force expiry by reaching into the private store via any-cast
-    const store = (service as any).signedUrlStore as Map<string, { fileId: string; ownerId: string; expiresAt: number }>;
-    store.set(token, { fileId: 'file-1', ownerId: 'user-1', expiresAt: Date.now() - 1 });
-
-    expect(() => service.resolveSignedUrl(token, 'user-1')).toThrow(ForbiddenException);
+  it('rejects expired signed URL', async () => {
+    const buf = makeJpeg(200);
+    const result = await service.ingest(
+      { originalname: 'photo.jpg', mimetype: 'image/jpeg', size: buf.length, buffer: buf },
+      PROFILE_CONTEXT,
+    );
+    const url = service.createSignedUrl(result.id, PROFILE_CONTEXT.ownerId, -1);
+    await expect(
+      service.resolveSignedUrl(url, PROFILE_CONTEXT.ownerId),
+    ).rejects.toThrow(ForbiddenException);
   });
 
-  // ── 9. Signed URL owner mismatch ─────────────────────────────────────────
+  // ── 9. Signed URL owner mismatch ──────────────────────────────────────────
 
-  it('rejects signed URL access from a different owner', () => {
-    const signed = service.issueSignedUrl('file-2', 'owner-A', 'http://localhost');
-    const token = signed.url.split('/').pop()!;
-
-    expect(() => service.resolveSignedUrl(token, 'owner-B')).toThrow(ForbiddenException);
+  it('rejects signed URL accessed by a different owner', async () => {
+    const buf = makeJpeg(200);
+    const result = await service.ingest(
+      { originalname: 'photo.jpg', mimetype: 'image/jpeg', size: buf.length, buffer: buf },
+      PROFILE_CONTEXT,
+    );
+    const url = service.createSignedUrl(result.id, PROFILE_CONTEXT.ownerId, 900);
+    await expect(
+      service.resolveSignedUrl(url, 'someone-else'),
+    ).rejects.toThrow(ForbiddenException);
   });
 
   // ── 10. Signed URL not found ──────────────────────────────────────────────
 
-  it('throws NotFoundException for unknown signed URL token', () => {
-    expect(() => service.resolveSignedUrl('nonexistent-token', 'user-1')).toThrow(
-      NotFoundException,
-    );
+  it('rejects signed URL for unknown media id', async () => {
+    const url = service.createSignedUrl('does-not-exist', PROFILE_CONTEXT.ownerId, 900);
+    await expect(
+      service.resolveSignedUrl(url, PROFILE_CONTEXT.ownerId),
+    ).rejects.toThrow(NotFoundException);
   });
 
-  // ── 11. Valid signed URL resolves correctly ───────────────────────────────
+  // ── 11. Scanner unavailable → fail closed ─────────────────────────────────
 
-  it('resolves a valid signed URL to the correct fileId', () => {
-    const signed = service.issueSignedUrl('file-3', 'user-1', 'http://localhost');
-    const token = signed.url.split('/').pop()!;
-    const fileId = service.resolveSignedUrl(token, 'user-1');
-    expect(fileId).toBe('file-3');
+  it('quarantines uploads when the malware scanner is unavailable', async () => {
+    // Point the scanner at a port nothing is listening on so the TCP
+    // connection fails and the service must fail closed.
+    mockConfigService.get.mockImplementation((key: string, def?: unknown) => {
+      const cfg: Record<string, unknown> = {
+        MEDIA_STORAGE_PATH: '/tmp/test-media',
+        MEDIA_SIGNED_URL_TTL_SECONDS: 900,
+        CLAMAV_HOST: '127.0.0.1',
+        CLAMAV_PORT: 1, // unreachable
+        CLAMAV_TIMEOUT_MS: 200,
+      };
+      return cfg[key] ?? def;
+    });
+
+    const buf = makeJpeg(200);
+    const result = await service.ingest(
+      { originalname: 'photo.jpg', mimetype: 'image/jpeg', size: buf.length, buffer: buf },
+      PROFILE_CONTEXT,
+    );
+    expect(result.state).toBe('quarantined');
+    expect(result.scan?.clean).toBe(false);
+    expect(result.scan?.scanner).toBe('clamav');
+  });
+
+  // ── 12. Scanner name/version recorded ─────────────────────────────────────
+
+  it('records the scanner name and version in scan metadata', async () => {
+    const buf = makeJpeg(200);
+    const result = await service.ingest(
+      { originalname: 'photo.jpg', mimetype: 'image/jpeg', size: buf.length, buffer: buf },
+      PROFILE_CONTEXT,
+    );
+    expect(result.scan).toBeDefined();
+    expect(result.scan?.scanner).toBe('clamav');
+    expect(typeof result.scan?.version).toBe('string');
   });
 });

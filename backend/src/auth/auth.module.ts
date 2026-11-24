@@ -52,7 +52,7 @@ import type { JwtModuleOptions } from '@nestjs/jwt';
         const expiresIn = (configService.get<string>('JWT_EXPIRES_IN') ??
           '1h') as NonNullable<JwtModuleOptions['signOptions']>['expiresIn'];
         return {
-          secret: configService.get<string>('JWT_SECRET') ?? 'default-secret',
+          secret: configService.get<string>('JWT_SECRET'),
           signOptions: {
             expiresIn,
           },

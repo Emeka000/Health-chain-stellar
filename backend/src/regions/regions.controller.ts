@@ -1,11 +1,13 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Param,
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
@@ -47,24 +49,42 @@ export class RegionsController {
   @ApiOperation({ summary: 'Get :id' })
   @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id')
+  @RegionScoped()
   @RequirePermissions(Permission.VIEW_REGIONS)
-  findOne(@Param('id') id: string) {
+  async findOne(@Param('id') id: string, @Req() req: any) {
+    await this.assertRegionInScope(id, req);
     return this.regionsService.findOne(id);
   }
 
   @ApiOperation({ summary: 'Patch :id' })
   @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id')
+  @RegionScoped()
   @RequirePermissions(Permission.MANAGE_REGIONS)
-  update(@Param('id') id: string, @Body() dto: Partial<CreateRegionDto>) {
+  async update(@Param('id') id: string, @Body() dto: Partial<CreateRegionDto>, @Req() req: any) {
+    await this.assertRegionInScope(id, req);
     return this.regionsService.update(id, dto);
   }
 
   @ApiOperation({ summary: 'Patch :id deactivate' })
   @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id/deactivate')
+  @RegionScoped()
   @RequirePermissions(Permission.MANAGE_REGIONS)
-  deactivate(@Param('id') id: string) {
+  async deactivate(@Param('id') id: string, @Req() req: any) {
+    await this.assertRegionInScope(id, req);
     return this.regionsService.deactivate(id);
+  }
+
+  private async assertRegionInScope(id: string, req: any): Promise<void> {
+    const scope = req?.regionScope;
+    if (!scope) {
+      return;
+    }
+    const region = await this.regionsService.findOne(id);
+    const regionCode = (region as any)?.code ?? (region as any)?.regionCode;
+    if (regionCode !== scope) {
+      throw new ForbiddenException('Region is outside your scope');
+    }
   }
 }

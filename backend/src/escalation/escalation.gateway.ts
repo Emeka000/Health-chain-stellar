@@ -10,8 +10,8 @@ import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 
-import { EscalationTriggeredEvent } from '../../events/escalation-triggered.event';
-import { EscalationAcknowledgedEvent } from '../../events/escalation-acknowledged.event';
+import { EscalationTriggeredEvent } from '../events/escalation-triggered.event';
+import { EscalationAcknowledgedEvent } from '../events/escalation-acknowledged.event';
 
 @WebSocketGateway({
   namespace: '/escalations',

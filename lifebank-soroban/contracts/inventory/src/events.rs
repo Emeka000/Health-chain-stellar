@@ -15,6 +15,14 @@ pub struct ReservationReleased {
     pub reservation_id: u64,
 }
 
+/// Emitted when a reservation's units are marked `Compromised` (for example
+/// after a failed delivery) instead of being returned to `Available`.
+#[contractevent(topics = ["reservation_compromised"], data_format = "vec")]
+pub struct ReservationCompromised {
+    pub reservation_id: u64,
+    pub units_compromised: u32,
+}
+
 #[contractevent(topics = ["role_granted"], data_format = "vec")]
 pub struct RoleGranted {
     pub grantee: Address,
@@ -96,6 +104,14 @@ pub fn emit_blood_reserved(env: &Env, reservation_id: u64, requester: &Address, 
 
 pub fn emit_reservation_released(env: &Env, reservation_id: u64) {
     ReservationReleased { reservation_id }.publish(env);
+}
+
+pub fn emit_reservation_compromised(env: &Env, reservation_id: u64, units_compromised: u32) {
+    ReservationCompromised {
+        reservation_id,
+        units_compromised,
+    }
+    .publish(env);
 }
 
 pub fn emit_role_granted(env: &Env, grantee: &Address, role: Role, granted_by: &Address) {

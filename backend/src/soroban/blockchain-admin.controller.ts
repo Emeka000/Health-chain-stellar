@@ -9,6 +9,9 @@ import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { SorobanService } from './soroban.service';
 import { SorobanIndexerService } from './soroban-indexer.service';
 
+const DEFAULT_DISCREPANCIES_LIMIT = 50;
+const MAX_DISCREPANCIES_LIMIT = 100;
+
 @ApiTags('Blockchain Admin')
 @Controller('blockchain')
 @ApiBearerAuth()
@@ -39,8 +42,24 @@ export class BlockchainAdminController {
   @RequirePermissions(Permission.ADMIN_ACCESS)
   @ApiOperation({ summary: 'List unresolved on-chain/off-chain payment discrepancies (ADMIN only)' })
   @ApiResponse({ status: 200, description: 'Discrepancies retrieved successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid limit parameter' })
   async getDiscrepancies(@Query('limit') limit?: string) {
-    const data = await this.indexerService.getDiscrepancies(limit ? parseInt(limit, 10) : 50);
+    const data = await this.indexerService.getDiscrepancies(
+      this.parseLimit(limit),
+    );
     return { data, total: data.length };
+  }
+
+  private parseLimit(limit?: string): number {
+    if (limit === undefined || limit === null || limit === '') {
+      return DEFAULT_DISCREPANCIES_LIMIT;
+    }
+
+    const parsed = Number(limit);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      throw new BadRequestException('limit must be a positive integer');
+    }
+
+    return Math.min(parsed, MAX_DISCREPANCIES_LIMIT);
   }
 }
