@@ -114,7 +114,7 @@ Admin-only. Transfers the locked amount back to the payer and marks the payment 
 pub fn update_status(env: Env, payment_id: u64, status: PaymentStatus) -> Result<(), Error>
 ```
 
-Transitions a payment to any status. Called by the coordinator during `settle_payment` (→ `Released`) and `rollback` (→ `Refunded`). Updates status indexes and aggregate stats. Emits `(payment, status)` event with `(payment_id, old_status, new_status)`.
+Bookkeeping payments only (`token == None`), and only `Pending → Released | Refunded | Cancelled`. Escrow payments return `EscrowSettlementRequired`; moving into `Disputed` returns `DisputeRecordRequired` (use `record_dispute`); leaving `Disputed` returns `DisputeResolutionRequired`; any other transition returns `InvalidStatusTransition`. `→ Released` fails with `PayeeNotFulfiller` when the request's `fulfilled_by` is set to another address. Called by the coordinator during `settle_payment` (→ `Released`) and `rollback` (→ `Refunded`). Updates status indexes and aggregate stats. Emits `(payment, status)` event with `(payment_id, old_status, new_status)`.
 
 ---
 
@@ -283,6 +283,10 @@ pub struct PaymentStats {
     pub count_locked: u32,
     pub count_released: u32,
     pub count_refunded: u32,
+    /// Escrowed funds under an open dispute. total_locked + total_disputed
+    /// equals the summed escrow reserve. Bookkeeping disputes are not counted.
+    pub total_disputed: i128,
+    pub count_disputed: u32,
 }
 ```
 
