@@ -106,8 +106,8 @@ For contract deployment, full environment variable reference, and contributor gu
 
 ## Handsoff notes
 
-<!-- handsoff-issue-1834 -->
-- #1834: [lifebank/reputation] appeal_penalty is admin-only, so a penalized entity can't appeal
+<!-- handsoff-issue-1829 -->
+- #1829: [lifebank/identity] get_role ignores role expiry, and has_role (a read) writes storage
 
-<!-- handsoff-issue-1835 -->
-- #1835: [lifebank/reputation] Ratings accept arbitrarily old timestamps, and the extra `init` entrypoint panics instead of returning an error
+<!-- handsoff-issue-1842 -->
+- #1842: [lifebank/coordinator] Workflow expiry is a fixed 6 hours for every request, and isn't configurable
