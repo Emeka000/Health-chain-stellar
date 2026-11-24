@@ -1,11 +1,49 @@
 import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  IsInt,
+  IsNotEmpty,
+  IsObject,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
 import {
   PolicyRolloutService,
   StartRolloutDto,
 } from './policy-rollout.service';
+
+export class RollbackRolloutDto {
+  @IsString()
+  @IsNotEmpty()
+  reason: string;
+}
+
+export class RecordRolloutMetricDto {
+  @IsInt()
+  @Min(0)
+  totalRequests: number;
+
+  @IsInt()
+  @Min(0)
+  errorCount: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  avgLatencyMs?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  p99LatencyMs?: number;
+
+  @IsOptional()
+  @IsObject()
+  extra?: Record<string, any>;
+}
 
 @ApiTags('Policy Center')
 @ApiBearerAuth()
@@ -59,7 +97,7 @@ export class PolicyRolloutController {
   @Post(':id/rollback')
   rollback(
     @Param('id') id: string,
-    @Body() body: { reason: string },
+    @Body() body: RollbackRolloutDto,
     @Req() req: { user?: { id?: string } },
   ) {
     return this.rolloutService.emergencyRollback(
@@ -75,14 +113,7 @@ export class PolicyRolloutController {
   @Post(':id/metrics')
   recordMetric(
     @Param('id') id: string,
-    @Body()
-    body: {
-      totalRequests: number;
-      errorCount: number;
-      avgLatencyMs?: number;
-      p99LatencyMs?: number;
-      extra?: Record<string, any>;
-    },
+    @Body() body: RecordRolloutMetricDto,
   ) {
     return this.rolloutService.recordMetric(
       id,

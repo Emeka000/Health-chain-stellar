@@ -7,11 +7,16 @@ import {
   Param,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RequirePermissions } from '../../auth/decorators/require-permissions.decorator';
 import { Permission } from '../../auth/enums/permission.enum';
 import { OrderSplittingService } from '../services/order-splitting.service';
-import { CreateSplitOrderDto, UpdateLegStatusDto } from '../dto/split-order.dto';
+import {
+  CreateSplitOrderDto,
+  FailLegDto,
+  UpdateLegStatusDto,
+} from '../dto/split-order.dto';
 import { BloodRequestEntity } from '../entities/blood-request.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -82,7 +87,7 @@ export class OrderSplittingController {
   @Post('legs/:legId/fail')
   async markLegAsFailed(
     @Param('legId') legId: string,
-    @Body() body: { reason: string },
+    @Body() body: FailLegDto,
   ) {
     await this.orderSplittingService.handleLegFailure(legId, body.reason);
     return { success: true, message: 'Leg marked as failed' };

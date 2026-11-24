@@ -3,6 +3,7 @@ import {
   Logger,
   BadRequestException,
   ForbiddenException,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -29,6 +30,20 @@ export class WorkflowOrchestrationService {
 
   private get coordinatorContract(): string {
     return this.config.get<string>('COORDINATOR_CONTRACT_ID', '');
+  }
+
+  /**
+   * The coordinator contract requires its configured admin to sign every
+   * state-changing call. End users never sign these transactions directly.
+   */
+  private get coordinatorAdminAddress(): string {
+    const admin = this.config.get<string>('COORDINATOR_ADMIN_ADDRESS', '');
+    if (!admin) {
+      throw new InternalServerErrorException(
+        'COORDINATOR_ADMIN_ADDRESS is not configured',
+      );
+    }
+    return admin;
   }
 
   constructor(
@@ -63,15 +78,27 @@ export class WorkflowOrchestrationService {
     // Verify the caller is a registered hospital or blood bank before the on-chain write
     await this.assertCallerIsRegisteredActor(params.callerAddress);
 
+    const onChainRequestId = this.requireOnChainId(
+      order.onChainRequestId,
+      'onChainRequestId',
+      params.requestId,
+    );
+    const onChainPaymentId = this.requireOnChainId(
+      order.onChainPaymentId,
+      'onChainPaymentId',
+      params.requestId,
+    );
+    const onChainUnitIds = this.toOnChainUnitIds(params.unitIds);
+
     const jobId = await this.soroban.submitTransaction({
       contractMethod: 'allocate_units',
       args: [
-        params.requestId,
-        params.unitIds,
-        params.paymentId,
-        params.callerAddress,
+        onChainRequestId,
+        onChainUnitIds,
+        onChainPaymentId,
+        this.coordinatorAdminAddress,
       ],
-      idempotencyKey: `allocate:${params.requestId}`,
+      idempotencyKey: this.attemptKey('allocate', params.requestId, order),
       metadata: { contractId: this.coordinatorContract },
     });
 
@@ -106,10 +133,16 @@ export class WorkflowOrchestrationService {
     // Verify the caller is a registered actor before the on-chain write
     await this.assertCallerIsRegisteredActor(params.callerAddress);
 
+    const onChainRequestId = this.requireOnChainId(
+      order.onChainRequestId,
+      'onChainRequestId',
+      params.requestId,
+    );
+
     const jobId = await this.soroban.submitTransaction({
       contractMethod: 'confirm_delivery',
-      args: [params.requestId, params.callerAddress],
-      idempotencyKey: `delivery:${params.requestId}`,
+      args: [onChainRequestId, this.coordinatorAdminAddress],
+      idempotencyKey: this.attemptKey('delivery', params.requestId, order),
       metadata: { contractId: this.coordinatorContract },
     });
 
@@ -142,10 +175,16 @@ export class WorkflowOrchestrationService {
     // Verify the caller is a registered actor before the financial settlement write
     await this.assertCallerIsRegisteredActor(params.callerAddress);
 
+    const onChainRequestId = this.requireOnChainId(
+      order.onChainRequestId,
+      'onChainRequestId',
+      params.requestId,
+    );
+
     const jobId = await this.soroban.submitTransaction({
       contractMethod: 'settle_payment',
-      args: [params.requestId, params.callerAddress],
-      idempotencyKey: `settle:${params.requestId}`,
+      args: [onChainRequestId, this.coordinatorAdminAddress],
+      idempotencyKey: this.attemptKey('settle', params.requestId, order),
       metadata: { contractId: this.coordinatorContract },
     });
 
@@ -177,10 +216,16 @@ export class WorkflowOrchestrationService {
       );
     }
 
+    const onChainRequestId = this.requireOnChainId(
+      order.onChainRequestId,
+      'onChainRequestId',
+      params.requestId,
+    );
+
     const jobId = await this.soroban.submitTransaction({
       contractMethod: 'rollback',
-      args: [params.requestId],
-      idempotencyKey: `rollback:${params.requestId}`,
+      args: [onChainRequestId],
+      idempotencyKey: this.attemptKey('rollback', params.requestId, order),
       metadata: { contractId: this.coordinatorContract },
     });
 
@@ -188,6 +233,62 @@ export class WorkflowOrchestrationService {
       `Rollback queued for request ${params.requestId}, job ${jobId}`,
     );
     return { jobId };
+  }
+
+  /**
+   * Returns the persisted on-chain (u64) identifier for an order, failing
+   * loudly if the off-chain record was never mapped to an on-chain ID.
+   */
+  private requireOnChainId(
+    value: string | number | null | undefined,
+    field: string,
+    requestId: string,
+  ): number {
+    if (value === null || value === undefined || value === '') {
+      throw new BadRequestException(
+        `Order ${requestId} has no ${field}; it must be created on-chain first`,
+      );
+    }
+    const parsed = typeof value === 'number' ? value : Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < 0) {
+      throw new BadRequestException(
+        `Order ${requestId} has an invalid ${field}: ${String(value)}`,
+      );
+    }
+    return parsed;
+  }
+
+  /**
+   * Converts the off-chain unit identifiers into the numeric (u64) IDs the
+   * coordinator contract expects.
+   */
+  private toOnChainUnitIds(unitIds: string[]): number[] {
+    if (!Array.isArray(unitIds) || unitIds.length === 0) {
+      throw new BadRequestException('At least one unit ID is required');
+    }
+    return unitIds.map((unitId) => {
+      const parsed = Number(unitId);
+      if (!Number.isSafeInteger(parsed) || parsed < 0) {
+        throw new BadRequestException(
+          `Unit ID '${unitId}' is not a valid on-chain unit ID`,
+        );
+      }
+      return parsed;
+    });
+  }
+
+  /**
+   * Builds an idempotency key scoped to the current allocation attempt so that
+   * a rollback (which bumps the attempt) releases the previous key and the
+   * request can be re-allocated.
+   */
+  private attemptKey(
+    step: WorkflowStep,
+    requestId: string,
+    order: OrderEntity,
+  ): string {
+    const attempt = order.allocationAttempt ?? 0;
+    return `${step}:${requestId}:${attempt}`;
   }
 
   /**

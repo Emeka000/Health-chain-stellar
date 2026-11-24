@@ -20,6 +20,11 @@ pub struct PaymentsContractSet {
     pub payments_contract: Address,
 }
 
+#[contractevent(topics = ["coordinator_contract_set"], data_format = "single-value")]
+pub struct CoordinatorContractSet {
+    pub coordinator_contract: Address,
+}
+
 #[contractevent(topics = ["request_cancelled"], data_format = "vec")]
 pub struct RequestCancelled {
     pub request_id: u64,
@@ -132,6 +137,13 @@ pub fn emit_payments_contract_set(env: &Env, payments_contract: &Address) {
     .publish(env);
 }
 
+pub fn emit_coordinator_contract_set(env: &Env, coordinator_contract: &Address) {
+    CoordinatorContractSet {
+        coordinator_contract: coordinator_contract.clone(),
+    }
+    .publish(env);
+}
+
 pub fn emit_request_cancelled(env: &Env, request_id: u64, actor: &Address, timestamp: u64) {
     RequestCancelled {
         request_id,
@@ -152,6 +164,26 @@ pub fn emit_request_expired(
         request_id,
         required_by_timestamp,
         released_reservation,
+        timestamp,
+    }
+    .publish(env);
+}
+
+pub fn emit_delivery_failed(
+    env: &Env,
+    request_id: u64,
+    actor: &Address,
+    rider: Option<Address>,
+    new_status: RequestStatus,
+    reservation_compromised: bool,
+    timestamp: u64,
+) {
+    DeliveryFailed {
+        request_id,
+        actor: actor.clone(),
+        rider,
+        new_status,
+        reservation_compromised,
         timestamp,
     }
     .publish(env);

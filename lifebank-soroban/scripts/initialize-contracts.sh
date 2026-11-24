@@ -77,6 +77,24 @@ init_contract() {
     echo ""
 }
 
+# Helper function to invoke an arbitrary contract function
+invoke_contract() {
+    local contract_name=$1
+    local contract_id=$2
+    local function_name=$3
+    shift 3
+    local extra_args=("$@")
+
+    echo "  → $contract_name.$function_name"
+    stellar contract invoke \
+        --id "$contract_id" \
+        --source "$IDENTITY" \
+        --network "$NETWORK" \
+        $RPC_FLAG \
+        -- "$function_name" \
+        "${extra_args[@]}"
+}
+
 # Initialize contracts in dependency order
 
 echo "📦 Phase 1: Contracts with no dependencies..."
@@ -117,11 +135,12 @@ init_contract "matching" "$MATCHING_ID" \
     --inventory-contract "$INVENTORY_ID" \
     --requests-contract "$REQUESTS_ID"
 
-# analytics (needs inventory, requests, payments)
+# analytics (needs inventory, requests, payments, reputation)
 init_contract "analytics" "$ANALYTICS_ID" \
     --inventory-contract "$INVENTORY_ID" \
     --requests-contract "$REQUESTS_ID" \
-    --payments-contract "$PAYMENTS_ID"
+    --payments-contract "$PAYMENTS_ID" \
+    --reputation-contract "$REPUTATION_ID"
 
 echo "📦 Phase 4: Coordinator (depends on all domain contracts)..."
 echo ""
@@ -131,6 +150,61 @@ init_contract "coordinator" "$COORDINATOR_ID" \
     --request-contract "$REQUESTS_ID" \
     --inventory-contract "$INVENTORY_ID" \
     --payment-contract "$PAYMENTS_ID"
+
+echo "📦 Phase 5: Wiring cross-contract references..."
+echo ""
+
+# inventory -> requests
+invoke_contract "inventory" "$INVENTORY_ID" "set_requests_contract" \
+    --requests-contract "$REQUESTS_ID"
+
+# requests -> payments
+invoke_contract "requests" "$REQUESTS_ID" "set_payments_contract" \
+    --payments-contract "$PAYMENTS_ID"
+
+# identity -> requests
+invoke_contract "identity" "$IDENTITY_ID" "set_requests_contract" \
+    --requests-contract "$REQUESTS_ID"
+
+# temperature -> coordinator
+invoke_contract "temperature" "$TEMPERATURE_ID" "set_coordinator" \
+    --coordinator "$COORDINATOR_ID"
+
+# coordinator -> temperature oracle
+invoke_contract "coordinator" "$COORDINATOR_ID" "set_temperature_oracle" \
+    --temperature-oracle "$TEMPERATURE_ID"
+
+# payments: allow the native token used for settlement
+invoke_contract "payments" "$PAYMENTS_ID" "add_allowed_token" \
+    --token "$ADMIN_ADDRESS"
+
+echo ""
+echo "🔍 Verifying wiring..."
+echo ""
+
+REQUESTS_WIRED=$(stellar contract invoke \
+    --id "$INVENTORY_ID" \
+    --source "$IDENTITY" \
+    --network "$NETWORK" \
+    $RPC_FLAG \
+    -- get_requests_contract 2>/dev/null || echo "")
+if [[ "$REQUESTS_WIRED" != *"$REQUESTS_ID"* ]]; then
+    echo "❌ Verification failed: inventory.get_requests_contract returned '$REQUESTS_WIRED'"
+    exit 1
+fi
+echo "  ✅ inventory.get_requests_contract = $REQUESTS_ID"
+
+PAYMENTS_WIRED=$(stellar contract invoke \
+    --id "$REQUESTS_ID" \
+    --source "$IDENTITY" \
+    --network "$NETWORK" \
+    $RPC_FLAG \
+    -- get_payments_contract 2>/dev/null || echo "")
+if [[ "$PAYMENTS_WIRED" != *"$PAYMENTS_ID"* ]]; then
+    echo "❌ Verification failed: requests.get_payments_contract returned '$PAYMENTS_WIRED'"
+    exit 1
+fi
+echo "  ✅ requests.get_payments_contract = $PAYMENTS_ID"
 
 echo ""
 echo "✅ Contract initialization complete!"

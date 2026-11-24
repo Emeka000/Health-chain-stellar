@@ -330,22 +330,33 @@ export class EscrowGovernanceService {
     proposerId: string,
     actorRole: string,
   ): Promise<EscrowProposalEntity> {
-    // Prevent duplicate pending proposals for the same payment
+    // Prevent duplicate pending proposals for the same payment.
+    // A PENDING proposal whose expiresAt has already passed is treated as
+    // expired (the scheduler may not have run yet) and does not block.
     const existing = await this.proposalRepo.findOne({
       where: {
         paymentId: dto.paymentId,
         status: EscrowProposalStatus.PENDING,
       },
     });
-    if (existing) {
+    if (existing && existing.expiresAt > new Date()) {
       throw new ConflictException(
         `A pending escrow proposal already exists for payment ${dto.paymentId}`,
       );
     }
 
-    // Resolve threshold policy
+    // Bind the proposal amount to the payment's stored amount so the
+    // threshold tier cannot be chosen by the caller (#1855).
+    const paymentAmount = await this.resolvePaymentAmount(dto.paymentId);
+    if (dto.amount !== paymentAmount) {
+      throw new BadRequestException(
+        `Proposal amount ${dto.amount} does not match payment ${dto.paymentId} amount ${paymentAmount}`,
+      );
+    }
+
+    // Resolve threshold policy from the payment's stored amount
     const { requiredApprovals, riskProfile, expiryHours } =
-      await this.resolvePolicy(dto.amount);
+      await this.resolvePolicy(paymentAmount);
 
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + expiryHours);
@@ -353,7 +364,7 @@ export class EscrowGovernanceService {
     const proposal = this.proposalRepo.create({
       paymentId: dto.paymentId,
       onChainEscrowId: dto.onChainEscrowId ?? null,
-      amount: dto.amount,
+      amount: paymentAmount,
       riskProfile: dto.riskProfile ?? riskProfile,
       requiredApprovals,
       currentApprovals: 0,
@@ -374,7 +385,7 @@ export class EscrowGovernanceService {
       resourceId: saved.id,
       nextValue: {
         paymentId: dto.paymentId,
-        amount: dto.amount,
+        amount: paymentAmount,
         riskProfile: saved.riskProfile,
         requiredApprovals,
         expiresAt,
@@ -383,7 +394,7 @@ export class EscrowGovernanceService {
 
     this.logger.log(
       `Escrow proposal created: ${saved.id} paymentId=${dto.paymentId} ` +
-        `amount=${dto.amount} requiredApprovals=${requiredApprovals}`,
+        `amount=${paymentAmount} requiredApprovals=${requiredApprovals}`,
     );
 
     return saved;
@@ -411,7 +422,7 @@ export class EscrowGovernanceService {
       );
     }
 
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       // Pessimistic write lock prevents concurrent lost-update on currentApprovals (#1165)
       const proposal = await manager.findOne(EscrowProposalEntity, {
         where: { id: proposalId },
@@ -427,6 +438,9 @@ export class EscrowGovernanceService {
         );
       }
       if (new Date() > proposal.expiresAt) {
+        // Persist EXPIRED inside the transaction and let it commit; the
+        // ConflictException is thrown after the transaction returns so the
+        // status change is not rolled back (#1854).
         proposal.status = EscrowProposalStatus.EXPIRED;
         await manager.save(EscrowProposalEntity, proposal);
         await this.auditLog.insert({
@@ -440,7 +454,7 @@ export class EscrowGovernanceService {
             expiredAt: new Date(),
           },
         });
-        throw new ConflictException('Proposal has expired');
+        return { expired: true as const, proposal };
       }
 
       const existingVote = await manager.findOne(EscrowVoteEntity, {
@@ -502,7 +516,7 @@ export class EscrowGovernanceService {
         this.logger.warn(
           `Escrow proposal ${proposalId} REJECTED by ${signerId}`,
         );
-        return saved;
+        return { expired: false as const, proposal: saved };
       }
 
       // APPROVE — increment on the locked row; no concurrent lost-update risk
@@ -532,7 +546,7 @@ export class EscrowGovernanceService {
         this.logger.log(
           `Escrow proposal ${proposalId} APPROVED — threshold reached (${saved.currentApprovals}/${saved.requiredApprovals})`,
         );
-        return saved;
+        return { expired: false as const, proposal: saved };
       }
 
       const saved = await manager.save(EscrowProposalEntity, proposal);
@@ -540,8 +554,14 @@ export class EscrowGovernanceService {
         `Vote recorded on proposal ${proposalId}: ${dto.decision} by ${signerId} ` +
           `(${saved.currentApprovals}/${saved.requiredApprovals})`,
       );
-      return saved;
+      return { expired: false as const, proposal: saved };
     });
+
+    if (result.expired) {
+      throw new ConflictException('Proposal has expired');
+    }
+
+    return result.proposal;
   }
 
   async cancelProposal(
@@ -732,6 +752,29 @@ export class EscrowGovernanceService {
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────
+
+  /**
+   * Resolve the stored amount for a payment. The amount is taken from the
+   * payment/escrow record rather than from caller-supplied input so the
+   * approval threshold cannot be manipulated (#1855).
+   */
+  private async resolvePaymentAmount(paymentId: string): Promise<string> {
+    const rows: Array<{ amount?: unknown }> = await this.dataSource.query(
+      `SELECT amount FROM payments WHERE id = $1 LIMIT 1`,
+      [paymentId],
+    );
+    const raw = rows?.[0]?.amount;
+    if (raw === undefined || raw === null) {
+      throw new NotFoundException(`Payment ${paymentId} not found`);
+    }
+    const amount = String(raw);
+    if (!/^[0-9]+$/.test(amount)) {
+      throw new BadRequestException(
+        `Payment ${paymentId} has an invalid stored amount`,
+      );
+    }
+    return amount;
+  }
 
   private async expireProposal(
     proposal: EscrowProposalEntity,

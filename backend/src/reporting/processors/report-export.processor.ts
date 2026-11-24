@@ -4,7 +4,7 @@ import { Job } from 'bullmq';
 import { Repository } from 'typeorm';
 import { Logger } from '@nestjs/common';
 
-import { BloodRequestEntity } from '../../blood-requests/entities/blood-request.entity';
+import { BloodRequest } from '../../blood-requests/entities/blood-request.entity';
 import { RequestQueryService } from '../../blood-requests/services/request-query.service';
 import { GeneratedReportEntity } from '../entities/generated-report.entity';
 import { ReportStatus } from '../enums/report-status.enum';
@@ -18,8 +18,8 @@ export class ReportExportProcessor extends WorkerHost {
   constructor(
     @InjectRepository(GeneratedReportEntity)
     private readonly reportRepository: Repository<GeneratedReportEntity>,
-    @InjectRepository(BloodRequestEntity)
-    private readonly requestRepository: Repository<BloodRequestEntity>,
+    @InjectRepository(BloodRequest)
+    private readonly requestRepository: Repository<BloodRequest>,
     private readonly requestQueryService: RequestQueryService,
     private readonly generatorService: ReportGeneratorService,
     private readonly storageService: StorageService,
