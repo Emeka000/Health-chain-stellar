@@ -663,7 +663,7 @@ mod request_client {
         pub fulfilled_quantity_ml: u32,
         pub reservation_id: Option<u64>,
         pub fulfilled_by: Option<Address>,
-        pub history: Vec<RequestHistoryEntry>,
+        pub history_len: u32,
     }
 
     #[contracttype]
@@ -715,6 +715,11 @@ fn validate_request_payable(
     match req.status {
         ReqStatus::Pending | ReqStatus::Approved => {}
         _ => return Err(Error::RequestNotPayable),
+    }
+    // A request past its deadline is about to be expired (or already could be)
+    // by the requests contract's `expire_request`; don't take new funds for it.
+    if env.ledger().timestamp() > req.required_by_timestamp {
+        return Err(Error::RequestNotPayable);
     }
     // Only the hospital that raised the request may fund it.
     if req.hospital_id != *payer {

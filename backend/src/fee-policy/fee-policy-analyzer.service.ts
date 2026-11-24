@@ -52,7 +52,7 @@ export class FeePolicyAnalyzerService {
    */
   async analyzeConflicts(): Promise<ConflictAnalysisResult> {
     const activePolicies = await this.repository.find({
-      where: { effectiveTo: null }, // Active policies (no end date)
+      where: { effectiveTo: IsNull() }, // Active policies (no end date)
       order: { priority: 'DESC', effectiveFrom: 'DESC' },
     });
 
@@ -102,7 +102,7 @@ export class FeePolicyAnalyzerService {
    */
   async validatePolicyForActivation(policy: FeePolicyEntity): Promise<PolicyConflict[]> {
     const activePolicies = await this.repository.find({
-      where: { effectiveTo: null },
+      where: { effectiveTo: IsNull() },
     });
 
     const conflicts: PolicyConflict[] = [];
@@ -155,7 +155,25 @@ export class FeePolicyAnalyzerService {
     };
   }
 
+  /**
+   * Determines whether two distance tiers overlap. A tier is treated as
+   * open-ended when its max distance is null/undefined (unbounded upper bound).
+   * Two tiers overlap when each tier's lower bound is below the other's upper
+   * bound (or the other tier is open-ended).
+   */
+  private hasDistanceOverlap(
+    min1: number | null | undefined,
+    max1: number | null | undefined,
+    min2: number | null | undefined,
+    max2: number | null | undefined,
+  ): boolean {
+    const lower1 = min1 ?? 0;
+    const lower2 = min2 ?? 0;
+    const upper1 = max1 ?? Infinity;
+    const upper2 = max2 ?? Infinity;
 
+    return lower1 < upper2 && lower2 < upper1;
+  }
 
   private async findApplicablePolicy(dto: FeePreviewDto): Promise<FeePolicyEntity | null> {
     const now = new Date();
@@ -194,12 +212,12 @@ export class FeePolicyAnalyzerService {
       {
         step: 'Delivery Fee',
         value: result.deliveryFee,
-        formula: `${result.baseAmount} × ${result.deliveryFeeRate}%`,
+        formula: `${result.baseAmount} × ${result.deliveryFee}%`,
       },
       {
         step: 'Platform Fee',
         value: result.platformFee,
-        formula: `${result.deliveryFee} × ${result.platformFeePct}%`,
+        formula: `${result.deliveryFee} × ${result.platformFee}%`,
       },
       {
         step: 'Performance Fee',

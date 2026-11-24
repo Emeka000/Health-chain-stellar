@@ -723,11 +723,8 @@ mod instance_ttl_tests {
         // requests contracts registered), but it must get past the
         // initialization and pause checks — i.e. not return NotInitialized.
         let result = client.try_match_request(&1u64);
-        match result {
-            Err(Ok(crate::MatchingError::NotInitialized)) => {
-                panic!("instance entries archived: match_request returned NotInitialized")
-            }
-            _ => {}
+        if let Err(Ok(crate::MatchingError::NotInitialized)) = result {
+            panic!("instance entries archived: match_request returned NotInitialized")
         }
     }
 }
@@ -795,7 +792,7 @@ mod match_request_integration_tests {
             fulfilled_quantity_ml: 0,
             reservation_id: None,
             fulfilled_by: None,
-            history: soroban_sdk::Vec::new(env),
+            history_len: 0,
         }
     }
 
@@ -869,11 +866,10 @@ mod match_multiple_requests_integration_tests {
         // an empty input skips the loop entirely and returns Ok(empty).
         let result = client.try_match_multiple_requests(&empty);
         // Empty input: no requests to load, so Ok([]) is expected.
-        match result {
-            Ok(Ok(results)) => assert_eq!(results.len(), 0),
-            // If the contract returns an error for an empty list that is also
-            // acceptable — the important thing is it does not panic.
-            _ => {}
+        // If the contract returns an error for an empty list that is also
+        // acceptable — the important thing is it does not panic.
+        if let Ok(Ok(results)) = result {
+            assert_eq!(results.len(), 0);
         }
     }
 
@@ -898,7 +894,10 @@ mod match_multiple_requests_integration_tests {
         use crate::{
             BloodComponent, BloodRequest, BloodStatus, BloodType, BloodUnit, RequestStatus,
         };
-        use request_contract::{RequestContract, RequestContractClient};
+        use request_contract::{
+            BloodComponent as ReqComponent, BloodType as ReqBloodType, RequestContract,
+            RequestContractClient, Urgency as ReqUrgency,
+        };
 
         let env = Env::default();
         env.mock_all_auths();
@@ -913,35 +912,34 @@ mod match_multiple_requests_integration_tests {
         let now = env.ledger().timestamp();
         let req_a = requests.create_request(
             &hospital,
-            &BloodType::APositive,
-            &BloodComponent::WholeBlood,
+            &ReqBloodType::APositive,
+            &ReqComponent::WholeBlood,
             &450u32,
-            &Urgency::Critical,
+            &ReqUrgency::Critical,
             &(now + 3_600),
         );
         let req_b = requests.create_request(
             &hospital,
-            &BloodType::APositive,
-            &BloodComponent::WholeBlood,
+            &ReqBloodType::APositive,
+            &ReqComponent::WholeBlood,
             &450u32,
-            &Urgency::Scheduled,
+            &ReqUrgency::Scheduled,
             &(now + 7_200),
         );
 
         // Inventory contract holding three compatible units.
         let inventory_id = env.register(inventory_contract::InventoryContract, ());
         let inventory = inventory_contract::InventoryContractClient::new(&env, &inventory_id);
-        inventory.initialize(&Address::generate(&env), &Address::generate(&env));
+        let inventory_admin = Address::generate(&env);
+        inventory.initialize(&inventory_admin);
         let bank = Address::generate(&env);
-        inventory.authorize_bank(&bank);
-        for id in 1..=3u64 {
-            inventory.register_blood_unit(
+        inventory.authorize_bank(&inventory_admin, &bank, &true);
+        for serial in ["SN-1", "SN-2", "SN-3"] {
+            inventory.register_blood(
                 &bank,
-                &id,
-                &BloodType::APositive,
-                &BloodComponent::WholeBlood,
+                &soroban_sdk::String::from_str(&env, serial),
+                &inventory_contract::BloodType::APositive,
                 &450u32,
-                &(now + 86_400 * 30),
                 &None,
             );
         }
@@ -949,11 +947,7 @@ mod match_multiple_requests_integration_tests {
         // Matching contract wired to the two above.
         let matching_id = env.register(MatchingContract, ());
         let client = MatchingContractClient::new(&env, &matching_id);
-        client.initialize(
-            &Address::generate(&env),
-            &inventory_id,
-            &requests_id,
-        );
+        client.initialize(&Address::generate(&env), &inventory_id, &requests_id);
 
         let mut ids: soroban_sdk::Vec<u64> = soroban_sdk::Vec::new(&env);
         ids.push_back(req_a);
@@ -965,7 +959,7 @@ mod match_multiple_requests_integration_tests {
         // Collect every unit ID assigned across the batch and assert uniqueness.
         let mut seen: soroban_sdk::Vec<u64> = soroban_sdk::Vec::new(&env);
         for i in 0..results.len() {
-            let units = results.get(i).unwrap().units;
+            let units = results.get(i).unwrap().matched_units;
             for j in 0..units.len() {
                 let unit_id = units.get(j).unwrap().unit_id;
                 assert!(
@@ -992,7 +986,7 @@ mod match_multiple_requests_integration_tests {
             fulfilled_quantity_ml: 0,
             reservation_id: None,
             fulfilled_by: None,
-            history: soroban_sdk::Vec::new(&env),
+            history_len: 0,
         };
         let _ = BloodUnit {
             id: 1,
@@ -1043,5 +1037,133 @@ mod request_mirror {
         assert_eq!(mirrored.status, RequestStatus::Pending);
         assert_eq!(mirrored.quantity_ml, 450);
         assert_eq!(mirrored.fulfilled_by, None);
+    }
+}
+
+/// #1806: requests past `required_by_timestamp` must not be matched, whether or
+/// not someone has called the requests contract's `expire_request` yet.
+#[cfg(test)]
+mod overdue_requests {
+    use crate::{MatchingContract, MatchingContractClient, MatchingError};
+    use request_contract::{
+        BloodComponent, BloodType, RequestContract, RequestContractClient, RequestStatus, Urgency,
+    };
+    use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env, Vec};
+
+    struct Harness<'a> {
+        env: Env,
+        requests: RequestContractClient<'a>,
+        matching: MatchingContractClient<'a>,
+        hospital: Address,
+    }
+
+    fn setup<'a>() -> Harness<'a> {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(10_000);
+
+        let inventory_id = env.register(inventory_contract::InventoryContract, ());
+        let inventory = inventory_contract::InventoryContractClient::new(&env, &inventory_id);
+        let inventory_admin = Address::generate(&env);
+        inventory.initialize(&inventory_admin);
+        let bank = Address::generate(&env);
+        inventory.authorize_bank(&inventory_admin, &bank, &true);
+        inventory.register_blood(
+            &bank,
+            &soroban_sdk::String::from_str(&env, "SN-OVERDUE-1"),
+            &inventory_contract::BloodType::APositive,
+            &450u32,
+            &None,
+        );
+
+        let requests_id = env.register(RequestContract, ());
+        let requests = RequestContractClient::new(&env, &requests_id);
+        requests.initialize(&Address::generate(&env), &inventory_id);
+        let hospital = Address::generate(&env);
+        requests.authorize_hospital(&hospital);
+
+        let matching_id = env.register(MatchingContract, ());
+        let matching = MatchingContractClient::new(&env, &matching_id);
+        matching.initialize(&Address::generate(&env), &inventory_id, &requests_id);
+
+        Harness {
+            env,
+            requests,
+            matching,
+            hospital,
+        }
+    }
+
+    fn create(h: &Harness<'_>, required_by: u64) -> u64 {
+        h.requests.create_request(
+            &h.hospital,
+            &BloodType::APositive,
+            &BloodComponent::WholeBlood,
+            &450u32,
+            &Urgency::Urgent,
+            &required_by,
+        )
+    }
+
+    #[test]
+    fn match_request_rejects_request_after_expire_request() {
+        let h = setup();
+        let request_id = create(&h, 11_000);
+
+        // Before the deadline the request matches normally.
+        let result = h.matching.match_request(&request_id);
+        assert_eq!(result.total_matched_ml, 450);
+
+        // expire_request fails while the deadline has not passed.
+        h.env.ledger().set_timestamp(11_000);
+        assert_eq!(
+            h.requests.try_expire_request(&request_id),
+            Err(Ok(request_contract::ContractError::RequestNotExpired))
+        );
+
+        // After the deadline: expire_request succeeds and matching rejects it.
+        h.env.ledger().set_timestamp(11_001);
+        h.requests.expire_request(&request_id);
+        assert_eq!(
+            h.requests.get_request(&request_id).status,
+            RequestStatus::Cancelled
+        );
+        assert!(matches!(
+            h.matching.try_match_request(&request_id),
+            Err(Ok(MatchingError::InvalidRequest))
+        ));
+    }
+
+    #[test]
+    fn match_request_rejects_overdue_request_not_yet_expired() {
+        let h = setup();
+        let request_id = create(&h, 11_000);
+
+        h.env.ledger().set_timestamp(11_001);
+        // Still Pending on-chain, but overdue.
+        assert_eq!(
+            h.requests.get_request(&request_id).status,
+            RequestStatus::Pending
+        );
+        assert!(matches!(
+            h.matching.try_match_request(&request_id),
+            Err(Ok(MatchingError::InvalidRequest))
+        ));
+    }
+
+    #[test]
+    fn match_multiple_requests_skips_overdue_requests() {
+        let h = setup();
+        let overdue = create(&h, 11_000);
+        let current = create(&h, 20_000);
+
+        h.env.ledger().set_timestamp(11_001);
+        let mut ids: Vec<u64> = Vec::new(&h.env);
+        ids.push_back(overdue);
+        ids.push_back(current);
+
+        let results = h.matching.match_multiple_requests(&ids);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results.get(0).unwrap().request_id, current);
     }
 }

@@ -8,7 +8,8 @@ use request_contract::{
     BloodComponent, BloodType, RequestContract, RequestContractClient, RequestStatus, Urgency,
 };
 use soroban_sdk::{
-    testutils::Address as _, testutils::Ledger as _, Address, Env, Symbol, TryFromVal,
+    testutils::Address as _, testutils::Events as _, testutils::Ledger as _, Address, Env, Symbol,
+    TryFromVal,
 };
 
 struct Setup<'a> {
@@ -46,7 +47,9 @@ fn setup<'a>(trust_payments: bool) -> Setup<'a> {
         requests.set_payments_contract(&payment_id);
     }
 
-    let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&hospital, &100_000);
     client.add_allowed_token(&admin, &token);
 
@@ -193,17 +196,21 @@ fn test_dispute_clears_confirmations_and_pre_dispute_receipt_cannot_be_reused() 
         assert!(!s.env.storage().persistent().has(&coord_ok_key(pid)));
     });
 
-    // 3. Admin re-opens the payment, 4. then confirms as coordinator.
-    s.client.update_status(&pid, &PaymentStatus::Locked, &s.admin);
-    s.client.release_escrow(&s.admin, &pid);
-
-    // The pre-dispute hospital confirmation must not release funds.
-    assert_eq!(s.client.get_payment(&pid).status, PaymentStatus::Locked);
+    // 3. A disputed escrow can no longer be re-opened through update_status
+    //    (#DisputeResolutionRequired), so the stale confirmation has no path
+    //    to release funds.
+    assert_eq!(
+        s.client
+            .try_update_status(&pid, &PaymentStatus::Locked, &s.admin),
+        Err(Ok(Error::DisputeResolutionRequired))
+    );
+    assert_eq!(s.client.get_payment(&pid).status, PaymentStatus::Disputed);
     let token = soroban_sdk::token::Client::new(&s.env, &s.token);
     assert_eq!(token.balance(&s.payee), 0);
 
-    // A fresh hospital confirmation completes the release.
-    s.client.confirm_receipt(&pid, &s.hospital);
+    // 4. Funds move only through the dispute resolution path.
+    s.client
+        .resolve_dispute(&pid, &DisputeResolution::ReleaseToPayee, &s.admin);
     assert_eq!(s.client.get_payment(&pid).status, PaymentStatus::Released);
     assert_eq!(token.balance(&s.payee), 1_000);
 }

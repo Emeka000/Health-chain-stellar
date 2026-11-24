@@ -123,9 +123,17 @@ export class EscrowGovernanceController {
 
     @Post('proposals')
     @RequirePermissions(Permission.SETTLEMENT_RELEASE)
-    @ApiOperation({ summary: 'Create an escrow release proposal' })
+    @ApiOperation({
+        summary: 'Create an escrow release proposal',
+        description:
+            'The supplied amount must match the stored amount of the payment identified by ' +
+            'paymentId; the approval threshold is resolved from the stored amount. A mismatch ' +
+            'is rejected with 400 Bad Request.',
+    })
     createProposal(@Body() dto: CreateEscrowProposalDto, @Req() req: Request) {
         const user = (req as any).user;
+        // The service validates dto.amount against the payment's stored amount and throws a
+        // BadRequestException on mismatch; that propagates to the client unchanged.
         return this.service.createProposal(dto, user.id, user.role);
     }
 

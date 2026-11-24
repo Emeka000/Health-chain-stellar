@@ -2,6 +2,10 @@
 
 The backend is built with **NestJS (v11)** on **Node.js + TypeScript**, following a modular domain-driven architecture. It exposes a RESTful API consumed by the frontend and integrates directly with Stellar Soroban smart contracts.
 
+## Quick Links
+
+- **Smart Contracts Authorization Model:** See [`lifebank-soroban/docs/authority-model.md`](../lifebank-soroban/docs/authority-model.md) for contract trust relationships and deployment requirements.
+
 ---
 
 ## Tech Stack

@@ -1,6 +1,11 @@
 import { createHash } from 'crypto';
 
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
@@ -43,6 +48,11 @@ export interface ReorgDetection {
   incomingHash: string;
 }
 
+export interface LedgerRange {
+  start: number;
+  end: number;
+}
+
 export interface VerifyResult {
   fromLedger: number;
   toLedger: number;
@@ -50,9 +60,13 @@ export interface VerifyResult {
   eventCount: number;
   ledgersWithEvents: number[];
   gaps: number[];
+  gapRanges: LedgerRange[];
 }
 
 const GLOBAL_PROJECTION = '__global__';
+
+/** Maximum number of ledgers a single verify request may span. */
+export const MAX_VERIFY_LEDGER_SPAN = 10_000;
 
 @Injectable()
 export class ContractEventIndexerService {
@@ -268,6 +282,19 @@ export class ContractEventIndexerService {
    * Returns event count and any ledger gaps (ledgers with no events).
    */
   async verifyIndexed(dto: VerifyIndexedDto): Promise<VerifyResult> {
+    if (dto.toLedger < dto.fromLedger) {
+      throw new BadRequestException(
+        `toLedger (${dto.toLedger}) must be greater than or equal to fromLedger (${dto.fromLedger})`,
+      );
+    }
+
+    const span = dto.toLedger - dto.fromLedger;
+    if (span > MAX_VERIFY_LEDGER_SPAN) {
+      throw new BadRequestException(
+        `Ledger range too large: ${span} ledgers requested, maximum is ${MAX_VERIFY_LEDGER_SPAN}`,
+      );
+    }
+
     const qb = this.eventRepo
       .createQueryBuilder('e')
       .select('DISTINCT e.ledger_sequence', 'ledger')
@@ -290,14 +317,36 @@ export class ContractEventIndexerService {
     if (dto.domain) countQb.andWhere('e.domain = :domain', { domain: dto.domain });
     const eventCount = await countQb.getCount();
 
-    // Identify gaps: ledgers in range that have no events
-    const ledgerSet = new Set(ledgersWithEvents);
-    const gaps: number[] = [];
-    for (let l = dto.fromLedger; l <= dto.toLedger; l++) {
-      if (!ledgerSet.has(l)) gaps.push(l);
+    // Identify gaps as ranges: walk the sorted ledgers and emit the
+    // contiguous missing spans between them, bounded by the requested range.
+    const gapRanges: LedgerRange[] = [];
+    let cursor = dto.fromLedger;
+    for (const ledger of ledgersWithEvents) {
+      if (ledger > cursor) {
+        gapRanges.push({ start: cursor, end: ledger - 1 });
+      }
+      if (ledger >= cursor) cursor = ledger + 1;
+      if (cursor > dto.toLedger) break;
+    }
+    if (cursor <= dto.toLedger) {
+      gapRanges.push({ start: cursor, end: dto.toLedger });
     }
 
-    return { fromLedger: dto.fromLedger, toLedger: dto.toLedger, domain: dto.domain, eventCount, ledgersWithEvents, gaps };
+    // Flatten ranges into individual ledgers (bounded by the span cap).
+    const gaps: number[] = [];
+    for (const range of gapRanges) {
+      for (let l = range.start; l <= range.end; l++) gaps.push(l);
+    }
+
+    return {
+      fromLedger: dto.fromLedger,
+      toLedger: dto.toLedger,
+      domain: dto.domain,
+      eventCount,
+      ledgersWithEvents,
+      gaps,
+      gapRanges,
+    };
   }
 
   // ── Replay ───────────────────────────────────────────────────────────

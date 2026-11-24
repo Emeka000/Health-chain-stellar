@@ -16,10 +16,10 @@ create_request()
       │
       ├──► Rejected  (terminal, from Pending or Approved)
       │
-      └──► Cancelled (terminal, from Pending, Approved, or InProgress)
+      └──► Cancelled (terminal, from Pending or Approved — manual cancel or expire_request)
 ```
 
-Only authorized hospitals can create requests. Only the admin can approve, reject, or fulfill. Either the owning hospital or the admin can cancel.
+Only authorized hospitals can create requests. Only the admin can approve, reject, or fulfill. Either the owning hospital or the admin can cancel. Anyone can expire a Pending or Approved request once its `required_by_timestamp` has passed.
 
 ## Public functions
 
@@ -33,7 +33,9 @@ pub fn initialize(
 ) -> Result<(), ContractError>
 ```
 
-One-time setup. Sets the admin, links the inventory contract, initializes the request counter, and authorizes the admin as the first hospital. Returns `AlreadyInitialized` if called again.
+One-time setup. Sets the admin, links the inventory contract and initializes the request counter. Returns `AlreadyInitialized` if called again.
+
+The admin is **not** granted any tenant role: it is not a hospital, blood bank or rider. Grant one explicitly with `authorize_hospital` etc., which emits the matching event.
 
 ---
 
@@ -97,9 +99,9 @@ pub fn cancel_request(
 ) -> Result<(), ContractError>
 ```
 
-Cancels a request. `caller` must be the owning hospital or the admin. Request must be in `Pending`, `Approved`, or `InProgress` state. `reason` must be non-empty.
+Cancels a request. `caller` must be the owning hospital or the admin. Request must be in `Pending` or `Approved` state. `reason` must be non-empty.
 
-- If a reservation exists on the inventory contract, it is released automatically.
+- If a reservation exists on the inventory contract, it is released automatically. If inventory refuses the release (for example while it is paused), the call fails with `InventoryReleaseFailed` and nothing changes. Retry once inventory accepts releases.
 - Records a history entry.
 - Emits `request_cancelled` event.
 
@@ -120,11 +122,30 @@ pub fn update_request_status(
 Admin-only. Transitions a request to `Approved`, `Rejected`, or `Fulfilled`.
 
 - `Approved`: only from `Pending`.
-- `Rejected`: from `Pending` or `Approved`; requires non-empty reason; releases any reservation.
+- `Rejected`: from `Pending` or `Approved`; requires non-empty reason; releases any reservation (fails with `InventoryReleaseFailed` if inventory refuses).
 - `Fulfilled`: from `Approved` or `InProgress`; sets `fulfilled_quantity_ml = quantity_ml`.
 - `InProgress`, `Pending`, `Cancelled` are not valid targets for this function.
 
 Records a history entry and emits `request_status_updated` event.
+
+---
+
+### expire_request
+
+```rust
+pub fn expire_request(env: Env, request_id: u64) -> Result<(), ContractError>
+```
+
+Permissionless: anyone can call it, and no authorization is required. Closes a `Pending` or `Approved` request whose `required_by_timestamp` is strictly earlier than the current ledger time.
+
+- Moves the request to `Cancelled` and records a history entry with reason `"Request expired"`. The actor is the requests contract's own address.
+- Releases any inventory reservation and removes the request from the hospital's open-request index.
+- Emits `request_expired` with `(request_id, required_by_timestamp, released_reservation, timestamp)`.
+- `InProgress` requests are never expired, because their units are already in transit.
+
+Errors: `RequestNotFound`, `InvalidRequestStatus` (not `Pending`/`Approved`), `RequestNotExpired` (deadline not yet passed), `InventoryReleaseFailed`.
+
+The matching contract also skips overdue `Pending` requests, and the payments contract refuses to take payment for them, even before `expire_request` has been called.
 
 ---
 
@@ -178,7 +199,40 @@ pub fn get_requests_by_hospital(
 ) -> Result<Vec<BloodRequest>, ContractError>
 ```
 
-Returns a paginated slice of requests for a hospital. `page` is zero-indexed. `page_size` is capped at 50.
+Returns a paginated slice of the hospital's **open** requests (`Pending`, `Approved`, `InProgress`). A request is removed from this index when it reaches a terminal status. `page` is zero-indexed. `page_size` is capped at 50.
+
+---
+
+### get_hospital_request_history / get_hospital_request_count
+
+```rust
+pub fn get_hospital_request_history(
+    env: Env,
+    hospital_id: Address,
+    page: u32,
+    page_size: u32,
+) -> Result<Vec<BloodRequest>, ContractError>
+pub fn get_hospital_request_count(env: Env, hospital_id: Address) -> Result<u32, ContractError>
+```
+
+Every request the hospital has created, in creation order and with its current status: open, fulfilled, cancelled, expired or rejected. It is backed by an append-only index with one storage entry per request, so a page reads only `page_size` entries. `page` is zero-indexed and `page_size` is capped at 50. `get_hospital_request_count` returns the total, for pagination.
+
+Requests created before this index was introduced are not included.
+
+---
+
+### assign_rider
+
+```rust
+pub fn assign_rider(
+    env: Env,
+    caller: Address,
+    request_id: u64,
+    rider: Address,
+) -> Result<(), ContractError>
+```
+
+Admin-only (`caller` must be the admin). Assigns an authorized rider to an `Approved` request. Only that rider can then move it to `InProgress`.
 
 ---
 
@@ -292,6 +346,9 @@ pub struct RequestHistoryEntry {
 | `DataKey::Metadata` | Instance | `ContractMetadata` | Contract name and version |
 | `DataKey::AuthorizedHospital(Address)` | Persistent | `bool` | Hospital authorization flag |
 | `DataKey::Request(id)` | Persistent | `BloodRequest` | Full request record including history |
+| `DataKey::HospitalRequestIds(Address)` | Persistent | `Vec<u64>` | Hospital's open request IDs (pruned on terminal transitions) |
+| `DataKey::HospitalRequestCount(Address)` | Persistent | `u32` | Number of requests the hospital has ever created |
+| `DataKey::HospitalRequestAt(Address, u32)` | Persistent | `u64` | Request ID at a position in the hospital's append-only history |
 
 ## Error codes
 
@@ -307,3 +364,5 @@ pub struct RequestHistoryEntry {
 | `InvalidQuantity` | quantity_ml is zero or exceeds remaining |
 | `InvalidReason` | Reason string is empty |
 | `InvalidTimestamp` | required_by_timestamp is in the past |
+| `InventoryReleaseFailed` (318) | Inventory refused to release the request's reservation (e.g. inventory paused); the transition was not applied |
+| `RequestNotExpired` (319) | `expire_request` called before `required_by_timestamp` passed |

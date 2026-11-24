@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { RequestUrgency } from '../../blood-requests/entities/blood-request.entity';
-import { EscalationTier } from '../enums/escalation-tier.enum';
-import { NotificationChannel } from '../../notifications/enums/notification-channel.enum';
+import { RequestUrgency } from '../blood-requests/entities/blood-request.entity';
+import { EscalationTier } from './enums/escalation-tier.enum';
+import { NotificationChannel } from '../notifications/enums/notification-channel.enum';
 
 export interface EscalationInput {
   urgency: RequestUrgency;

@@ -1,5 +1,5 @@
 use crate::error::ContractError;
-use crate::types::{BloodRequest, ContractMetadata, DataKey};
+use crate::types::{BloodRequest, ContractMetadata, DataKey, RequestHistoryEntry};
 use soroban_sdk::{Address, Env, String};
 
 /// Persistent storage TTL constants (ledgers; one ledger ≈ 5 s on mainnet).
@@ -226,7 +226,7 @@ pub fn default_metadata(env: &Env) -> ContractMetadata {
     }
 }
 
-/// Append a request ID to a hospital's request index.
+/// Append a request ID to a hospital's open-request index.
 pub fn append_to_hospital_requests(env: &Env, hospital: &Address, request_id: u64) {
     let key = DataKey::HospitalRequestIds(hospital.clone());
     let mut ids: soroban_sdk::Vec<u64> = env
@@ -262,11 +262,91 @@ pub fn remove_from_hospital_requests(env: &Env, hospital: &Address, request_id: 
         .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
-/// Retrieve all request IDs for a hospital.
+/// Record a request in the hospital's append-only history index. Unlike the
+/// open-request index, entries are never removed on terminal transitions.
+pub fn append_to_hospital_history(env: &Env, hospital: &Address, request_id: u64) {
+    let count = get_hospital_history_count(env, hospital);
+    let entry_key = DataKey::HospitalRequestAt(hospital.clone(), count);
+    env.storage().persistent().set(&entry_key, &request_id);
+    env.storage()
+        .persistent()
+        .extend_ttl(&entry_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+
+    let count_key = DataKey::HospitalRequestCount(hospital.clone());
+    env.storage().persistent().set(&count_key, &(count + 1));
+    env.storage()
+        .persistent()
+        .extend_ttl(&count_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+}
+
+/// Number of requests ever created by a hospital.
+pub fn get_hospital_history_count(env: &Env, hospital: &Address) -> u32 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::HospitalRequestCount(hospital.clone()))
+        .unwrap_or(0)
+}
+
+/// Request ID at `position` in a hospital's append-only history index.
+pub fn get_hospital_history_entry(env: &Env, hospital: &Address, position: u32) -> Option<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::HospitalRequestAt(hospital.clone(), position))
+}
+
+/// Retrieve the open (non-terminal) request IDs for a hospital.
 pub fn get_hospital_request_ids(env: &Env, hospital: &Address) -> soroban_sdk::Vec<u64> {
     let key = DataKey::HospitalRequestIds(hospital.clone());
     env.storage()
         .persistent()
         .get(&key)
         .unwrap_or_else(|| soroban_sdk::Vec::new(env))
+}
+
+/// Maximum number of history entries stored per persistent page.
+pub const HISTORY_PAGE_SIZE: u32 = 20;
+
+pub fn is_paused(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get::<DataKey, bool>(&DataKey::Paused)
+        .unwrap_or(false)
+}
+
+pub fn set_paused(env: &Env, paused: bool) {
+    env.storage().instance().set(&DataKey::Paused, &paused);
+}
+
+pub fn require_not_paused(env: &Env) -> Result<(), ContractError> {
+    if is_paused(env) {
+        Err(ContractError::ContractPaused)
+    } else {
+        Ok(())
+    }
+}
+
+pub fn get_history_page(
+    env: &Env,
+    request_id: u64,
+    page: u32,
+) -> soroban_sdk::Vec<RequestHistoryEntry> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RequestHistoryPage(request_id, page))
+        .unwrap_or_else(|| soroban_sdk::Vec::new(env))
+}
+
+/// Append `entry` to the page addressed by the request's current history
+/// length and bump `history_len`. Only the last page is read and rewritten,
+/// so the cost of an append is bounded by `HISTORY_PAGE_SIZE`.
+pub fn append_history_entry(env: &Env, request: &mut BloodRequest, entry: RequestHistoryEntry) {
+    let page = request.history_len / HISTORY_PAGE_SIZE;
+    let key = DataKey::RequestHistoryPage(request.id, page);
+    let mut entries = get_history_page(env, request.id, page);
+    entries.push_back(entry);
+    env.storage().persistent().set(&key, &entries);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    request.history_len += 1;
 }

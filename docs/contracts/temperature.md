@@ -3,6 +3,8 @@
 **Location:** `lifebank-soroban/contracts/temperature/src/lib.rs`  
 **Purpose:** Records cold-chain temperature readings for blood units in transit, detects excursions against configurable thresholds, and notifies the Coordinator contract when a breach is confirmed. Threshold changes are governed by a 7-day time-lock.
 
+> Canonical interface reference: `lifebank-soroban/docs/contracts/temperature.md`. The tables below are generated from the contract's public entrypoints in `lib.rs`.
+
 ---
 
 ## Public Interface
@@ -12,6 +14,8 @@
 | Function | Parameters | Returns | Auth |
 |---|---|---|---|
 | `initialize` | `env, admin: Address` | `Result<(), ContractError>` | `admin` |
+| `set_threshold` | `env, admin, unit_id: u64, min_celsius_x100: i32, max_celsius_x100: i32` | `Result<(), ContractError>` | Admin (initial set only) |
+| `assign_oracle` | `env, admin, oracle: Address` | `Result<(), ContractError>` | Admin |
 | `add_oracle` | `env, admin, oracle: Address` | `Result<(), ContractError>` | Admin |
 | `remove_oracle` | `env, admin, oracle: Address` | `Result<(), ContractError>` | Admin |
 | `is_oracle` | `env, address` | `bool` | Public |
@@ -20,18 +24,28 @@
 
 | Function | Parameters | Returns | Auth |
 |---|---|---|---|
-| `propose_threshold` | `env, admin, unit_id: u64, min_celsius_x100: i32, max_celsius_x100: i32` | `Result<(), ContractError>` | Admin |
-| `apply_threshold` | `env, admin, unit_id: u64` | `Result<(), ContractError>` | Admin (after 7-day delay) |
-| `get_threshold` | `env, unit_id: u64` | `TemperatureThreshold` | Public |
+| `propose_threshold_change` | `env, admin, unit_id: u64, min_celsius_x100: i32, max_celsius_x100: i32` | `Result<(), ContractError>` | Admin |
+| `apply_threshold_change` | `env, unit_id: u64` | `Result<(), ContractError>` | **Permissionless** (anyone, after 7-day delay) |
+| `get_pending_threshold_change` | `env, unit_id: u64` | `Option<PendingThresholdChange>` | Public |
 
 ### Temperature Recording
 
 | Function | Parameters | Returns | Auth |
 |---|---|---|---|
-| `record_reading` | `env, oracle, unit_id: u64, celsius_x100: i32, payment_id: u64` | `Result<(), ContractError>` | Registered oracle |
+| `log_reading` | `env, oracle, unit_id: u64, temperature_celsius_x100: i32` | `Result<(), ContractError>` | Registered oracle |
 | `get_readings` | `env, unit_id: u64, page: u32` | `Vec<TemperatureReading>` | Public |
-| `get_summary` | `env, unit_id: u64` | `TemperatureSummary` | Public |
-| `get_excursion_summary` | `env, unit_id: u64` | `ExcursionSummary` | Public |
+| `get_temperature_summary` | `env, unit_id: u64` | `TemperatureSummary` | Public |
+
+### Coordinator & Safety Controls
+
+| Function | Parameters | Returns | Auth |
+|---|---|---|---|
+| `set_coordinator` | `env, admin, coordinator: Address` | `Result<(), ContractError>` | Admin |
+| `report_excursion_to_coordinator` | `env, caller, unit_id: u64, payment_id: u64` | `Result<(), ContractError>` | Registered oracle |
+| `is_compromised` | `env, unit_id: u64` | `bool` | Public |
+| `reset_compromised_status` | `env, admin, unit_id: u64` | `Result<(), ContractError>` | Admin |
+| `pause` | `env, admin` | `Result<(), ContractError>` | Admin |
+| `unpause` | `env, admin` | `Result<(), ContractError>` | Admin |
 
 ---
 
@@ -125,7 +139,7 @@ pub struct PendingThresholdChange {
 | Name | Value | Meaning |
 |---|---|---|
 | `PAGE_SIZE` | 20 | Readings returned per page in `get_readings` |
-| Threshold time-lock | 7 days | Minimum delay before `apply_threshold` succeeds |
+| Threshold time-lock | 7 days | Minimum delay before `apply_threshold_change` succeeds |
 
 ---
 
@@ -140,14 +154,14 @@ See `lifebank-soroban/contracts/temperature/src/error.rs`. Key codes:
 | `Unauthorized` | Caller is not admin |
 | `NotAnOracle` | Caller not in the oracle registry |
 | `ThresholdNotFound` | No threshold set for this unit |
-| `NoPendingThreshold` | `apply_threshold` called with no pending change |
+| `NoPendingThreshold` | `apply_threshold_change` called with no pending change |
 | `TimeLockNotExpired` | 7-day delay has not yet elapsed |
 
 ---
 
 ## Cross-Contract Integration
 
-When an excursion is detected during `record_reading`, the contract calls:
+When an excursion is detected during `log_reading`, the contract calls:
 
 ```rust
 CoordinatorContractClient::flag_temperature_breach(
@@ -155,4 +169,4 @@ CoordinatorContractClient::flag_temperature_breach(
 )
 ```
 
-This notifies the Coordinator to update the workflow status to `TemperatureBreach`, which blocks automatic payment settlement.
+This notifies the Coordinator to update the workflow status to `TemperatureBreach`, which blocks automatic payment settlement. The excursion summary is computed inside `report_excursion_to_coordinator`; there is no separate public `get_excursion_summary` entrypoint.
