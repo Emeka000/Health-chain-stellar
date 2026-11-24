@@ -87,13 +87,7 @@ mod security_tests {
             duration_seconds: u64,
         ) -> Result<u64, ContractError> {
             self.client
-                .try_reserve_blood(
-                    &requester,
-                    &hospital_id,
-                    &unit_ids,
-                    &request_id,
-                    &duration_seconds,
-                )
+                .try_reserve_blood(&requester, &hospital_id, &unit_ids, &request_id, &duration_seconds)
                 .into_contract()
         }
 

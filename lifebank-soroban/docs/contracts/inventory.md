@@ -1,6 +1,6 @@
 # Inventory Contract
 
-Manages the full lifecycle of blood units from donation registration through delivery or disposal. Maintains indexes for efficient querying by blood type, bank, status, and donor. Supports time-bounded reservations stored in temporary storage.
+Manages the full lifecycle of blood units from donation registration through delivery or disposal. Maintains indexes for efficient querying by blood type, bank, status, and donor. Supports time-bounded reservations in persistent storage, with durable per-unit recovery references.
 
 ## Blood unit lifecycle
 
@@ -18,7 +18,7 @@ register_blood()
 
   Available / Reserved / InTransit ──► Compromised ──► Disposed (terminal)
 
-  Reserved ──► Available  (via release_reservation or rollback)
+  Reserved ──► Available  (release_reservation, expire_reservation, or release_unit_if_orphaned)
 ```
 
 All other transitions are rejected. Backwards transitions (e.g. `Delivered → Available`) are explicitly forbidden to preserve the on-chain audit trail.
@@ -172,7 +172,8 @@ Creates a time-bounded reservation for a set of blood units. `requester` must be
 
 - All units must be `Available` and not expired.
 - Transitions all units to `Reserved`.
-- Stores a `Reservation` record in **temporary storage** (auto-expires after `duration_seconds`).
+- Stores a `Reservation` record in **persistent storage** for the duration plus a 518,400-ledger grace window. Reservation expiry uses ledger timestamp; archival uses ledger sequence.
+- Stores a `UnitReservation(unit_id)` recovery reference with the normal persistent TTL for every selected unit. It records the reservation ID, expiry timestamp and owning requester; unit writes retain its TTL alongside the unit.
 - Returns the reservation ID.
 - Emits `blood_reserved` event.
 
@@ -181,10 +182,39 @@ Creates a time-bounded reservation for a set of blood units. `requester` must be
 ### release_reservation
 
 ```rust
-pub fn release_reservation(env: Env, reservation_id: u64) -> Result<(), ContractError>
+pub fn release_reservation(env: Env, caller: Address, reservation_id: u64) -> Result<(), ContractError>
 ```
 
-Releases a reservation, returning all `Reserved` units to `Available`. Can be called by anyone — the reservation record is the authority. Succeeds even if the reservation has already expired (allows cleanup of stale entries). Emits `reservation_released` event.
+Releases a reservation, returning its `Reserved` units to `Available`. Requires authorization from the original reserver or admin. Succeeds after reservation expiry while the record is live or restored. Removes matching recovery references and the reservation, and emits `reservation_released`. A reference belonging to a newer reservation is preserved and its unit is skipped.
+
+---
+
+### expire_reservation / release_unit_if_orphaned
+
+```rust
+pub fn expire_reservation(env: Env, reservation_id: u64) -> Result<(), ContractError>
+pub fn release_unit_if_orphaned(env: Env, unit_id: u64) -> Result<bool, ContractError>
+```
+
+Both are permissionless and obey the pause flag. `expire_reservation` releases all remaining units at or after the reservation's expiry timestamp, then deletes the reservation and matching references. It needs the reservation entry to be live or restored.
+
+If the reservation has archived, call `release_unit_if_orphaned` for each unit ID. This method reads only the per-unit reference and unit, never the reservation. It rejects calls before the reference's expiry (`ReservationNotExpired`, 153). At expiry it changes `Reserved` to `Available`, updates status indexes, records history and emits the existing status/audit events with the inventory contract as actor. A configured authoritative registry is released using the recorded owning requester; rejection returns `RegistryCallFailed` (181) and rolls back all local changes.
+
+The return value is `true` only when a unit was released. Missing references and repeated calls return `false`. Progressed units (for example `InTransit`, `Expired` or `Compromised`) keep their status; an expired stale reference is removed. Normal status transitions out of `Reserved` also delete the reference, so a later direct status change cannot inherit an old recovery deadline. An old reservation cannot release a unit reserved again under a newer reference.
+
+Persistent storage remains finite: references and units use the normal 518,400-ledger threshold and 1,036,800-ledger extension (approximately 30/60 days at five-second closes). Recovery after only the shorter reservation entry archives requires no restoration of that reservation. If the unit, reference, contract instance or required index entries also archive, restore those entries before invoking recovery.
+
+Existing `BloodUnit` and `Reservation` layouts and error values are unchanged. References are created for new reservations; existing deployed reservations are not automatically migrated. A legacy reservation without references must be restored if archived, then released through the existing methods. No admin per-unit action is required for newly referenced reservations.
+
+Example after missing the reservation grace window:
+
+```text
+Before: expire_reservation(7) cannot load the archived record; units 11 and 12 stay Reserved.
+After: release_unit_if_orphaned(11) -> true; release_unit_if_orphaned(12) -> true.
+Both units are Available; repeating either call -> false. No admin authorization.
+```
+
+The archival regression advances beyond the reservation's recorded live-until ledger, retains longer-lived unit/reference entries and evicts only the archived reservation from an active-ledger snapshot. This avoids the SDK recording-mode auto-restore behavior that would otherwise hide the production failure.
 
 ---
 
@@ -209,7 +239,7 @@ Creates multiple reservations in a single transaction. Each tuple is `(unit_ids,
 pub fn get_reservation(env: Env, reservation_id: u64) -> Result<Reservation, ContractError>
 ```
 
-Returns the `Reservation` record. Returns `ReservationNotFound` if expired or not found.
+Returns the `Reservation` record, including expired reservations while live or restored. Returns `ReservationNotFound` for an absent record. An archived persistent entry requires restoration before this read.
 
 ---
 
@@ -268,9 +298,20 @@ pub struct BloodUnit {
 pub struct Reservation {
     pub unit_ids: Vec<u64>,
     pub requester: Address,
+    pub reserved_by: Address,
     pub created_timestamp: u64,
     pub expiration_timestamp: u64,
     pub request_id: u64,
+}
+```
+
+### UnitReservation
+
+```rust
+pub struct UnitReservation {
+    pub reservation_id: u64,
+    pub expiration_timestamp: u64,
+    pub requester: Address,
 }
 ```
 
@@ -307,7 +348,8 @@ pub struct StatusChangeHistory {
 | `DataKey::StatusHistory(unit_id)` | Persistent | `u32` | Current history page number |
 | `DataKey::StatusHistoryPage(unit_id, page)` | Persistent | `Vec<StatusChangeHistory>` | History page (50 entries max) |
 | `DataKey::BloodUnitStatusChangeCount(unit_id)` | Persistent | `u64` | Total status changes for a unit |
-| `DataKey::Reservation(id)` | **Temporary** | `Reservation` | Time-bounded reservation record |
+| `DataKey::Reservation(id)` | Persistent | `Reservation` | Reservation duration plus grace-window TTL |
+| `DataKey::UnitReservation(unit_id)` | Persistent | `UnitReservation` | Reservation ID, expiry timestamp and requester; normal persistent TTL |
 
 ## Error codes
 
