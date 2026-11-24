@@ -1,29 +1,22 @@
-import { Injectable, NestMiddleware, Logger } from '@nestjs/common';
-
+import { Injectable, NestMiddleware } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 
-declare global {
-  namespace Express {
-    interface Request {
-      correlationId?: string;
-    }
-  }
-}
+const CORRELATION_ID_PATTERN = /^[A-Za-z0-9-]{8,64}$/;
 
 @Injectable()
 export class CorrelationIdMiddleware implements NestMiddleware {
-  private readonly logger = new Logger(CorrelationIdMiddleware.name);
+  use(req: Request, res: Response, next: NextFunction): void {
+    const headerValue = req.headers['x-correlation-id'];
+    const candidate = Array.isArray(headerValue) ? headerValue[0] : headerValue;
 
-  use(req: Request, res: Response, next: NextFunction) {
     const correlationId =
-      (req.headers['x-correlation-id'] as string) || uuidv4();
+      typeof candidate === 'string' && CORRELATION_ID_PATTERN.test(candidate)
+        ? candidate
+        : uuidv4();
 
     req.correlationId = correlationId;
     res.setHeader('x-correlation-id', correlationId);
-
-    this.logger.debug(`[${correlationId}] ${req.method} ${req.path}`);
-
     next();
   }
 }

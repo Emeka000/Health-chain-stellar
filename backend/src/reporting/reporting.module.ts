@@ -7,7 +7,7 @@ import { BloodUnit } from '../blood-units/entities/blood-unit.entity';
 import { OrderEntity } from '../orders/entities/order.entity';
 import { DisputeEntity } from '../disputes/entities/dispute.entity';
 import { OrganizationEntity } from '../organizations/entities/organization.entity';
-import { BloodRequestEntity } from '../blood-requests/entities/blood-request.entity';
+import { BloodRequest as BloodRequestEntity } from '../blood-requests/entities/blood-request.entity';
 import { BloodRequestsModule } from '../blood-requests/blood-requests.module';
 import { UsersModule } from '../users/users.module';
 
