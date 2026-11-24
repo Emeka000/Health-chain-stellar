@@ -1,6 +1,8 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, Res, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
+import { Auditable } from '../audit/decorators/auditable.decorator';
+import { AuditLogInterceptor } from '../audit/interceptors/audit-log.interceptor';
 import { User } from '../auth/decorators/user.decorator';
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
@@ -20,6 +22,7 @@ export class DisputesController {
   @ApiOperation({ summary: 'Post' })
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post()
+  @RequirePermissions(Permission.DISPUTE_RESOLVE)
   open(@Body() dto: OpenDisputeDto, @User('id') userId: string) {
     return this.service.open(dto, userId);
   }
