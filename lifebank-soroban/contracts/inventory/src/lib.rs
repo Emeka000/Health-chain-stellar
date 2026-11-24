@@ -258,6 +258,30 @@ impl InventoryContract {
         }
     }
 
+    /// Whether `address` is the trusted coordinator contract configured via
+    /// `set_coordinator_contract`.
+    fn is_coordinator_contract(env: &Env, address: &Address) -> bool {
+        let coordinator: Option<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::CoordinatorContractId);
+        coordinator.as_ref() == Some(address)
+    }
+
+    /// The coordinator may only drive the workflow transitions it owns:
+    /// reserve (`Reserved`), ship (`InTransit`), deliver (`Delivered`) and
+    /// release a rolled-back reservation (`Available`). Expiry, compromise and
+    /// disposal stay with the admin and the owning blood bank.
+    fn assert_coordinator_can_transition(new_status: &BloodStatus) -> Result<(), ContractError> {
+        match new_status {
+            BloodStatus::Available
+            | BloodStatus::Reserved
+            | BloodStatus::InTransit
+            | BloodStatus::Delivered => Ok(()),
+            _ => Err(ContractError::InsufficientRolePermission),
+        }
+    }
+
     fn require_not_paused(env: &Env) -> Result<(), ContractError> {
         if env
             .storage()
@@ -524,40 +548,49 @@ impl InventoryContract {
 
         let blood_unit = storage::get_blood_unit(&env, unit_id).ok_or(ContractError::NotFound)?;
 
-        // The owning blood bank acts with the implicit BloodBank role unless a
-        // different role was explicitly stored for it.
-        let role = match Self::get_role(&env, &authorized_by) {
-            Role::Unprivileged if authorized_by == blood_unit.bank_id => Role::BloodBank,
-            role => role,
-        };
-        Self::assert_can_transition(&role, &new_status)?;
+        if Self::is_coordinator_contract(&env, &authorized_by) {
+            // The trusted coordinator contract authorizes as itself: a direct
+            // sub-call satisfies `require_auth` for the invoking contract, so
+            // workflow steps (including the permissionless expire_workflow)
+            // need no inventory-admin signature.
+            Self::assert_coordinator_can_transition(&new_status)?;
+        } else {
+            // The owning blood bank acts with the implicit BloodBank role unless a
+            // different role was explicitly stored for it.
+            let role = match Self::get_role(&env, &authorized_by) {
+                Role::Unprivileged if authorized_by == blood_unit.bank_id => Role::BloodBank,
+                role => role,
+            };
+            Self::assert_can_transition(&role, &new_status)?;
 
-        // Allow the transition when:
-        //   (a) the caller is the admin, OR
-        //   (b) the caller is the owning blood bank, OR
-        //   (c) the caller holds a delegated role (Rider / Hospital) whose
-        //       permission to perform this specific transition was already
-        //       confirmed by assert_can_transition above, and who was assigned
-        //       to this unit by its owning bank (see assert_delegate_assigned).
-        //
-        // Without branch (c) a granted Rider / Hospital address could never
-        // pass this gate because their address is never equal to bank_id,
-        // making grant_role effectively dead code (issue #1316).
-        let delegated_role = matches!(role, Role::Rider | Role::Hospital);
-        if role != Role::Admin && authorized_by != blood_unit.bank_id && !delegated_role {
-            return Err(ContractError::Unauthorized);
-        }
-        if delegated_role {
-            Self::assert_delegate_assigned(&env, unit_id, &role, &authorized_by)?;
-        }
+            // Allow the transition when:
+            //   (a) the caller is the admin, OR
+            //   (b) the caller is the owning blood bank, OR
+            //   (c) the caller holds a delegated role (Rider / Hospital) whose
+            //       permission to perform this specific transition was already
+            //       confirmed by assert_can_transition above, and who was assigned
+            //       to this unit by its owning bank (see assert_delegate_assigned).
+            //
+            // Without branch (c) a granted Rider / Hospital address could never
+            // pass this gate because their address is never equal to bank_id,
+            // making grant_role effectively dead code (issue #1316).
+            let delegated_role = matches!(role, Role::Rider | Role::Hospital);
+            if role != Role::Admin && authorized_by != blood_unit.bank_id && !delegated_role {
+                return Err(ContractError::Unauthorized);
+            }
+            if delegated_role {
+                Self::assert_delegate_assigned(&env, unit_id, &role, &authorized_by)?;
+            }
 
-        // Reject a blood bank whose authorization has been revoked since it
-        // registered this unit. register_blood and reserve_blood gate on
-        // is_authorized_bank; update_status must enforce the same invariant so
-        // that authorize_bank(..., false) actually strips all write access.
-        if authorized_by == blood_unit.bank_id && !storage::is_authorized_bank(&env, &authorized_by)
-        {
-            return Err(ContractError::NotAuthorizedBloodBank);
+            // Reject a blood bank whose authorization has been revoked since it
+            // registered this unit. register_blood and reserve_blood gate on
+            // is_authorized_bank; update_status must enforce the same invariant so
+            // that authorize_bank(..., false) actually strips all write access.
+            if authorized_by == blood_unit.bank_id
+                && !storage::is_authorized_bank(&env, &authorized_by)
+            {
+                return Err(ContractError::NotAuthorizedBloodBank);
+            }
         }
 
         let mut blood_unit = blood_unit;
@@ -1079,6 +1112,81 @@ impl InventoryContract {
         Ok(())
     }
 
+    /// Close a reservation by marking its units `Compromised` rather than
+    /// returning them to `Available`. Called by the trusted requests contract
+    /// when an InProgress request is rejected after a failed delivery
+    /// (cold-chain breach, accident, refused units): those units must not
+    /// re-enter matching.
+    ///
+    /// Same trust model as `release_reservation_by_contract`: the caller must
+    /// authorize as `authorized_contract`, which must equal the requests
+    /// contract configured via `set_requests_contract`.
+    ///
+    /// Units in `Reserved` or `InTransit` move to `Compromised`; units already
+    /// in a terminal or end-of-life state (`Delivered`, `Expired`,
+    /// `Compromised`, `Disposed`) or back in `Available` are left alone. The
+    /// reservation is removed. Returns the number of units compromised.
+    ///
+    /// # Errors
+    /// - `ContractPaused` if the contract is paused
+    /// - `Unauthorized` if `authorized_contract` is not the trusted requests contract
+    /// - `ReservationNotFound` if the reservation does not exist
+    pub fn compromise_reservation_by_ctr(
+        env: Env,
+        authorized_contract: Address,
+        reservation_id: u64,
+        reason: String,
+    ) -> Result<u32, ContractError> {
+        Self::require_not_paused(&env)?;
+        authorized_contract.require_auth();
+
+        let trusted: Option<Address> = env.storage().instance().get(&DataKey::RequestsContractId);
+        match trusted {
+            Some(ref requests_contract) if *requests_contract == authorized_contract => {}
+            _ => return Err(ContractError::Unauthorized),
+        }
+
+        let reservation = storage::get_reservation(&env, reservation_id)
+            .ok_or(ContractError::ReservationNotFound)?;
+
+        let mut compromised: u32 = 0;
+        for i in 0..reservation.unit_ids.len() {
+            let unit_id = reservation.unit_ids.get(i).ok_or(ContractError::NotFound)?;
+            if let Some(mut unit) = storage::get_blood_unit(&env, unit_id) {
+                let old_status = unit.status;
+                if !matches!(old_status, BloodStatus::Reserved | BloodStatus::InTransit) {
+                    continue;
+                }
+                unit.status = BloodStatus::Compromised;
+                storage::set_blood_unit(&env, &unit);
+                storage::remove_from_status_index(&env, unit_id, old_status);
+                storage::add_to_status_index(&env, &unit);
+                storage::record_status_change(
+                    &env,
+                    unit_id,
+                    old_status,
+                    BloodStatus::Compromised,
+                    &authorized_contract,
+                    Some(reason.clone()),
+                );
+                events::emit_status_change(
+                    &env,
+                    unit_id,
+                    old_status,
+                    BloodStatus::Compromised,
+                    &authorized_contract,
+                    Some(reason.clone()),
+                );
+                compromised += 1;
+            }
+        }
+
+        storage::remove_reservation(&env, reservation_id);
+        events::emit_reservation_compromised(&env, reservation_id, compromised);
+
+        Ok(compromised)
+    }
+
     /// Release a reservation, returning all units to `Available`.
     ///
     /// Can only be called by the original reserver or admin (external authorization).
@@ -1308,6 +1416,37 @@ impl InventoryContract {
     /// Get the configured requests contract address, if any.
     pub fn get_requests_contract(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::RequestsContractId)
+    }
+
+    /// Set the trusted coordinator contract address. Only admin can call this.
+    ///
+    /// Once set, this contract may pass its own address as `authorized_by` to
+    /// `update_status` / `mark_delivered` for the workflow transitions
+    /// (`Reserved`, `InTransit`, `Delivered`, `Available`). Any other address
+    /// is rejected regardless of `require_auth`.
+    ///
+    /// # Errors
+    /// - `Unauthorized`: caller is not the admin
+    pub fn set_coordinator_contract(
+        env: Env,
+        admin: Address,
+        coordinator_contract_id: Address,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        let stored_admin = storage::get_admin(&env);
+        if admin != stored_admin {
+            return Err(ContractError::Unauthorized);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::CoordinatorContractId, &coordinator_contract_id);
+        storage::extend_instance_ttl(&env);
+        Ok(())
+    }
+
+    /// Get the configured coordinator contract address, if any.
+    pub fn get_coordinator_contract(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::CoordinatorContractId)
     }
 
     /// Upgrade the contract to a new WASM hash. Only admin can call this.

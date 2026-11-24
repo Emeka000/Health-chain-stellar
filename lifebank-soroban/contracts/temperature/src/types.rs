@@ -90,4 +90,11 @@ pub enum DataKey {
     /// fabricating excursions or resetting violation streaks for units it
     /// does not own.
     AssignedOracle(u64),
+    /// Reverse index of `AssignedOracle`: the units bound to an oracle.
+    ///
+    /// Key: `OracleUnits(oracle_address)` → `Vec<u64>`
+    ///
+    /// Lets `remove_oracle` unbind every unit the removed oracle owned, so no
+    /// unit is left pointing at an oracle that can no longer log.
+    OracleUnits(soroban_sdk::Address),
 }

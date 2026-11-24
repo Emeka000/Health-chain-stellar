@@ -8,7 +8,6 @@ import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { AppErrorFilter } from './common/filters/irrecoverable-error.filter';
 import { ValidationExceptionFilter } from './common/filters/validation-exception.filter';
-import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { createCorsOptions } from './config/cors-options';
 import { DatabaseSyncGuard } from './config/database-sync.guard';
 import { validateEnv } from './config/validate-env';
@@ -38,8 +37,7 @@ async function bootstrap() {
   const isProduction =
     configService.get<string>('NODE_ENV', 'development') === 'production';
 
-  const correlationIdMiddleware = new CorrelationIdMiddleware();
-  app.use((req, res, next) => correlationIdMiddleware.use(req, res, next));
+  // CorrelationIdMiddleware is registered once via AppModule.configure().
 
   const trustProxy = configService.get<boolean>('TRUST_PROXY', false);
   if (trustProxy) {

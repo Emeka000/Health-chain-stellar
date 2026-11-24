@@ -190,6 +190,7 @@ Manages blood unit lifecycle, reservations, and cross-contract authorization fro
 | `update_status(unit_id, new_status, admin, rider_or_hospital)` | Admin or Rider/Hospital (via Coordinator) | State transition (Available → Reserved → InTransit → Delivered) | **CRITICAL** |
 | `mark_delivered(unit_id, admin, location)` | Admin | Records delivery completion | **CRITICAL** |
 | `release_reservation_by_contract(authorized_contract, reservation_id)` | RequestsContract (via cross-contract auth) | Releases reservation without external re-signing | **CRITICAL** |
+| `set_coordinator_contract(admin, coordinator)` | Admin | Trusts the coordinator contract for workflow transitions | **CRITICAL** |
 | `pause(admin)` | Admin | Blocks state mutations | Important |
 | `unpause(admin)` | Admin | Restores operations | Important |
 
@@ -197,14 +198,14 @@ Manages blood unit lifecycle, reservations, and cross-contract authorization fro
 - None
 
 **Cross-Contract Calls Made to Inventory:**
-- `inventory.get_admin()` — read-only, called by Coordinator
-- `inventory.update_status(unit_id, status, inv_admin, None)` — called by Coordinator
-- `inventory.mark_delivered(unit_id, inv_admin, location)` — called by Coordinator
+- `inventory.update_status(unit_id, status, coordinator_addr, None)` — called by Coordinator (Reserved / InTransit / Available only)
+- `inventory.mark_delivered(unit_id, coordinator_addr, location)` — called by Coordinator
 - `inventory.release_reservation_by_contract(requests_contract_addr, res_id)` — called by Requests
 
 **Key Authorization Mechanism:**
 - Role-based state transitions: Riders can mark InTransit, Hospitals can mark Delivered, Admin can do either
 - Cross-contract authorization: Requests passes itself as `authorized_contract`; Inventory verifies stored address matches
+- The Coordinator passes its own address as `authorized_by`; Inventory checks it against `set_coordinator_contract`, so no inventory-admin signature is needed
 
 ---
 
@@ -300,13 +301,13 @@ The Payments contract stores the Coordinator address and only Coordinator can ca
 
 **Mitigation:** Coordinate initialization order; Payments must be initialized after Coordinator address is known.
 
-### 4. **Inventory Admin Must Match Coordinator's Expectations**
+### 4. **Inventory and Requests Must Trust the Coordinator Contract**
 
-Coordinator calls `inventory.get_admin()` and then passes that admin address to `inventory.update_status()`. If Inventory's admin changes after Coordinator initialization, calls fail.
+Coordinator authorizes inventory status changes and request lifecycle changes as itself. Inventory (`set_coordinator_contract`) and Requests (`set_coordinator_contract`) must both be configured with the coordinator's address.
 
-**Risk:** Admin key rotation breaks Coordinator's workflow.
+**Risk:** If either is unset or points elsewhere, every workflow step fails (`InventoryUpdateFailed` / `RequestUpdateFailed`).
 
-**Mitigation:** Do NOT rotate admin keys after initialization; use two-step admin transfer instead.
+**Mitigation:** Configure both right after deploying the Coordinator, and re-run them if the Coordinator is redeployed.
 
 ### 5. **Temperature Must Know the Coordinator Address**
 
