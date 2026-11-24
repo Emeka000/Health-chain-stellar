@@ -20,17 +20,9 @@ export class DonorEligibilityController {
   @ApiOperation({ summary: 'Get :donorId' })
   @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':donorId')
-  checkEligibility(
-    @Param('donorId') donorId: string,
-    @User() user: UserContext,
-    @Query('dateOfBirth') dateOfBirth?: string,
-    @Query('lastDonationDate') lastDonationDate?: string,
-  ) {
+  checkEligibility(@Param('donorId') donorId: string, @User() user: UserContext) {
     this.permissionsService.assertIsAdminOrSelf(user, donorId);
-    return this.service.checkEligibility(donorId, undefined, {
-      dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
-      lastDonationDate: lastDonationDate ? new Date(lastDonationDate) : undefined,
-    });
+    return this.service.checkEligibility(donorId);
   }
 
   @ApiOperation({ summary: 'Get :donorId deferrals' })

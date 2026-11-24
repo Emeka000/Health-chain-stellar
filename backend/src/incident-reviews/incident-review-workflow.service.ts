@@ -8,7 +8,7 @@ import { CorrectiveActionEntity } from './entities/corrective-action.entity';
 import { IncidentReviewStatus } from './enums/incident-review-status.enum';
 import { IncidentRootCause } from './enums/incident-root-cause.enum';
 import { IncidentSeverity } from './enums/incident-severity.enum';
-import { CorrectiveActionStatus } from './enums/corrective-action-status.enum';
+import { CorrectiveActionStatus } from './entities/corrective-action.entity';
 
 export interface AutoCreateIncidentInput {
     orderId?: string;

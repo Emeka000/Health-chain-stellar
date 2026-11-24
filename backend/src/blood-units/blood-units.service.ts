@@ -12,7 +12,10 @@ import * as QRCode from 'qrcode';
 import { DataSource, Repository } from 'typeorm';
 
 import { PermissionsService } from '../auth/permissions.service';
-import { DonorEligibilityService } from '../donor-eligibility/donor-eligibility.service';
+import {
+  DonorEligibilityService,
+  DonorProfile,
+} from '../donor-eligibility/donor-eligibility.service';
 import { NotificationChannel } from '../notifications/enums/notification-channel.enum';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ActorRegistryService, ActorType } from '../registry/actor-registry.service';
@@ -32,6 +35,7 @@ import { BloodStatus } from './enums/blood-status.enum';
 import { QuarantineReasonCode, QuarantineTriggerSource } from './enums/quarantine.enums';
 import { QuarantineService } from './services/quarantine.service';
 import { OrganizationEntity } from '../organizations/entities/organization.entity';
+import { UserEntity } from '../users/entities/user.entity';
 
 
 
@@ -80,7 +84,8 @@ export class BloodUnitsService {
 
     // Block registration if donor is not eligible
     if (dto.donorId) {
-      await this.donorEligibilityService.assertEligible(dto.donorId);
+      const profile = await this.loadDonorProfile(dto.donorId);
+      await this.donorEligibilityService.assertEligible(dto.donorId, profile);
     }
 
     const unitNumber = await this.generateUniqueUnitNumber(dto.bloodType);
@@ -128,6 +133,27 @@ export class BloodUnitsService {
       blockchainTransactionHash: result.transactionHash,
       barcodeData: savedUnit.barcodeData,
       message: 'Blood unit registered successfully',
+    };
+  }
+
+  /**
+   * Builds the donor eligibility profile from server-side data only:
+   * the donor's stored date of birth and the most recent blood unit
+   * registered for the donor (used as the last donation date).
+   */
+  private async loadDonorProfile(donorId: string): Promise<DonorProfile> {
+    const donor = await this.dataSource
+      .getRepository(UserEntity)
+      .findOne({ where: { id: donorId } });
+
+    const lastUnit = await this.bloodUnitRepository.findOne({
+      where: { donorId },
+      order: { createdAt: 'DESC' },
+    });
+
+    return {
+      dateOfBirth: donor?.dateOfBirth ?? null,
+      lastDonationDate: lastUnit?.createdAt ?? null,
     };
   }
 
@@ -350,3 +376,203 @@ export class BloodUnitsService {
       status: unit.status,
     };
   }
+
+  /**
+   * Phase 2 of inter-org transfer: Accept.
+   * Status transitions from IN_TRANSFER to AVAILABLE and ownership moves.
+   * Closes #465
+   */
+  async acceptOrganizationTransfer(
+    transferId: string,
+    user?: AuthenticatedUserContext,
+  ) {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    let unit: BloodUnit;
+    let transfer: TransferRecord;
+
+    try {
+      transfer = await queryRunner.manager.findOne(TransferRecord, {
+        where: { id: transferId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!transfer) {
+        throw new NotFoundException(`Transfer ${transferId} not found`);
+      }
+
+      if (transfer.status !== TransferStatus.PENDING) {
+        throw new BadRequestException(
+          `Transfer must be PENDING to accept (current: ${transfer.status})`,
+        );
+      }
+
+      if (
+        transfer.destinationOrgId !== (user as any)?.organizationId &&
+        user?.role !== 'admin'
+      ) {
+        throw new BadRequestException(
+          'Only the destination organization can accept a transfer',
+        );
+      }
+
+      unit = await queryRunner.manager.findOne(BloodUnit, {
+        where: { id: transfer.bloodUnitId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!unit) {
+        throw new NotFoundException(`Blood unit ${transfer.bloodUnitId} not found`);
+      }
+
+      if (unit.status !== BloodStatus.IN_TRANSFER) {
+        throw new BadRequestException(
+          `Unit must be IN_TRANSFER to accept (current: ${unit.status})`,
+        );
+      }
+
+      unit.organizationId = transfer.destinationOrgId;
+      unit.status = BloodStatus.AVAILABLE;
+      await queryRunner.manager.save(unit);
+
+      transfer.status = TransferStatus.COMPLETED;
+      transfer.acceptedByUserId = user?.id;
+      transfer.completedAt = new Date();
+      await queryRunner.manager.save(transfer);
+
+      await queryRunner.commitTransaction();
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+
+    this.eventEmitter.emit('blood-unit.transfer.accepted', {
+      unitId: unit.id,
+      transferId: transfer.id,
+      sourceOrgId: transfer.sourceOrgId,
+      destinationOrgId: transfer.destinationOrgId,
+      acceptedBy: user?.id,
+    });
+
+    return {
+      success: true,
+      transferId: transfer.id,
+      status: unit.status,
+      organizationId: unit.organizationId,
+    };
+  }
+
+  async logTemperature(dto: LogTemperatureDto, user?: AuthenticatedUserContext) {
+    const unit = await this.bloodUnitRepository.findOne({
+      where: { id: dto.unitId },
+    });
+
+    if (!unit) {
+      throw new NotFoundException(`Blood unit ${dto.unitId} not found`);
+    }
+
+    const temperature = dto.temperatureC;
+    const isOutOfRange =
+      temperature < this.minStorageTempC || temperature > this.maxStorageTempC;
+
+    const trail = this.trailRepository.create({
+      bloodUnitId: unit.id,
+      temperatureC: temperature,
+      recordedBy: user?.id,
+      recordedAt: dto.recordedAt ? new Date(dto.recordedAt) : new Date(),
+      metadata: dto.metadata,
+    });
+    await this.trailRepository.save(trail);
+
+    if (isOutOfRange) {
+      await this.quarantineService.quarantineUnit({
+        unitId: unit.id,
+        reasonCode: QuarantineReasonCode.TEMPERATURE_EXCURSION,
+        source: QuarantineTriggerSource.TEMPERATURE_LOG,
+        triggeredBy: user?.id,
+        notes: `Temperature ${temperature}C outside allowed range ${this.minStorageTempC}-${this.maxStorageTempC}C`,
+      });
+
+      this.eventEmitter.emit('blood-unit.temperature.excursion', {
+        unitId: unit.id,
+        temperatureC: temperature,
+        recordedBy: user?.id,
+      });
+    }
+
+    return {
+      success: true,
+      unitId: unit.id,
+      temperatureC: temperature,
+      outOfRange: isOutOfRange,
+      trailId: trail.id,
+    };
+  }
+
+  async getUnitTrail(unitId: string) {
+    const unit = await this.bloodUnitRepository.findOne({
+      where: { id: unitId },
+    });
+
+    if (!unit) {
+      throw new NotFoundException(`Blood unit ${unitId} not found`);
+    }
+
+    const trail = await this.trailRepository.find({
+      where: { bloodUnitId: unitId },
+      order: { recordedAt: 'ASC' },
+    });
+
+    return {
+      unitId,
+      unitNumber: unit.unitNumber,
+      trail,
+    };
+  }
+
+  private async assertUnitTransferable(unitId: string): Promise<void> {
+    const unit = await this.bloodUnitRepository.findOne({
+      where: { id: unitId },
+    });
+
+    if (!unit) {
+      throw new NotFoundException(`Blood unit ${unitId} not found`);
+    }
+
+    if (unit.status !== BloodStatus.AVAILABLE) {
+      throw new BadRequestException(
+        `Unit is not available for transfer (current: ${unit.status})`,
+      );
+    }
+  }
+
+  private async validateCustodyTransferActors(
+    fromAccount: string,
+    toAccount: string,
+  ): Promise<void> {
+    if (!fromAccount || !toAccount) {
+      throw new BadRequestException('Both fromAccount and toAccount are required');
+    }
+
+    if (fromAccount === toAccount) {
+      throw new BadRequestException('Cannot transfer custody to the same account');
+    }
+
+    const [fromActor, toActor] = await Promise.all([
+      this.actorRegistry.resolve(fromAccount),
+      this.actorRegistry.resolve(toAccount),
+    ]);
+
+    if (!fromActor || fromActor.type === ActorType.UNKNOWN) {
+      throw new BadRequestException(`Unknown source account: ${fromAccount}`);
+    }
+
+    if (!toActor || toActor.type === ActorType.UNKNOWN) {
+      throw new BadRequestException(`Unknown destination account: ${toAccount}`);
+    }
+  }
+}

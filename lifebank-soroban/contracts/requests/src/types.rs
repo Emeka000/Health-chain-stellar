@@ -25,6 +25,12 @@ pub enum DataKey {
     RequestRider(u64),           // Rider dispatched to pick up a request
     Paused,                      // Circuit breaker flag (instance storage)
     RequestHistoryPage(u64, u32), // (request_id, page) -> Vec<RequestHistoryEntry>
+    /// Number of requests ever created by a hospital (append-only history index).
+    HospitalRequestCount(Address),
+    /// `(hospital, position)` -> request ID in the append-only history index.
+    /// One entry per request keeps every storage entry small, so the history
+    /// can grow without hitting the per-entry size limit.
+    HospitalRequestAt(Address, u32),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
