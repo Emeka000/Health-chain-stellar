@@ -257,4 +257,139 @@ export class SurgeSimulationService {
 
   async listScenarios(
     query: PaginationQueryDto,
-  ): Promise<PaginatedResponse<
+  ): Promise<PaginatedResponse<SurgeScenarioEntity>> {
+    const [items, total] = await this.scenarioRepo.findAndCount({
+      order: { createdAt: 'DESC' },
+      skip: (query.page - 1) * query.limit,
+      take: query.limit,
+    });
+    return PaginationUtil.paginate(items, total, query);
+  }
+
+  async compareScenarios(
+    scenarioIds: string[],
+  ): Promise<ScenarioComparisonResult> {
+    const scenarios: ScenarioComparisonResult['scenarios'] = [];
+
+    for (const id of scenarioIds) {
+      const scenario = await this.scenarioRepo.findOne({ where: { id } });
+      if (!scenario)
+        throw new NotFoundException(`Scenario ${id} not found`);
+
+      const outcome = await this.simulate(
+        {
+          surgeDemandUnits: scenario.surgeDemandUnits,
+          overrideStockUnits: scenario.overrideStockUnits ?? undefined,
+          overrideRiderCapacityUnits:
+            scenario.overrideRiderCapacityUnits ?? undefined,
+          unitsPerRider: scenario.unitsPerRider,
+        },
+        scenario.seed,
+      );
+
+      scenarios.push({
+        id: scenario.id,
+        name: scenario.name,
+        outcome,
+        policyConfig: scenario.policyConfig,
+      });
+    }
+
+    const stockBottleneck = scenarios.some(
+      (s) => !s.outcome.canAbsorbWithStock,
+    );
+    const riderBottleneck = scenarios.some(
+      (s) => !s.outcome.canAbsorbWithRiders,
+    );
+
+    let bottleneck: ScenarioComparisonResult['bottleneck'] = 'none';
+    if (stockBottleneck && riderBottleneck) {
+      bottleneck = 'stock';
+    } else if (stockBottleneck) {
+      bottleneck = 'stock';
+    } else if (riderBottleneck) {
+      bottleneck = 'riders';
+    }
+
+    const recommendation =
+      bottleneck === 'none'
+        ? 'All scenarios can be absorbed with current stock and rider capacity.'
+        : bottleneck === 'stock'
+          ? 'Stock is the primary bottleneck; consider emergency procurement or inter-region transfer.'
+          : 'Rider capacity is the primary bottleneck; consider activating additional riders.';
+
+    return { scenarios, bottleneck, recommendation };
+  }
+
+  // ── Surge rule management ────────────────────────────────────────────────
+
+  async findAllRules(): Promise<SurgeRuleEntity[]> {
+    return this.surgeRuleRepo.find({ order: { createdAt: 'DESC' } });
+  }
+
+  async createRule(
+    dto: Partial<SurgeRuleEntity>,
+  ): Promise<SurgeRuleEntity> {
+    const rule = this.surgeRuleRepo.create(dto);
+    return this.surgeRuleRepo.save(rule);
+  }
+
+  async updateRule(
+    id: string,
+    dto: Partial<SurgeRuleEntity>,
+  ): Promise<SurgeRuleEntity> {
+    const rule = await this.surgeRuleRepo.findOne({ where: { id } });
+    if (!rule) throw new NotFoundException(`Surge rule ${id} not found`);
+    Object.assign(rule, dto);
+    return this.surgeRuleRepo.save(rule);
+  }
+
+  async deleteRule(id: string): Promise<void> {
+    const rule = await this.surgeRuleRepo.findOne({ where: { id } });
+    if (!rule) throw new NotFoundException(`Surge rule ${id} not found`);
+    await this.surgeRuleRepo.remove(rule);
+  }
+
+  async upsertRule(
+    dto: Partial<SurgeRuleEntity>,
+  ): Promise<SurgeRuleEntity> {
+    if (dto.id) {
+      return this.updateRule(dto.id, dto);
+    }
+    return this.createRule(dto);
+  }
+
+  // ── Surge notifications ──────────────────────────────────────────────────
+
+  async notifyHospitals(
+    bloodTypes: BloodType[],
+    message: string,
+  ): Promise<number> {
+    const hospitals = await this.hospitalRepo.find();
+    let notified = 0;
+
+    for (const hospital of hospitals) {
+      try {
+        await this.notificationsService.send({
+          channel: NotificationChannel.EMAIL,
+          recipient: hospital.email,
+          subject: 'Surge demand alert',
+          body: message,
+          metadata: { bloodTypes },
+        });
+        notified += 1;
+      } catch (err) {
+        this.logger.warn(
+          `Failed to notify hospital ${hospital.id}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    this.eventEmitter.emit('surge.hospitals_notified', {
+      bloodTypes,
+      notified,
+    });
+
+    return notified;
+  }
+}
