@@ -181,11 +181,24 @@ export class OrganizationsService {
       this.configService.get<string>('SOROBAN_CONTRACT_ID') ??
       null;
 
+    const adminAddress = this.configService.get<string>(
+      'SOROBAN_ADMIN_ADDRESS',
+    );
+    if (!adminAddress) {
+      throw new UnprocessableEntityException(
+        'On-chain admin address is not configured (SOROBAN_ADMIN_ADDRESS)',
+      );
+    }
+
     let txHash: string;
     try {
+      // Identity contract entrypoint:
+      //   verify_organization(admin: Address, org_id: BytesN<32>)
+      // The organization id is hashed to the 32-byte identifier the
+      // contract expects; the admin is the configured Stellar address.
       const result = await this.sorobanService.submitTransactionAndWait({
-        contractMethod: 'register_verified_organization',
-        args: [org.id, org.licenseNumber, org.name],
+        contractMethod: 'verify_organization',
+        args: [adminAddress, this.toOrgIdBytes(org.id)],
         idempotencyKey: `org-verified:${org.id}`,
         metadata: { organizationId: org.id },
       });
@@ -346,6 +359,23 @@ export class OrganizationsService {
     const data = results.slice((page - 1) * pageSize, page * pageSize);
 
     return { message: 'Organizations retrieved successfully', data, total, page, pageSize };
+  }
+
+  /**
+   * Converts an organization UUID into the 32-byte identifier expected by the
+   * identity contract (`org_id: BytesN<32>`). The UUID is parsed into its raw
+   * 16 bytes and zero-padded to 32 bytes.
+   */
+  private toOrgIdBytes(organizationId: string): Uint8Array {
+    const hex = organizationId.replace(/-/g, '');
+    if (!/^[0-9a-fA-F]{32}$/.test(hex)) {
+      throw new BadRequestException('Invalid organization id');
+    }
+    const bytes = new Uint8Array(32);
+    for (let i = 0; i < 16; i++) {
+      bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    }
+    return bytes;
   }
 
   /** Haversine formula — returns distance in km between two lat/lon points. */
