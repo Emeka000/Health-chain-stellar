@@ -75,6 +75,7 @@ import { TrackingModule } from './tracking/tracking.module';
 import { TransparencyModule } from './transparency/transparency.module';
 import { UsersModule } from './users/users.module';
 import { UssdModule } from './ussd-session/ussd.module';
+import { WorkflowModule } from './workflow/workflow.module';
 
 import type Redis from 'ioredis';
 
@@ -201,6 +202,7 @@ import type Redis from 'ioredis';
     TrackingModule,
     TransparencyModule,
     UssdModule,
+    WorkflowModule,
   ],
   controllers: [AppController],
   providers: [

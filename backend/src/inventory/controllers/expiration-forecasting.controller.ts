@@ -1,10 +1,10 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
-import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
-import { Permission } from '../auth/enums/permission.enum';
+import { RequirePermissions } from '../../auth/decorators/require-permissions.decorator';
+import { Permission } from '../../auth/enums/permission.enum';
 
-import { ExpirationForecastingService } from './expiration-forecasting.service';
+import { ExpirationForecastingService } from '../services/expiration-forecasting.service';
 
 @ApiTags('Inventory')
 @ApiBearerAuth()

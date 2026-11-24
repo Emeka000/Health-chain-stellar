@@ -216,4 +216,40 @@ export class AnomalyScoringService {
         data.hospitalId ? 'a.hospital_id = :hospitalId' : 'a.hospital_id IS NULL',
         data.hospitalId ? { hospitalId: data.hospitalId } : {},
       )
-      .
+      .andWhere(
+        data.orderId ? 'a.order_id = :orderId' : 'a.order_id IS NULL',
+        data.orderId ? { orderId: data.orderId } : {},
+      )
+      .andWhere(
+        data.bloodRequestId
+          ? 'a.blood_request_id = :bloodRequestId'
+          : 'a.blood_request_id IS NULL',
+        data.bloodRequestId ? { bloodRequestId: data.bloodRequestId } : {},
+      )
+      .getOne();
+
+    if (existing) {
+      this.logger.debug(
+        `Anomaly already open for ${data.type} (${data.riderId ?? data.hospitalId ?? data.orderId ?? data.bloodRequestId ?? 'global'})`,
+      );
+      return;
+    }
+
+    const incident = this.anomalyRepo.create({
+      type: data.type,
+      severity: data.severity,
+      status: AnomalyStatus.OPEN,
+      description: data.description,
+      metadata: data.metadata ?? {},
+      orderId: data.orderId,
+      riderId: data.riderId,
+      hospitalId: data.hospitalId,
+      bloodRequestId: data.bloodRequestId,
+      policyVersionRef: data.policyVersionRef,
+      bloodType: data.bloodType,
+    });
+
+    await this.anomalyRepo.save(incident);
+    this.logger.warn(`Anomaly detected: ${data.type} — ${data.description}`);
+  }
+}
