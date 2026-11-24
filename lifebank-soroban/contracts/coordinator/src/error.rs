@@ -30,6 +30,9 @@ pub enum CoordinatorError {
     InventoryUpdateFailed = 830,
     PaymentUpdateFailed = 831,
     PaymentFlagFailed = 832,
+    /// The requests contract refused a lifecycle transition driven by the
+    /// coordinator (e.g. it is paused or the coordinator is not trusted).
+    RequestUpdateFailed = 833,
 
     // Circuit breaker
     ContractPaused = 840,

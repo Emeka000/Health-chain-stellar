@@ -133,6 +133,12 @@ impl VerificationTrait for VerificationImpl {
             .persistent()
             .extend_ttl(&metadata_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
+        IdentityContract::grant_role_internal(
+            &env,
+            org_id.clone(),
+            IdentityContract::org_role(&organization.org_type),
+        );
+
         // Record verification event
         Self::record_verification_event(
             &env,
@@ -198,6 +204,12 @@ impl VerificationTrait for VerificationImpl {
         env.storage()
             .persistent()
             .extend_ttl(&metadata_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        IdentityContract::revoke_role_internal(
+            &env,
+            &org_id,
+            &IdentityContract::org_role(&organization.org_type),
+        );
 
         // Record revocation event
         Self::record_verification_event(
@@ -324,6 +336,12 @@ impl VerificationTrait for VerificationImpl {
                 .persistent()
                 .extend_ttl(&metadata_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
+            IdentityContract::grant_role_internal(
+                &env,
+                org_id.clone(),
+                IdentityContract::org_role(&organization.org_type),
+            );
+
             Self::record_verification_event(
                 &env,
                 &org_id,
@@ -396,6 +414,12 @@ impl VerificationTrait for VerificationImpl {
             env.storage()
                 .persistent()
                 .extend_ttl(&metadata_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+
+            IdentityContract::revoke_role_internal(
+                &env,
+                &org_id,
+                &IdentityContract::org_role(&organization.org_type),
+            );
 
             Self::record_verification_event(
                 &env,

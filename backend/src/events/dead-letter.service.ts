@@ -22,10 +22,46 @@ export class DeadLetterService {
     // Poison message threshold - if an event fails this many times, mark as poison
     private readonly POISON_MESSAGE_THRESHOLD = 5;
 
+    // Hooks invoked when an event is dead-lettered. Consumers (e.g. the Soroban
+    // DLQ processor) can register a hook to release resources tied to the event,
+    // such as idempotency keys, so the work can be resubmitted.
+    private readonly deadLetterHooks: Array<
+        (event: DeadLetterEventEntity) => Promise<void> | void
+    > = [];
+
     constructor(
         @InjectRepository(DeadLetterEventEntity)
         private readonly deadLetterRepo: Repository<DeadLetterEventEntity>,
     ) { }
+
+    /**
+     * Register a hook that runs whenever an event is stored in dead-letter
+     * storage. Hooks are awaited and failures are logged but never propagate,
+     * so a misbehaving hook cannot prevent the dead-letter from being stored.
+     */
+    registerDeadLetterHook(
+        hook: (event: DeadLetterEventEntity) => Promise<void> | void,
+    ): void {
+        this.deadLetterHooks.push(hook);
+    }
+
+    /**
+     * Run all registered dead-letter hooks for the given event.
+     */
+    private async runDeadLetterHooks(
+        event: DeadLetterEventEntity,
+    ): Promise<void> {
+        for (const hook of this.deadLetterHooks) {
+            try {
+                await hook(event);
+            } catch (error) {
+                this.logger.error(
+                    `Dead-letter hook failed for eventId=${event.eventId}: ${(error as Error).message}`,
+                    (error as Error).stack,
+                );
+            }
+        }
+    }
 
     /**
      * Store an event in dead-letter storage
@@ -83,6 +119,10 @@ export class DeadLetterService {
                 `Event dead-lettered: eventId=${params.originalEvent.metadata.eventId}, reason=${params.reason}, consumer=${params.failedConsumer}`,
             );
         }
+
+        // Notify hooks (e.g. release idempotency keys) so the work can be
+        // resubmitted after being dead-lettered.
+        await this.runDeadLetterHooks(saved);
 
         return saved;
     }

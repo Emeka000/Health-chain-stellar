@@ -4,6 +4,7 @@
 //! - #1812: hospitals can list their full request history, including closed requests.
 //! - #1813: `initialize` does not authorize the admin as a hospital.
 
+use crate::inventory_client::InventoryReservation;
 use crate::{
     BloodComponent, BloodType, ContractError, RequestContract, RequestContractClient,
     RequestStatus, Urgency,
@@ -11,7 +12,7 @@ use crate::{
 use soroban_sdk::{
     contract, contracterror, contractimpl, symbol_short,
     testutils::{Address as _, Ledger as _},
-    Address, Env, String,
+    Address, Env, String, Vec,
 };
 
 /// Mirrors the inventory contract's error codes used by the release path.
@@ -62,6 +63,32 @@ impl PausableInventory {
             .instance()
             .set(&symbol_short!("released"), &released);
         Ok(())
+    }
+
+    /// Store a reservation for `request_id` so `set_reservation_id` (which
+    /// validates the reservation, #1809) accepts it.
+    pub fn seed_reservation(env: Env, reservation_id: u64, request_id: u64, requester: Address) {
+        let reservation = InventoryReservation {
+            unit_ids: Vec::new(&env),
+            requester: requester.clone(),
+            reserved_by: requester,
+            created_timestamp: 0,
+            expiration_timestamp: u64::MAX,
+            request_id,
+        };
+        env.storage()
+            .persistent()
+            .set(&reservation_id, &reservation);
+    }
+
+    pub fn get_reservation(
+        env: Env,
+        reservation_id: u64,
+    ) -> Result<InventoryReservation, MockInventoryError> {
+        env.storage()
+            .persistent()
+            .get(&reservation_id)
+            .ok_or(MockInventoryError::ReservationNotFound)
     }
 }
 
@@ -122,6 +149,8 @@ fn approve(h: &Harness<'_>, request_id: u64) {
 fn reserved_request(h: &Harness<'_>, required_by: u64) -> u64 {
     let request_id = create(h, required_by);
     approve(h, request_id);
+    h.inventory
+        .seed_reservation(&7u64, &request_id, &Address::generate(&h.env));
     h.client.set_reservation_id(&h.admin, &request_id, &7u64);
     request_id
 }
@@ -261,7 +290,7 @@ fn test_expire_pending_request_after_deadline() {
 
     let request = h.client.get_request(&request_id);
     assert_eq!(request.status, RequestStatus::Cancelled);
-    let last = request.history.last().unwrap();
+    let last = h.client.get_request_history(&request_id).last().unwrap();
     assert_eq!(last.previous_status, RequestStatus::Pending);
     assert_eq!(last.new_status, RequestStatus::Cancelled);
     assert_eq!(last.reason, String::from_str(&h.env, "Request expired"));
@@ -291,7 +320,13 @@ fn test_expire_approved_request_releases_reservation() {
     let request = h.client.get_request(&request_id);
     assert_eq!(request.status, RequestStatus::Cancelled);
     assert_eq!(request.reservation_id, None);
-    assert!(request.history.last().unwrap().released_reservation);
+    assert!(
+        h.client
+            .get_request_history(&request_id)
+            .last()
+            .unwrap()
+            .released_reservation
+    );
     assert_eq!(h.inventory.released(), 1);
 }
 

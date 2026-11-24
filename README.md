@@ -104,4 +104,10 @@ For contract deployment, full environment variable reference, and contributor gu
 | `lifebank-soroban/docs/contracts/` | [Contract Reference Docs](./lifebank-soroban/docs/contracts/) |
 | `docs/architecture.md` | [Architecture Diagram](./docs/architecture.md) |
 
+## Handsoff notes
 
+<!-- handsoff-issue-1834 -->
+- #1834: [lifebank/reputation] appeal_penalty is admin-only, so a penalized entity can't appeal
+
+<!-- handsoff-issue-1835 -->
+- #1835: [lifebank/reputation] Ratings accept arbitrarily old timestamps, and the extra `init` entrypoint panics instead of returning an error

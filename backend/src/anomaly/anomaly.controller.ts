@@ -10,15 +10,19 @@ import {
   ParseUUIDPipe,
   Post,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
 
 import { AnomalyService } from './anomaly.service';
 import { AnomalyScoringService } from './anomaly-scoring.service';
-import { AnomalyDriftService, FeatureBaseline } from './anomaly-drift.service';
+import { AnomalyDriftService } from './anomaly-drift.service';
 import { QueryAnomaliesDto } from './dto/query-anomalies.dto';
 import { ReviewAnomalyDto } from './dto/review-anomaly.dto';
+import { EvaluateDriftDto } from './dto/evaluate-drift.dto';
+import { RegisterBaselineDto } from './dto/register-baseline.dto';
+import { ShadowCompareDto } from './dto/shadow-compare.dto';
 
 @ApiTags('Anomalies')
 @ApiBearerAuth()
@@ -75,7 +79,7 @@ export class AnomalyController {
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('drift/evaluate')
   @RequirePermissions(Permission.ADMIN_ACCESS)
-  async evaluateDrift(@Body() body: { modelVersion?: string }) {
+  async evaluateDrift(@Body(new ValidationPipe()) body: EvaluateDriftDto) {
     return this.driftService.evaluateDrift(body.modelVersion ?? '1.0.0');
   }
 
@@ -84,7 +88,7 @@ export class AnomalyController {
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('drift/baseline')
   @RequirePermissions(Permission.ADMIN_ACCESS)
-  registerBaseline(@Body() baseline: FeatureBaseline) {
+  registerBaseline(@Body(new ValidationPipe()) baseline: RegisterBaselineDto) {
     this.driftService.registerBaseline(baseline);
     return { message: 'Baseline registered' };
   }
@@ -103,14 +107,7 @@ export class AnomalyController {
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('drift/shadow-compare')
   @RequirePermissions(Permission.ADMIN_ACCESS)
-  shadowCompare(
-    @Body() body: {
-      currentScores: number[];
-      candidateScores: number[];
-      currentModelVersion: string;
-      candidateModelVersion: string;
-    },
-  ) {
+  shadowCompare(@Body(new ValidationPipe()) body: ShadowCompareDto) {
     return this.driftService.compareShadowScoring(
       body.currentScores,
       body.candidateScores,

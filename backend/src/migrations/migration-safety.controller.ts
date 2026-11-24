@@ -2,9 +2,11 @@ import { Controller, Get, Post, Body } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
+  ApiProperty,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { IsNotEmpty, IsString } from 'class-validator';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
@@ -12,6 +14,23 @@ import { Permission } from '../auth/enums/permission.enum';
 import { MigrationIntegrityService } from './migration-integrity.service';
 import { MigrationPreflightService } from './migration-preflight.service';
 import { MigrationRepairService } from './migration-repair.service';
+
+export class EnsureColumnDto {
+  @ApiProperty({ description: 'Table name' })
+  @IsString()
+  @IsNotEmpty()
+  table: string;
+
+  @ApiProperty({ description: 'Column name' })
+  @IsString()
+  @IsNotEmpty()
+  column: string;
+
+  @ApiProperty({ description: 'Column definition' })
+  @IsString()
+  @IsNotEmpty()
+  definition: string;
+}
 
 @ApiTags('Migration Safety')
 @ApiBearerAuth()
@@ -49,9 +68,7 @@ export class MigrationSafetyController {
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @RequirePermissions(Permission.ADMIN_ACCESS)
   @Post('repair/column')
-  ensureColumn(
-    @Body() body: { table: string; column: string; definition: string },
-  ) {
+  ensureColumn(@Body() body: EnsureColumnDto) {
     return this.repair.ensureColumnExists(
       body.table,
       body.column,

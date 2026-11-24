@@ -8,7 +8,7 @@ import { BloodUnit } from '../blood-units/entities/blood-unit.entity';
 import { OrderEntity } from '../orders/entities/order.entity';
 import { DisputeEntity } from '../disputes/entities/dispute.entity';
 import { OrganizationEntity } from '../organizations/entities/organization.entity';
-import { BloodRequestEntity } from '../blood-requests/entities/blood-request.entity';
+import { BloodRequest as BloodRequestEntity } from '../blood-requests/entities/blood-request.entity';
 import { PaginationUtil, PaginatedResponse } from '../common/pagination';
 
 import { ReportingQueryDto } from './dto/reporting-query.dto';
@@ -258,206 +258,33 @@ export class ReportingService {
       pageParams,
     );
 
-    return PaginationUtil.createResponse(rows, page, pageSize, total);
+    return PaginationUtil.createResponse(rows, total, page, pageSize);
   }
 
-  /**
-   * Blood unit inventory snapshot from materialized view.
-   */
-  async getBloodUnitInventory(
-    bloodType?: string,
-    status?: string,
-    actor?: { role?: string; organizationId?: string | null },
-  ): Promise<BloodUnitInventoryRow[]> {
-    const conditions: string[] = [];
-    const params: unknown[] = [];
-
-    if (bloodType) {
-      params.push(bloodType);
-      conditions.push('blood_type = $' + params.length);
-    }
-    if (status) {
-      params.push(status);
-      conditions.push('status = $' + params.length);
-    }
-    if (this.isScopedActor(actor)) {
-      params.push(actor.organizationId);
-      conditions.push('organization_id = $' + params.length);
-    }
-
-    const whereClause = conditions.length
-      ? 'WHERE ' + conditions.join(' AND ')
-      : '';
-
-    const sql = [
-      'SELECT',
-      '  blood_type          AS "bloodType",',
-      '  status,',
-      '  unit_count          AS "unitCount",',
-      '  COALESCE(total_volume_ml, 0) AS "totalVolumeMl",',
-      '  earliest_expiry     AS "earliestExpiry",',
-      '  latest_intake       AS "latestIntake"',
-      'FROM mv_blood_unit_inventory',
-      whereClause,
-      'ORDER BY blood_type, status',
-    ].join(' ');
-
-    return this.dataSource.query(sql, params);
-  }
-
-  /** Returns freshness metadata for all materialized views. */
-  async getViewFreshness(): Promise<ViewFreshnessInfo[]> {
-    return this.refreshService.getFreshnessInfo();
-  }
-
-  /** Trigger a manual refresh of a specific view (admin operation). */
-  async triggerViewRefresh(viewName: MaterializedViewName) {
-    return this.refreshService.refreshView(viewName);
-  }
-
-  /** Trigger refresh of all views. */
-  async triggerAllViewRefresh() {
-    return this.refreshService.refreshAll();
-  }
-
-  // ── Excel export ──────────────────────────────────────────────────────────
-
-  async exportToExcel(
-    filters: ReportingFilterDto,
-    actor?: { role?: string; organizationId?: string | null },
-  ): Promise<Buffer> {
-    // Cap export at 10 000 rows per domain to avoid OOM
-    const exportFilters = { ...filters, limit: 10_000, offset: 0 };
-    const workbook = new ExcelJS.Workbook();
-    const data = await this.search(exportFilters, actor);
-
-    if (data.donors) {
-      const sheet = workbook.addWorksheet('Donors');
-      sheet.columns = [
-        { header: 'ID', key: 'id' },
-        { header: 'Email', key: 'email' },
-        { header: 'Name', key: 'name' },
-        { header: 'Region', key: 'region' },
-        { header: 'Created At', key: 'createdAt' },
-      ];
-      const paged = data.donors as PaginatedResponse<Record<string, unknown>>;
-      paged.data.forEach((d) => sheet.addRow(d));
-    }
-
-    if (data.units) {
-      const sheet = workbook.addWorksheet('Units');
-      sheet.columns = [
-        { header: 'Unit Code', key: 'unitCode' },
-        { header: 'Blood Type', key: 'bloodType' },
-        { header: 'Status', key: 'status' },
-        { header: 'Volume (ml)', key: 'volumeMl' },
-        { header: 'Expires At', key: 'expiresAt' },
-      ];
-      const paged = data.units as PaginatedResponse<Record<string, unknown>>;
-      paged.data.forEach((u) => sheet.addRow(u));
-    }
-
-    if (data.orders) {
-      const sheet = workbook.addWorksheet('Orders');
-      sheet.columns = [
-        { header: 'ID', key: 'id' },
-        { header: 'Hospital ID', key: 'hospitalId' },
-        { header: 'Blood Type', key: 'bloodType' },
-        { header: 'Quantity', key: 'quantity' },
-        { header: 'Status', key: 'status' },
-      ];
-      const paged = data.orders as PaginatedResponse<Record<string, unknown>>;
-      paged.data.forEach((o) => sheet.addRow(o));
-    }
-
-    return workbook.xlsx.writeBuffer() as Promise<Buffer>;
-  }
-
-  // ── Private helpers ───────────────────────────────────────────────────────
-
-  private resolvePagination(filters: ReportingFilterDto | ReportingQueryDto): {
-    page: number;
-    pageSize: number;
-  } {
-    const q = filters as ReportingQueryDto;
-    if (q.page !== undefined || q.pageSize !== undefined) {
-      return { page: q.page ?? 1, pageSize: q.pageSize ?? 50 };
-    }
-    // Legacy: derive from limit/offset
-    const pageSize = Math.min(filters.limit ?? 50, 200);
-    const page = filters.offset ? Math.floor(filters.offset / pageSize) + 1 : 1;
-    return { page, pageSize };
-  }
-
-  private applyDateFilters(
-    query: SelectQueryBuilder<unknown>,
-    alias: string,
-    filters: ReportingFilterDto | ReportingQueryDto,
-  ): void {
-    if (filters.startDate && filters.endDate) {
-      query.andWhere(alias + '.createdAt BETWEEN :start AND :end', {
-        start: new Date(filters.startDate),
-        end: new Date(filters.endDate),
-      });
-    } else if (filters.startDate) {
-      query.andWhere(alias + '.createdAt >= :start', {
-        start: new Date(filters.startDate),
-      });
-    } else if (filters.endDate) {
-      query.andWhere(alias + '.createdAt <= :end', {
-        end: new Date(filters.endDate),
-      });
-    }
-  }
+  // ── Internal helpers ──────────────────────────────────────────────────────
 
   private isScopedActor(actor?: {
     role?: string;
     organizationId?: string | null;
   }): actor is { role?: string; organizationId: string } {
-    return (
-      !!actor?.organizationId && (actor.role ?? '').toLowerCase() !== 'admin'
-    );
+    return Boolean(actor?.organizationId);
   }
 
-  private applyActorScope(
-    query: SelectQueryBuilder<unknown>,
-    alias: string,
-    actor?: { role?: string; organizationId?: string | null },
-  ): void {
-    if (!this.isScopedActor(actor)) return;
-
-    const organizationId = actor.organizationId;
-    if (alias === 'user') {
-      query.andWhere('user.organizationId = :organizationId', {
-        organizationId,
-      });
-      return;
+  private resolvePagination(filters: {
+    limit?: number;
+    offset?: number;
+    page?: number;
+    pageSize?: number;
+  }): { page: number; pageSize: number } {
+    if (filters.page !== undefined || filters.pageSize !== undefined) {
+      return {
+        page: filters.page ?? 1,
+        pageSize: filters.pageSize ?? 50,
+      };
     }
-    if (alias === 'unit') {
-      query.andWhere('unit.organizationId = :organizationId', {
-        organizationId,
-      });
-      return;
-    }
-    if (alias === 'order') {
-      query.andWhere('order.hospitalId = :organizationId', { organizationId });
-      return;
-    }
-    if (alias === 'dispute') {
-      query
-        .leftJoin(OrderEntity, 'orderScope', 'orderScope.id = dispute.orderId')
-        .andWhere('orderScope.hospitalId = :organizationId', {
-          organizationId,
-        });
-      return;
-    }
-    if (alias === 'org') {
-      query.andWhere('org.id = :organizationId', { organizationId });
-      return;
-    }
-    if (alias === 'req') {
-      query.andWhere('req.hospitalId = :organizationId', { organizationId });
-    }
+    const pageSize = filters.limit ?? 50;
+    const page = Math.floor((filters.offset ?? 0) / pageSize) + 1;
+    return { page, pageSize };
   }
 
   private async queryDonorsPaginated(
@@ -465,36 +292,14 @@ export class ReportingService {
     page: number,
     pageSize: number,
     actor?: { role?: string; organizationId?: string | null },
-  ): Promise<PaginatedResponse<UserEntity>> {
-    const query = this.userRepository
-      .createQueryBuilder('user')
-      .select(['user.id', 'user.email', 'user.role', 'user.createdAt'])
-      .where('user.role = :role', { role: 'donor' });
-
-    this.applyDateFilters(
-      query as unknown as SelectQueryBuilder<unknown>,
-      'user',
-      filters,
-    );
-
-    if (filters.bloodType) {
-      query.andWhere("user.profile->>'bloodType' = :bloodType", {
-        bloodType: filters.bloodType,
-      });
-    }
-    if (filters.location) {
-      query.andWhere('user.region ILIKE :location', {
-        location: '%' + filters.location + '%',
-      });
-    }
-
-    const [items, total] = await query
-      .orderBy('user.createdAt', 'DESC')
-      .skip(PaginationUtil.calculateSkip(page, pageSize))
-      .take(pageSize)
-      .getManyAndCount();
-
-    return PaginationUtil.createResponse(items, page, pageSize, total);
+  ): Promise<PaginatedResponse<unknown>> {
+    const qb = this.userRepository.createQueryBuilder('user');
+    this.applyDateRange(qb, 'user', 'createdAt', filters);
+    this.applyStatusGroups(qb, 'user', filters);
+    this.applyLocation(qb, 'user', filters);
+    this.applyBloodType(qb, 'user', filters);
+    this.applyActorScope(qb, 'user', actor);
+    return this.paginate(qb, page, pageSize);
   }
 
   private async queryUnitsPaginated(
@@ -502,33 +307,14 @@ export class ReportingService {
     page: number,
     pageSize: number,
     actor?: { role?: string; organizationId?: string | null },
-  ): Promise<PaginatedResponse<BloodUnit>> {
-    const query = this.unitRepository.createQueryBuilder('unit');
-    this.applyDateFilters(
-      query as unknown as SelectQueryBuilder<unknown>,
-      'unit',
-      filters,
-    );
-    this.applyActorScope(query, 'unit', actor);
-
-    if (filters.bloodType) {
-      query.andWhere('unit.bloodType = :bloodType', {
-        bloodType: filters.bloodType,
-      });
-    }
-    if (filters.statusGroups?.length) {
-      query.andWhere('unit.status IN (:...statuses)', {
-        statuses: filters.statusGroups,
-      });
-    }
-
-    const [items, total] = await query
-      .orderBy('unit.createdAt', 'DESC')
-      .skip(PaginationUtil.calculateSkip(page, pageSize))
-      .take(pageSize)
-      .getManyAndCount();
-
-    return PaginationUtil.createResponse(items, page, pageSize, total);
+  ): Promise<PaginatedResponse<unknown>> {
+    const qb = this.unitRepository.createQueryBuilder('unit');
+    this.applyDateRange(qb, 'unit', 'createdAt', filters);
+    this.applyStatusGroups(qb, 'unit', filters);
+    this.applyLocation(qb, 'unit', filters);
+    this.applyBloodType(qb, 'unit', filters);
+    this.applyActorScope(qb, 'unit', actor);
+    return this.paginate(qb, page, pageSize);
   }
 
   private async queryOrdersPaginated(
@@ -536,39 +322,14 @@ export class ReportingService {
     page: number,
     pageSize: number,
     actor?: { role?: string; organizationId?: string | null },
-  ): Promise<PaginatedResponse<OrderEntity>> {
-    const query = this.orderRepository
-      .createQueryBuilder('order')
-      .select([
-        'order.id',
-        'order.hospitalId',
-        'order.bloodType',
-        'order.quantity',
-        'order.status',
-        'order.createdAt',
-        'order.appliedPolicyId',
-      ]);
-
-    this.applyDateFilters(
-      query as unknown as SelectQueryBuilder<unknown>,
-      'order',
-      filters,
-    );
-    this.applyActorScope(query, 'order', actor);
-
-    if (filters.statusGroups?.length) {
-      query.andWhere('order.status IN (:...statuses)', {
-        statuses: filters.statusGroups,
-      });
-    }
-
-    const [items, total] = await query
-      .orderBy('order.createdAt', 'DESC')
-      .skip(PaginationUtil.calculateSkip(page, pageSize))
-      .take(pageSize)
-      .getManyAndCount();
-
-    return PaginationUtil.createResponse(items, page, pageSize, total);
+  ): Promise<PaginatedResponse<unknown>> {
+    const qb = this.orderRepository.createQueryBuilder('order');
+    this.applyDateRange(qb, 'order', 'createdAt', filters);
+    this.applyStatusGroups(qb, 'order', filters);
+    this.applyLocation(qb, 'order', filters);
+    this.applyBloodType(qb, 'order', filters);
+    this.applyActorScope(qb, 'order', actor);
+    return this.paginate(qb, page, pageSize);
   }
 
   private async queryDisputesPaginated(
@@ -576,28 +337,12 @@ export class ReportingService {
     page: number,
     pageSize: number,
     actor?: { role?: string; organizationId?: string | null },
-  ): Promise<PaginatedResponse<DisputeEntity>> {
-    const query = this.disputeRepository.createQueryBuilder('dispute');
-    this.applyDateFilters(
-      query as unknown as SelectQueryBuilder<unknown>,
-      'dispute',
-      filters,
-    );
-    this.applyActorScope(query, 'dispute', actor);
-
-    if (filters.statusGroups?.length) {
-      query.andWhere('dispute.status IN (:...statuses)', {
-        statuses: filters.statusGroups,
-      });
-    }
-
-    const [items, total] = await query
-      .orderBy('dispute.createdAt', 'DESC')
-      .skip(PaginationUtil.calculateSkip(page, pageSize))
-      .take(pageSize)
-      .getManyAndCount();
-
-    return PaginationUtil.createResponse(items, page, pageSize, total);
+  ): Promise<PaginatedResponse<unknown>> {
+    const qb = this.disputeRepository.createQueryBuilder('dispute');
+    this.applyDateRange(qb, 'dispute', 'createdAt', filters);
+    this.applyStatusGroups(qb, 'dispute', filters);
+    this.applyActorScope(qb, 'dispute', actor);
+    return this.paginate(qb, page, pageSize);
   }
 
   private async queryOrganizationsPaginated(
@@ -605,28 +350,13 @@ export class ReportingService {
     page: number,
     pageSize: number,
     actor?: { role?: string; organizationId?: string | null },
-  ): Promise<PaginatedResponse<OrganizationEntity>> {
-    const query = this.organizationRepository.createQueryBuilder('org');
-    this.applyDateFilters(
-      query as unknown as SelectQueryBuilder<unknown>,
-      'org',
-      filters,
-    );
-    this.applyActorScope(query, 'org', actor);
-
-    if (filters.location) {
-      query.andWhere('(org.city ILIKE :loc OR org.country ILIKE :loc)', {
-        loc: '%' + filters.location + '%',
-      });
-    }
-
-    const [items, total] = await query
-      .orderBy('org.createdAt', 'DESC')
-      .skip(PaginationUtil.calculateSkip(page, pageSize))
-      .take(pageSize)
-      .getManyAndCount();
-
-    return PaginationUtil.createResponse(items, page, pageSize, total);
+  ): Promise<PaginatedResponse<unknown>> {
+    const qb = this.organizationRepository.createQueryBuilder('organization');
+    this.applyDateRange(qb, 'organization', 'createdAt', filters);
+    this.applyStatusGroups(qb, 'organization', filters);
+    this.applyLocation(qb, 'organization', filters);
+    this.applyActorScope(qb, 'organization', actor);
+    return this.paginate(qb, page, pageSize);
   }
 
   private async queryRequestsPaginated(
@@ -634,70 +364,125 @@ export class ReportingService {
     page: number,
     pageSize: number,
     actor?: { role?: string; organizationId?: string | null },
-  ): Promise<PaginatedResponse<BloodRequestEntity>> {
-    const query = this.requestRepository.createQueryBuilder('req');
-    this.applyDateFilters(
-      query as unknown as SelectQueryBuilder<unknown>,
-      'req',
-      filters,
-    );
-    this.applyActorScope(query, 'req', actor);
+  ): Promise<PaginatedResponse<unknown>> {
+    const qb = this.requestRepository.createQueryBuilder('request');
+    this.applyDateRange(qb, 'request', 'createdAt', filters);
+    this.applyStatusGroups(qb, 'request', filters);
+    this.applyLocation(qb, 'request', filters);
+    this.applyBloodType(qb, 'request', filters);
+    this.applyActorScope(qb, 'request', actor);
+    return this.paginate(qb, page, pageSize);
+  }
 
+  private applyDateRange(
+    qb: SelectQueryBuilder<unknown>,
+    alias: string,
+    column: string,
+    filters: ReportingFilterDto | ReportingQueryDto,
+  ): void {
+    if (filters.startDate) {
+      qb.andWhere(`${alias}.${column} >= :startDate`, {
+        startDate: filters.startDate,
+      });
+    }
+    if (filters.endDate) {
+      qb.andWhere(`${alias}.${column} <= :endDate`, {
+        endDate: filters.endDate,
+      });
+    }
+  }
+
+  private applyStatusGroups(
+    qb: SelectQueryBuilder<unknown>,
+    alias: string,
+    filters: ReportingFilterDto | ReportingQueryDto,
+  ): void {
+    if (filters.statusGroups?.length) {
+      qb.andWhere(`${alias}.status IN (:...statusGroups)`, {
+        statusGroups: filters.statusGroups,
+      });
+    }
+  }
+
+  private applyLocation(
+    qb: SelectQueryBuilder<unknown>,
+    alias: string,
+    filters: ReportingFilterDto | ReportingQueryDto,
+  ): void {
+    if (filters.location) {
+      qb.andWhere(`${alias}.location = :location`, {
+        location: filters.location,
+      });
+    }
+  }
+
+  private applyBloodType(
+    qb: SelectQueryBuilder<unknown>,
+    alias: string,
+    filters: ReportingFilterDto | ReportingQueryDto,
+  ): void {
     if (filters.bloodType) {
-      query.andWhere('req.bloodType = :bloodType', {
+      qb.andWhere(`${alias}.bloodType = :bloodType`, {
         bloodType: filters.bloodType,
       });
     }
-    if (filters.statusGroups?.length) {
-      query.andWhere('req.status IN (:...statuses)', {
-        statuses: filters.statusGroups,
-      });
-    }
-
-    const [items, total] = await query
-      .orderBy('req.createdAt', 'DESC')
-      .skip(PaginationUtil.calculateSkip(page, pageSize))
-      .take(pageSize)
-      .getManyAndCount();
-
-    return PaginationUtil.createResponse(items, page, pageSize, total);
   }
 
-  // ── Summary helpers ───────────────────────────────────────────────────────
+  private applyActorScope(
+    qb: SelectQueryBuilder<unknown>,
+    alias: string,
+    actor?: { role?: string; organizationId?: string | null },
+  ): void {
+    if (this.isScopedActor(actor)) {
+      qb.andWhere(`${alias}.organizationId = :organizationId`, {
+        organizationId: actor.organizationId,
+      });
+    }
+  }
+
+  private async paginate(
+    qb: SelectQueryBuilder<unknown>,
+    page: number,
+    pageSize: number,
+  ): Promise<PaginatedResponse<unknown>> {
+    const skip = PaginationUtil.calculateSkip(page, pageSize);
+    const [items, total] = await qb.skip(skip).take(pageSize).getManyAndCount();
+    return PaginationUtil.createResponse(items, total, page, pageSize);
+  }
 
   private async getSummaryFromMaterialized(): Promise<ReportSummaryResult> {
-    const [orderRows, unitRows, disputeRows, freshnessInfo] = await Promise.all(
-      [
-        this.dataSource.query(
-          'SELECT SUM(order_count)::BIGINT AS total FROM mv_daily_order_summary',
-        ),
-        this.dataSource.query(
-          'SELECT SUM(unit_count)::BIGINT AS total FROM mv_blood_unit_inventory',
-        ),
-        this.dataSource.query(
-          'SELECT SUM(dispute_count)::BIGINT AS total FROM mv_daily_dispute_summary',
-        ),
-        this.refreshService.getFreshnessInfo(),
-      ],
-    );
+    const [orderRows, unitRows, disputeRows] = await Promise.all([
+      this.dataSource.query(
+        'SELECT COALESCE(SUM(order_count), 0) AS total FROM mv_daily_order_summary',
+      ),
+      this.dataSource.query(
+        'SELECT COALESCE(SUM(unit_count), 0) AS total FROM mv_blood_unit_inventory',
+      ),
+      this.dataSource.query(
+        'SELECT COALESCE(SUM(dispute_count), 0) AS total FROM mv_daily_dispute_summary',
+      ),
+    ]);
 
-    // Donor count is cheap — always live (no materialized view for users)
-    const donorCount = await this.userRepository.count({
-      where: { role: 'donor' as any },
-    });
+    const freshness = await this.refreshService.getViewFreshness([
+      'mv_daily_order_summary',
+      'mv_blood_unit_inventory',
+      'mv_daily_dispute_summary',
+    ]);
 
-    const oldestRefresh = freshnessInfo
-      .map((f) => f.lastRefreshed)
-      .sort((a, b) => a.getTime() - b.getTime())[0];
+    const oldest = freshness.reduce<Date | null>((acc, info) => {
+      if (!info.lastRefreshedAt) return acc;
+      if (!acc || info.lastRefreshedAt < acc) return info.lastRefreshedAt;
+      return acc;
+    }, null);
 
     return {
-      donors: donorCount,
+      donors: 0,
       units: Number(unitRows[0]?.total ?? 0),
       orders: Number(orderRows[0]?.total ?? 0),
       disputes: Number(disputeRows[0]?.total ?? 0),
-      dataFreshnessAt: oldestRefresh?.toISOString() ?? null,
+      dataFreshnessAt: oldest ? oldest.toISOString() : null,
       fromMaterialized: true,
-      viewFreshness: freshnessInfo,
+      viewFreshness: freshness,
     };
   }
 
@@ -705,44 +490,11 @@ export class ReportingService {
     filters: ReportingFilterDto | ReportingQueryDto,
     actor?: { role?: string; organizationId?: string | null },
   ): Promise<ReportSummaryResult> {
-    const donorQuery = this.userRepository
-      .createQueryBuilder('user')
-      .where('user.role = :role', { role: 'donor' });
-    this.applyDateFilters(
-      donorQuery as unknown as SelectQueryBuilder<unknown>,
-      'user',
-      filters,
-    );
-
-    const unitQuery = this.unitRepository.createQueryBuilder('unit');
-    this.applyDateFilters(
-      unitQuery as unknown as SelectQueryBuilder<unknown>,
-      'unit',
-      filters,
-    );
-    this.applyActorScope(unitQuery, 'unit', actor);
-
-    const orderQuery = this.orderRepository.createQueryBuilder('order');
-    this.applyDateFilters(
-      orderQuery as unknown as SelectQueryBuilder<unknown>,
-      'order',
-      filters,
-    );
-    this.applyActorScope(orderQuery, 'order', actor);
-
-    const disputeQuery = this.disputeRepository.createQueryBuilder('dispute');
-    this.applyDateFilters(
-      disputeQuery as unknown as SelectQueryBuilder<unknown>,
-      'dispute',
-      filters,
-    );
-    this.applyActorScope(disputeQuery, 'dispute', actor);
-
     const [donors, units, orders, disputes] = await Promise.all([
-      donorQuery.getCount(),
-      unitQuery.getCount(),
-      orderQuery.getCount(),
-      disputeQuery.getCount(),
+      this.queryDonorsPaginated(filters, 1, 1, actor).then((r) => r.total),
+      this.queryUnitsPaginated(filters, 1, 1, actor).then((r) => r.total),
+      this.queryOrdersPaginated(filters, 1, 1, actor).then((r) => r.total),
+      this.queryDisputesPaginated(filters, 1, 1, actor).then((r) => r.total),
     ]);
 
     return {
@@ -750,8 +502,42 @@ export class ReportingService {
       units,
       orders,
       disputes,
-      dataFreshnessAt: new Date().toISOString(),
+      dataFreshnessAt: null,
       fromMaterialized: false,
     };
+  }
+
+  /**
+   * Export a report to an Excel buffer.
+   */
+  async exportToExcel(
+    rows: Record<string, unknown>[],
+    sheetName = 'Report',
+  ): Promise<Buffer> {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet(sheetName);
+
+    if (rows.length > 0) {
+      const columns = Object.keys(rows[0]).map((key) => ({
+        header: key,
+        key,
+        width: 20,
+      }));
+      sheet.columns = columns;
+      rows.forEach((row) => sheet.addRow(row));
+    }
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    return Buffer.from(buffer);
+  }
+
+  /**
+   * Refresh all reporting materialized views.
+   */
+  async refreshMaterializedViews(
+    views?: MaterializedViewName[],
+  ): Promise<ViewFreshnessInfo[]> {
+    await this.refreshService.refreshViews(views);
+    return this.refreshService.getViewFreshness(views);
   }
 }

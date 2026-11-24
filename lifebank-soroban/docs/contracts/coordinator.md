@@ -2,6 +2,27 @@
 
 The coordinator is the integration hub. It holds references to the requests, inventory, and payments contracts and enforces the canonical three-step delivery workflow. No blood unit can be delivered and no payment can be released without passing through this contract.
 
+## Deployment wiring
+
+The coordinator authorizes every cross-contract call as itself (a direct
+sub-call satisfies `require_auth` for the invoking contract), so a workflow
+step only needs the coordinator admin's signature and `expire_workflow` needs
+none. For that to work:
+
+- the coordinator must be the payments contract's admin;
+- inventory must trust it: `inventory.set_coordinator_contract(admin, coordinator)`;
+- requests must trust it: `requests.set_coordinator_contract(coordinator)`.
+
+The coordinator drives the request lifecycle through
+`requests.update_status_by_contract`:
+
+| Coordinator step | Request status |
+|---|---|
+| `allocate_units` | `Pending → Approved` |
+| `confirm_delivery` | `Approved → InProgress` |
+| `settle_payment` | `→ Fulfilled` |
+| `rollback` / `expire_workflow` | `→ Cancelled` (skipped if already closed) |
+
 ## State machine
 
 ```
@@ -61,7 +82,6 @@ pub fn allocate_units(
     unit_ids: Vec<u64>,
     payment_id: u64,
     caller: Address,
-    blood_type: BloodType,
 ) -> Result<(), CoordinatorError>
 ```
 
@@ -85,8 +105,7 @@ Step 1 of the workflow.
 - Creates a `WorkflowRecord` with status `Allocated`.
 - Emits `(coord, alloc, v1)` with `(request_id, unit_ids, unit_count)`.
 
-Fails if the contract is paused or halted, or a workflow for this `request_id`
-already exists in a non-terminal state.
+Fails if the contract is paused.
 
 ---
 
@@ -182,6 +201,18 @@ Admin-only. Reverses an `Allocated` or `AwaitingReceipt` workflow.
 - Emits `(coord, rollbk, v1)` with `request_id`.
 
 Returns `CannotRollbackSettled` if the workflow has already settled.
+
+---
+
+### expire_workflow
+
+```rust
+pub fn expire_workflow(env: Env, request_id: u64) -> Result<(), CoordinatorError>
+```
+
+Permissionless: anyone may call it once `ledger.timestamp() >= expires_at` on
+an `Allocated` workflow. Performs the same unwinding as `rollback` without any
+signature. Emits `(coord, expired, v1)` with `request_id`.
 
 ---
 
@@ -317,7 +348,7 @@ pub struct ExcursionSummary {
 | `NotInitialized` | 801 | Contract not yet initialized |
 | `Unauthorized` | 802 | Caller is not admin |
 | `WorkflowNotFound` | 810 | No workflow for this request_id |
-| `WorkflowAlreadyStarted` | 811 | Workflow exists and is not Pending |
+| `WorkflowAlreadyStarted` | 811 | A workflow (terminal or not) already exists for this request |
 | `InvalidWorkflowState` | 812 | Wrong workflow state for this step |
 | `CannotRollbackSettled` | 813 | Workflow already settled |
 | `RequestNotFound` | 820 | Cross-contract: request not found |
@@ -327,9 +358,13 @@ pub struct ExcursionSummary {
 | `PaymentNotFound` | 824 | Cross-contract: payment not found |
 | `InvalidPaymentState` | 825 | Payment is not in expected state |
 | `DeliveryNotConfirmed` | 826 | settle_payment called before confirm_delivery |
+| `IncompatibleBloodType` | 827 | Unit cannot donate to the request's blood type |
+| `NoUnitsSpecified` | 828 | `unit_ids` is empty |
+| `PaymentRequestMismatch` | 829 | Payment belongs to another request |
 | `InventoryUpdateFailed` | 830 | Cross-contract call to inventory failed |
 | `PaymentUpdateFailed` | 831 | Cross-contract call to payments failed |
 | `PaymentFlagFailed` | 832 | Cross-contract dispute recording failed |
+| `RequestUpdateFailed` | 833 | Requests contract refused a lifecycle transition |
 | `ContractPaused` | 840 | Contract is paused |
 | `EmergencyHalted` | 841 | Emergency halt is active |
 | `WorkflowNotExpired` | 842 | `expire_workflow` called before the deadline |

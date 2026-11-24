@@ -6,7 +6,7 @@ import { Permission } from '../auth/enums/permission.enum';
 import { FeePolicyService } from './fee-policy.service';
 import { FeePolicyAnalyzerService } from './fee-policy-analyzer.service';
 import { FeePolicyRolloutService } from './fee-policy-rollout.service';
-import { CreateFeePolicyDto, UpdateFeePolicyDto, FeePreviewDto, FeeBreakdownDto } from './dto/fee-policy.dto';
+import { CreateFeePolicyDto, UpdateFeePolicyDto, FeePreviewDto, FeeBreakdownDto, StartCanaryDeploymentDto } from './dto/fee-policy.dto';
 
 @ApiTags('Fee Policy')
 @ApiBearerAuth()
@@ -99,7 +99,7 @@ export class FeePolicyController {
     @Post(':id/canary/start')
     startCanaryDeployment(
         @Param('id', ParseUUIDPipe) id: string,
-        @Body() body: { percentage: number; durationHours?: number },
+        @Body() body: StartCanaryDeploymentDto,
     ) {
         return this.feePolicyRolloutService.startCanaryDeployment(
             id,

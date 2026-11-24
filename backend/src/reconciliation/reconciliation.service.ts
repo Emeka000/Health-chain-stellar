@@ -27,6 +27,48 @@ import {
 const AMOUNT_TOLERANCE = 0.0000001;
 const TIMESTAMP_TOLERANCE_MS = 60_000; // 1 minute
 
+/**
+ * On-chain payment status values returned by the payments contract's
+ * `Payment` struct (`PaymentStatus` in `lifebank-soroban/contracts/payments`).
+ */
+type PaymentStatus =
+  | 'Pending'
+  | 'Locked'
+  | 'Released'
+  | 'Refunded'
+  | 'Disputed'
+  | 'Cancelled';
+
+/**
+ * Explicit mapping from the contract's `PaymentStatus` vocabulary to the
+ * backend's `DonationStatus` vocabulary. Values with no mapping are absent
+ * so callers can refuse to write them.
+ */
+const PAYMENT_STATUS_TO_DONATION_STATUS: Record<
+  PaymentStatus,
+  DonationStatus
+> = {
+  Pending: DonationStatus.PENDING,
+  Locked: DonationStatus.PENDING,
+  Released: DonationStatus.COMPLETED,
+  Refunded: DonationStatus.CANCELLED,
+  Disputed: DonationStatus.PENDING,
+  Cancelled: DonationStatus.CANCELLED,
+};
+
+/**
+ * Map a raw on-chain payment status to a `DonationStatus`.
+ * Returns `null` when the value has no explicit mapping.
+ */
+function mapPaymentStatusToDonationStatus(
+  status: string | null | undefined,
+): DonationStatus | null {
+  if (!status) return null;
+  const mapped =
+    PAYMENT_STATUS_TO_DONATION_STATUS[status as PaymentStatus];
+  return mapped ?? null;
+}
+
 interface MismatchCandidate {
   referenceId: string;
   referenceType: string;
@@ -200,8 +242,16 @@ export class ReconciliationService {
         | string
         | undefined;
       if (onChainStatus) {
+        // Refuse to write raw contract status values into donations.status.
+        // Only explicitly mapped DonationStatus values may be persisted.
+        const mappedStatus = mapPaymentStatusToDonationStatus(onChainStatus);
+        if (!mappedStatus) {
+          throw new BadRequestException(
+            `Cannot resync donation status '${onChainStatus}': no mapping to DonationStatus`,
+          );
+        }
         await this.donationRepo.update(mismatch.referenceId, {
-          status: onChainStatus as DonationStatus,
+          status: mappedStatus,
         });
       }
     }
@@ -347,8 +397,28 @@ export class ReconciliationService {
       if (!donation.transactionHash) continue;
 
       try {
+        // The payments contract's get_payment view takes a u64 payment_id,
+        // not a transaction hash. Resolve the on-chain payment id first.
+        const paymentId = await this.resolvePaymentId(donation);
+        if (paymentId === null) {
+          mismatches.push(
+            this.buildMismatch(
+              donation.id,
+              'donation',
+              MismatchType.MISSING_ON_CHAIN,
+              MismatchSeverity.HIGH,
+              null,
+              { status: donation.status, amount: donation.amount },
+              ExceptionCategory.MISSING_ON_CHAIN,
+              0,
+              'Verify transaction was submitted; re-submit if necessary',
+            ),
+          );
+          continue;
+        }
+
         const onChain = await this.sorobanService.executeWithRetry(() =>
-          this.fetchPaymentState(donation.transactionHash),
+          this.fetchPaymentState(paymentId),
         );
 
         if (!onChain) {
@@ -368,10 +438,15 @@ export class ReconciliationService {
           continue;
         }
 
-        // Status check
-        if (onChain.status !== (donation.status as string)) {
+        // Status check — compare mapped DonationStatus vocabularies.
+        const mappedStatus = mapPaymentStatusToDonationStatus(onChain.status);
+        if (mappedStatus === null) {
+          this.logger.warn(
+            `Donation ${donation.id}: on-chain payment status '${onChain.status}' has no DonationStatus mapping`,
+          );
+        } else if (mappedStatus !== donation.status) {
           const score = this.rankCandidate(
-            { status: onChain.status },
+            { status: mappedStatus },
             { status: donation.status },
           );
           mismatches.push(
@@ -568,36 +643,61 @@ export class ReconciliationService {
   }
 
   /**
-   * Fetch on-chain payment state for a donation transaction hash.
+   * Resolve the on-chain `payment_id` (u64) for a donation.
    *
-   * Calls the Soroban payments contract via SorobanService to retrieve
-   * the current status, amount, and timestamp of the payment identified
-   * by `txHash`. Returns null when the payments client is not initialised
-   * (e.g. in unit-test or dev environments where contract IDs are unset).
+   * Prefers the `paymentId` stored on the donation entity when the payment
+   * was created. Falls back to looking the payment up by its request id via
+   * the payments contract's `get_payment_by_request` view.
+   *
+   * Returns `null` when no payment id can be determined.
+   */
+  private async resolvePaymentId(
+    donation: DonationEntity,
+  ): Promise<bigint | null> {
+    const stored = (donation as unknown as { paymentId?: unknown }).paymentId;
+    if (stored !== undefined && stored !== null && stored !== '') {
+      try {
+        return BigInt(stored as string | number | bigint);
+      } catch {
+        this.logger.warn(
+          `Donation ${donation.id}: stored paymentId '${String(stored)}' is not a valid u64`,
+        );
+      }
+    }
+
+    const requestId = (donation as unknown as { requestId?: unknown })
+      .requestId;
+    if (requestId !== undefined && requestId !== null && requestId !== '') {
+      try {
+        const paymentId =
+          await this.sorobanService.getPaymentIdByRequest(
+            String(requestId),
+          );
+        if (paymentId !== null && paymentId !== undefined) {
+          return BigInt(paymentId as string | number | bigint);
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Donation ${donation.id}: get_payment_by_request failed — ${(err as Error).message}`,
+        );
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Fetch on-chain payment state for a donation by its u64 payment id.
+   *
+   * Delegates to SorobanService.getPaymentState, which calls the payments
+   * contract's `get_payment(payment_id: u64)` view and decodes the returned
+   * `Payment` struct. Returns null when the payment is not found.
    */
   private async fetchPaymentState(
-    txHash: string,
+    paymentId: bigint,
   ): Promise<{ status: string; amount?: number; timestamp?: string } | null> {
-    if (!txHash) return null;
-
     try {
-      // Delegate to SorobanService which owns the payments client.
-      // getDisputeState is reused here only for its plumbing; the payments
-      // contract exposes a get_payment(tx_hash) view function that returns
-      // { status, amount, timestamp }.  Until the payments-sdk exposes a
-      // typed helper we call it via the existing SorobanService pattern.
-      const result = await (
-        this.sorobanService as unknown as {
-          paymentsClient: {
-            get_payment?: (txHash: string) => Promise<{
-              status: string;
-              amount?: number;
-              timestamp?: string;
-            } | null>;
-          } | null;
-        }
-      ).paymentsClient?.get_payment?.(txHash);
-
+      const result = await this.sorobanService.getPaymentState(paymentId);
       if (!result) return null;
       return {
         status: result.status,
@@ -606,7 +706,7 @@ export class ReconciliationService {
       };
     } catch (err) {
       this.logger.warn(
-        `fetchPaymentState(${txHash}): Soroban RPC call failed — ${(err as Error).message}`,
+        `fetchPaymentState(${paymentId.toString()}): Soroban RPC call failed — ${(err as Error).message}`,
       );
       // Re-throw so the caller's try/catch can skip this record instead of
       // recording a false-positive MISSING_ON_CHAIN mismatch.

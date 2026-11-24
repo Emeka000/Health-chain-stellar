@@ -77,6 +77,24 @@ init_contract() {
     echo ""
 }
 
+# Helper function to invoke an arbitrary contract function
+invoke_contract() {
+    local contract_name=$1
+    local contract_id=$2
+    local function_name=$3
+    shift 3
+    local extra_args=("$@")
+
+    echo "  → $contract_name.$function_name"
+    stellar contract invoke \
+        --id "$contract_id" \
+        --source "$IDENTITY" \
+        --network "$NETWORK" \
+        $RPC_FLAG \
+        -- "$function_name" \
+        "${extra_args[@]}"
+}
+
 # Initialize contracts in dependency order
 
 echo "📦 Phase 1: Contracts with no dependencies..."
@@ -117,11 +135,12 @@ init_contract "matching" "$MATCHING_ID" \
     --inventory-contract "$INVENTORY_ID" \
     --requests-contract "$REQUESTS_ID"
 
-# analytics (needs inventory, requests, payments)
+# analytics (needs inventory, requests, payments, reputation)
 init_contract "analytics" "$ANALYTICS_ID" \
     --inventory-contract "$INVENTORY_ID" \
     --requests-contract "$REQUESTS_ID" \
-    --payments-contract "$PAYMENTS_ID"
+    --payments-contract "$PAYMENTS_ID" \
+    --reputation-contract "$REPUTATION_ID"
 
 echo "📦 Phase 4: Coordinator (depends on all domain contracts)..."
 echo ""
