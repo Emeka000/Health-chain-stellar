@@ -1,11 +1,12 @@
+/* eslint-disable @typescript-eslint/unbound-method */
 import { Test, TestingModule } from '@nestjs/testing';
 
+import { UssdAuthService } from './ussd-auth.service';
 import { UssdSessionStore } from './ussd-session.store';
 import {
   UssdStateMachine,
   BLOOD_TYPES,
   VALID_QUANTITIES,
-  BLOOD_BANKS,
 } from './ussd-state-machine.service';
 import { UssdSession, UssdStep } from './ussd.types';
 
@@ -42,10 +43,17 @@ describe('UssdStateMachine', () => {
       createInitial: jest.fn(),
     } as unknown as jest.Mocked<UssdSessionStore>;
 
+    const ussdAuthService = {
+      verifyPin: jest
+        .fn()
+        .mockResolvedValue({ success: true, userId: 'user-1' }),
+    } as unknown as jest.Mocked<UssdAuthService>;
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         UssdStateMachine,
         { provide: UssdSessionStore, useValue: sessionStore },
+        { provide: UssdAuthService, useValue: ussdAuthService },
       ],
     }).compile();
 
@@ -80,7 +88,7 @@ describe('UssdStateMachine', () => {
       // text input is full accumulated string; last part is #
       const result = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         '#',
         createOrder,
       );
@@ -99,7 +107,7 @@ describe('UssdStateMachine', () => {
 
       const first = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         '+2348012345678',
         createOrder,
       );
@@ -117,7 +125,7 @@ describe('UssdStateMachine', () => {
 
       const duplicate = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         '+2348012345678',
         createOrder,
       );
@@ -141,7 +149,7 @@ describe('UssdStateMachine', () => {
 
       const result = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         'p*pin',
         createOrder,
       );
@@ -161,7 +169,7 @@ describe('UssdStateMachine', () => {
 
       const result = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         'phone*0',
         createOrder,
       );
@@ -180,7 +188,7 @@ describe('UssdStateMachine', () => {
       // 0 on first step should NOT navigate back (history empty → falls through to handler)
       const result = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         '0',
         createOrder,
       );
@@ -195,7 +203,7 @@ describe('UssdStateMachine', () => {
 
       const result = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         '+2348012345678',
         createOrder,
       );
@@ -213,7 +221,7 @@ describe('UssdStateMachine', () => {
 
       const result = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         'abc',
         createOrder,
       );
@@ -228,12 +236,13 @@ describe('UssdStateMachine', () => {
       const session = makeSession({
         step: UssdStep.LOGIN_PIN,
         history: [UssdStep.LOGIN_PHONE],
+        pendingLoginPhone: '+2348012345678',
       });
       sessionStore.get.mockResolvedValue(session);
 
       const result = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         'phone*1234',
         createOrder,
       );
@@ -253,7 +262,7 @@ describe('UssdStateMachine', () => {
 
       const result = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         'phone*ab',
         createOrder,
       );
@@ -274,7 +283,7 @@ describe('UssdStateMachine', () => {
 
       const result = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         'p*pin*1',
         createOrder,
       );
@@ -298,7 +307,7 @@ describe('UssdStateMachine', () => {
 
       const result = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         'p*pin*99',
         createOrder,
       );
@@ -324,7 +333,7 @@ describe('UssdStateMachine', () => {
 
       const result = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         'p*pin*1*2',
         createOrder,
       );
@@ -353,7 +362,7 @@ describe('UssdStateMachine', () => {
 
       const result = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         'p*pin*1*abc',
         createOrder,
       );
@@ -381,7 +390,7 @@ describe('UssdStateMachine', () => {
 
       const result = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         'p*pin*1*2*1',
         createOrder,
       );
@@ -416,7 +425,7 @@ describe('UssdStateMachine', () => {
 
       const result = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         'p*pin*1*2*1*1',
         createOrder,
       );
@@ -434,7 +443,7 @@ describe('UssdStateMachine', () => {
 
       const result = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         'p*pin*1*2*1*2',
         createOrder,
       );
@@ -452,7 +461,7 @@ describe('UssdStateMachine', () => {
 
       const result = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         'p*pin*1*2*1*1',
         createOrder,
       );
@@ -466,7 +475,7 @@ describe('UssdStateMachine', () => {
 
       const result = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         'p*pin*1*2*1*9',
         createOrder,
       );
@@ -486,7 +495,7 @@ describe('UssdStateMachine', () => {
 
       const result = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         'p*pin*99',
         createOrder,
       );
@@ -504,7 +513,7 @@ describe('UssdStateMachine', () => {
 
       const result = await machine.process(
         'sess-001',
-        '+234',
+        '+2348012345678',
         '',
         createOrder,
       );
