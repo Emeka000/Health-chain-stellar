@@ -34,6 +34,7 @@ export class EnsureColumnDto {
 
 @ApiTags('Migration Safety')
 @ApiBearerAuth()
+@RequirePermissions(Permission.ADMIN_ACCESS)
 @Controller('admin/migration-safety')
 export class MigrationSafetyController {
   constructor(
