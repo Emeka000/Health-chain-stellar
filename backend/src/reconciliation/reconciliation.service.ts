@@ -26,6 +26,8 @@ import {
 /** Matching tolerances */
 const AMOUNT_TOLERANCE = 0.0000001;
 const TIMESTAMP_TOLERANCE_MS = 60_000; // 1 minute
+/** Rows fetched per keyset page; each run loops until a short page */
+const RECONCILIATION_PAGE_SIZE = 200;
 
 /**
  * On-chain payment status values returned by the payments contract's
@@ -282,6 +284,9 @@ export class ReconciliationService {
     const mismatch = await this.mismatchRepo.findOneOrFail({
       where: { id: mismatchId },
     });
+    if (mismatch.resolution !== MismatchResolution.PENDING) {
+      throw new BadRequestException('Mismatch is already resolved');
+    }
     mismatch.resolution = MismatchResolution.DISMISSED;
     mismatch.resolvedBy = userId;
     mismatch.resolvedAt = new Date();
@@ -297,6 +302,9 @@ export class ReconciliationService {
     const mismatch = await this.mismatchRepo.findOneOrFail({
       where: { id: mismatchId },
     });
+    if (mismatch.resolution !== MismatchResolution.PENDING) {
+      throw new BadRequestException('Mismatch is already resolved');
+    }
     mismatch.resolution = MismatchResolution.MANUAL;
     mismatch.resolvedBy = userId;
     mismatch.resolvedAt = new Date();
@@ -379,20 +387,43 @@ export class ReconciliationService {
     snapshot: ReconciliationSnapshotEntity,
   ): Promise<MismatchCandidate[]> {
     const mismatches: MismatchCandidate[] = [];
-    const cursor = snapshot.cursors['donation'];
 
-    const qb = this.donationRepo
-      .createQueryBuilder('d')
-      .where('d.status IN (:...statuses)', {
-        statuses: [DonationStatus.PENDING, DonationStatus.COMPLETED],
-      })
-      .orderBy('d.id', 'ASC')
-      .take(200);
+    for (;;) {
+      const cursor = snapshot.cursors['donation'];
 
-    if (cursor) qb.andWhere('d.id > :cursor', { cursor });
+      const qb = this.donationRepo
+        .createQueryBuilder('d')
+        .where('d.status IN (:...statuses)', {
+          statuses: [DonationStatus.PENDING, DonationStatus.COMPLETED],
+        })
+        .orderBy('d.id', 'ASC')
+        .take(RECONCILIATION_PAGE_SIZE);
 
-    const donations = await qb.getMany();
+      if (cursor) qb.andWhere('d.id > :cursor', { cursor });
 
+      const donations = await qb.getMany();
+      if (donations.length === 0) break;
+
+      await this.reconcileDonationPage(donations, snapshot, mismatches);
+
+      // Cursor advances per page so skipped rows (no transactionHash) never stall the loop
+      snapshot.cursors = {
+        ...snapshot.cursors,
+        donation: donations[donations.length - 1].id,
+      };
+      await this.snapshotRepo.save(snapshot);
+
+      if (donations.length < RECONCILIATION_PAGE_SIZE) break;
+    }
+
+    return mismatches;
+  }
+
+  private async reconcileDonationPage(
+    donations: DonationEntity[],
+    snapshot: ReconciliationSnapshotEntity,
+    mismatches: MismatchCandidate[],
+  ): Promise<void> {
     for (const donation of donations) {
       if (!donation.transactionHash) continue;
 
@@ -514,34 +545,51 @@ export class ReconciliationService {
         );
       }
 
-      // Update cursor for resume
-      snapshot.cursors = { ...snapshot.cursors, donation: donation.id };
       snapshot.processedCounts = {
         ...snapshot.processedCounts,
         donation: (snapshot.processedCounts['donation'] ?? 0) + 1,
       };
     }
-
-    if (donations.length > 0) await this.snapshotRepo.save(snapshot);
-    return mismatches;
   }
 
   private async reconcileDisputes(
     snapshot: ReconciliationSnapshotEntity,
   ): Promise<MismatchCandidate[]> {
     const mismatches: MismatchCandidate[] = [];
-    const cursor = snapshot.cursors['dispute'];
 
-    const qb = this.disputeRepo
-      .createQueryBuilder('d')
-      .where('d.status = :status', { status: DisputeStatus.OPEN })
-      .orderBy('d.id', 'ASC')
-      .take(100);
+    for (;;) {
+      const cursor = snapshot.cursors['dispute'];
 
-    if (cursor) qb.andWhere('d.id > :cursor', { cursor });
+      const qb = this.disputeRepo
+        .createQueryBuilder('d')
+        .where('d.status = :status', { status: DisputeStatus.OPEN })
+        .orderBy('d.id', 'ASC')
+        .take(RECONCILIATION_PAGE_SIZE);
 
-    const disputes = await qb.getMany();
+      if (cursor) qb.andWhere('d.id > :cursor', { cursor });
 
+      const disputes = await qb.getMany();
+      if (disputes.length === 0) break;
+
+      await this.reconcileDisputePage(disputes, snapshot, mismatches);
+
+      snapshot.cursors = {
+        ...snapshot.cursors,
+        dispute: disputes[disputes.length - 1].id,
+      };
+      await this.snapshotRepo.save(snapshot);
+
+      if (disputes.length < RECONCILIATION_PAGE_SIZE) break;
+    }
+
+    return mismatches;
+  }
+
+  private async reconcileDisputePage(
+    disputes: DisputeEntity[],
+    snapshot: ReconciliationSnapshotEntity,
+    mismatches: MismatchCandidate[],
+  ): Promise<void> {
     for (const dispute of disputes) {
       if (!dispute.contractDisputeId) continue;
 
@@ -592,15 +640,11 @@ export class ReconciliationService {
         );
       }
 
-      snapshot.cursors = { ...snapshot.cursors, dispute: dispute.id };
       snapshot.processedCounts = {
         ...snapshot.processedCounts,
         dispute: (snapshot.processedCounts['dispute'] ?? 0) + 1,
       };
     }
-
-    if (disputes.length > 0) await this.snapshotRepo.save(snapshot);
-    return mismatches;
   }
 
   /**

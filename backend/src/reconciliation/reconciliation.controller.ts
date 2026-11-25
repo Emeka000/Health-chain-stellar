@@ -17,6 +17,7 @@ import { Permission } from '../auth/enums/permission.enum';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 
+import { ResolveMismatchDto } from './dto/resolve-mismatch.dto';
 import {
   ExceptionCategory,
   MismatchResolution,
@@ -100,9 +101,9 @@ export class ReconciliationController {
   dismiss(
     @Param('id') id: string,
     @User('id') userId: string,
-    @Body('note') note: string,
+    @Body() dto: ResolveMismatchDto,
   ) {
-    return this.service.dismiss(id, userId, note);
+    return this.service.dismiss(id, userId, dto.note);
   }
 
   @Post('mismatches/:id/manual')
@@ -111,8 +112,8 @@ export class ReconciliationController {
   markManual(
     @Param('id') id: string,
     @User('id') userId: string,
-    @Body('note') note: string,
+    @Body() dto: ResolveMismatchDto,
   ) {
-    return this.service.markManual(id, userId, note);
+    return this.service.markManual(id, userId, dto.note);
   }
 }
