@@ -1,9 +1,11 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 import { Test, TestingModule } from '@nestjs/testing';
 
 import {
   UssdSessionStore,
   REDIS_CLIENT,
   USSD_SESSION_TTL_SECONDS,
+  MAX_FALLBACK_SESSIONS,
 } from './ussd-session.store';
 import { UssdSession, UssdStep } from './ussd.types';
 
@@ -129,6 +131,67 @@ describe('UssdSessionStore', () => {
       expect(session.sequenceNumber).toBe(0);
       expect(session.sessionNonce).toBeDefined();
       expect(redisMock.setex).toHaveBeenCalled();
+    });
+  });
+
+  describe('in-memory fallback', () => {
+    const fallbackMap = (s: UssdSessionStore) =>
+      (s as unknown as { fallbackSessions: Map<string, UssdSession> })
+        .fallbackSessions;
+
+    it('does not keep a copy of abandoned sessions while Redis is healthy', async () => {
+      for (let i = 0; i < 50; i++) {
+        await store.set({ ...mockSession, sessionId: `healthy-${i}` });
+      }
+      expect(fallbackMap(store).size).toBe(0);
+    });
+
+    it('drops a stale fallback copy once a Redis write succeeds', async () => {
+      redisMock.setex.mockRejectedValueOnce(new Error('Redis error'));
+      await store.set({ ...mockSession });
+      expect(fallbackMap(store).size).toBe(1);
+
+      await store.set({ ...mockSession });
+      expect(fallbackMap(store).size).toBe(0);
+    });
+
+    it('bounds the fallback map while Redis is down', async () => {
+      redisMock.setex.mockRejectedValue(new Error('Redis error'));
+      const total = MAX_FALLBACK_SESSIONS + 100;
+      for (let i = 0; i < total; i++) {
+        await store.set({ ...mockSession, sessionId: `down-${i}` });
+      }
+      const map = fallbackMap(store);
+      expect(map.size).toBe(MAX_FALLBACK_SESSIONS);
+      expect(map.has('down-0')).toBe(false);
+      expect(map.has(`down-${total - 1}`)).toBe(true);
+    });
+
+    it('removes expired fallback entries when they are read', async () => {
+      redisMock.setex.mockRejectedValueOnce(new Error('Redis error'));
+      await store.set({ ...mockSession, sessionId: 'expired', expiresAt: 1 });
+      expect(fallbackMap(store).size).toBe(1);
+
+      redisMock.get.mockResolvedValue(null);
+      await expect(store.get('expired')).resolves.toBeNull();
+      expect(fallbackMap(store).size).toBe(0);
+    });
+
+    it('prunes expired fallback entries on the next fallback write', async () => {
+      redisMock.setex.mockRejectedValue(new Error('Redis error'));
+      await store.set({ ...mockSession, sessionId: 'old', expiresAt: 1 });
+      await store.set({ ...mockSession, sessionId: 'fresh' });
+
+      const map = fallbackMap(store);
+      expect(map.has('old')).toBe(false);
+      expect(map.has('fresh')).toBe(true);
+    });
+
+    it('clears the fallback copy on delete', async () => {
+      redisMock.setex.mockRejectedValueOnce(new Error('Redis error'));
+      await store.set({ ...mockSession });
+      await store.delete('sess-001');
+      expect(fallbackMap(store).size).toBe(0);
     });
   });
 });
