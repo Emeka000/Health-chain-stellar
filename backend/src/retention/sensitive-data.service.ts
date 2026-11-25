@@ -4,6 +4,7 @@ import { Repository, LessThan, In, Not } from 'typeorm';
 
 import { RetentionPolicyEntity, DataCategory, RetentionAction } from './entities/retention-policy.entity';
 import { DataRedactionEntity, RedactionStatus, SensitiveFieldType } from './entities/data-redaction.entity';
+import { LegalHoldEntity, LegalHoldStatus } from './entities/legal-hold.entity';
 
 // Import entities for sensitive data
 import { BloodUnit } from '../blood-units/entities/blood-unit.entity';
@@ -158,6 +159,8 @@ export class SensitiveDataService {
     private readonly retentionPolicyRepository: Repository<RetentionPolicyEntity>,
     @InjectRepository(DataRedactionEntity)
     private readonly dataRedactionRepository: Repository<DataRedactionEntity>,
+    @InjectRepository(LegalHoldEntity)
+    private readonly legalHoldRepository: Repository<LegalHoldEntity>,
     @InjectRepository(BloodUnit)
     private readonly bloodUnitRepository: Repository<BloodUnit>,
     @InjectRepository(RiderEntity)
@@ -259,6 +262,7 @@ export class SensitiveDataService {
     });
 
     const redactions: DataRedactionEntity[] = [];
+    const heldKeys = await this.getActiveLegalHoldKeys();
 
     for (const policy of policies) {
       const cutoffDate = new Date();
@@ -323,6 +327,13 @@ export class SensitiveDataService {
             break;
         }
 
+        // Held records are never scheduled; they become eligible again once released
+        const unheld = entitiesNeedingRedaction.filter((e) => !heldKeys.has(`${field.entityType}:${e.id}`));
+        if (unheld.length < entitiesNeedingRedaction.length) {
+          this.logger.log(`Skipped ${entitiesNeedingRedaction.length - unheld.length} ${field.entityType} records under legal hold`);
+        }
+        entitiesNeedingRedaction = unheld;
+
         // Create redaction records
         for (const entity of entitiesNeedingRedaction) {
           const redaction = new DataRedactionEntity();
@@ -361,12 +372,20 @@ export class SensitiveDataService {
       where: { status: RedactionStatus.PENDING },
       take: 100, // Process in batches
     });
+    const heldKeys = await this.getActiveLegalHoldKeys();
 
     let processed = 0;
     let failed = 0;
 
     for (const redaction of pendingRedactions) {
       try {
+        // Re-check at write time: a hold may have been placed after this row was scheduled
+        if (heldKeys.has(`${redaction.entityType}:${redaction.entityId}`)) {
+          redaction.status = RedactionStatus.SKIPPED_LEGAL_HOLD;
+          await this.dataRedactionRepository.save(redaction);
+          continue;
+        }
+
         await this.executeSingleRedaction(redaction, userId);
         processed++;
       } catch (error) {
@@ -379,6 +398,13 @@ export class SensitiveDataService {
     }
 
     return { processed, failed };
+  }
+
+  private async getActiveLegalHoldKeys(): Promise<Set<string>> {
+    const holds = await this.legalHoldRepository.find({
+      where: { status: LegalHoldStatus.ACTIVE },
+    });
+    return new Set(holds.map((h) => `${h.entityType}:${h.entityId}`));
   }
 
   /**
