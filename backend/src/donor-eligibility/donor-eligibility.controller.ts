@@ -62,7 +62,8 @@ export class DonorEligibilityController {
   @ApiOperation({ summary: 'Post simulate' })
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('simulate')
-  simulateEligibility(@Body() dto: SimulateEligibilityDto) {
+  simulateEligibility(@Body() dto: SimulateEligibilityDto, @User() user: UserContext) {
+    this.permissionsService.assertIsAdminOrSelf(user, dto.donorId);
     return this.service.simulateEligibility(dto);
   }
 
