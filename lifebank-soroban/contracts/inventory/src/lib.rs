@@ -87,6 +87,7 @@ impl InventoryContract {
     /// Minimum reservation window to prevent immediately expired reservations.
     const MIN_RESERVATION_SECS: u64 = 60;
     const MAX_BATCH_SIZE: u32 = 50;
+    const MAX_UNITS_PER_RESERVATION: u32 = 50;
     const CONTRACT_VERSION: u32 = 1;
 
     /// Initialize the inventory contract
@@ -1003,6 +1004,9 @@ impl InventoryContract {
         bank_id.require_auth();
         Self::require_not_paused(&env)?;
 
+        if entries.len() > Self::MAX_BATCH_SIZE {
+            return Err(ContractError::BatchTooLarge);
+        }
         if !env.storage().instance().has(&DataKey::Admin) {
             return Err(ContractError::NotInitialized);
         }
@@ -1102,6 +1106,9 @@ impl InventoryContract {
 
         if unit_ids.is_empty() {
             return Err(ContractError::EmptyReservation);
+        }
+        if unit_ids.len() > Self::MAX_UNITS_PER_RESERVATION {
+            return Err(ContractError::BatchTooLarge);
         }
         if duration_seconds < Self::MIN_RESERVATION_SECS {
             return Err(ContractError::ReservationDurationTooShort);
@@ -1549,6 +1556,9 @@ impl InventoryContract {
 
         Self::require_not_paused(&env)?;
 
+        if batch.len() > Self::MAX_BATCH_SIZE {
+            return Err(ContractError::BatchTooLarge);
+        }
         if !storage::is_authorized_bank(&env, &requester) {
             return Err(ContractError::NotAuthorizedBloodBank);
         }
