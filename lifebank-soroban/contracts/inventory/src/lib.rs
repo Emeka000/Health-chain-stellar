@@ -722,6 +722,16 @@ impl InventoryContract {
         // discards events from failed invocations, so no event is emitted here.
         validation::validate_status_transition(old_status, new_status)?;
 
+        // Aborted runs must say why the unit came back; the audit trail is the only record.
+        // Riders cannot reach this point for these transitions: assert_can_transition
+        // only lets a Rider move a unit to InTransit.
+        if old_status == BloodStatus::InTransit
+            && matches!(new_status, BloodStatus::Reserved | BloodStatus::Available)
+            && reason.as_ref().map_or(true, |r| r.is_empty())
+        {
+            return Err(ContractError::InvalidInput);
+        }
+
         blood_unit.status = new_status;
         storage::set_blood_unit(&env, &blood_unit);
         // A reservation reference must not outlive its Reserved state. In
