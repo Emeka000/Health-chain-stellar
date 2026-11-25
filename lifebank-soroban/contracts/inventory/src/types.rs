@@ -193,6 +193,10 @@ pub const ALLOWED_BLOOD_STATUS_TRANSITIONS: &[(BloodStatus, BloodStatus)] = {
         (InTransit, Delivered),
         (InTransit, Expired),
         (InTransit, Compromised),
+        // Aborted run, unit still within spec: returned to allocation or stock.
+        // Reason is required and rider-initiated returns are rejected in lib.rs.
+        (InTransit, Reserved),
+        (InTransit, Available),
         (Expired, Disposed),
         (Compromised, Disposed),
     ]
@@ -203,8 +207,8 @@ pub const ALLOWED_BLOOD_STATUS_TRANSITIONS: &[(BloodStatus, BloodStatus)] = {
 /// The blood unit follows a strict forward-only lifecycle through the supply chain:
 ///
 ///   Available ──► Reserved ──► InTransit ──► Delivered (terminal)
-///       │             │             │
-///       ▼             ▼             ▼
+///       │             │             │  ▲
+///       ▼             ▼             ▼  │ (aborted run: back to Reserved/Available)
 ///    Expired       Expired       Expired ──► Disposed (terminal)
 ///
 ///   Compromised ──► Disposed (terminal)
@@ -214,8 +218,9 @@ pub const ALLOWED_BLOOD_STATUS_TRANSITIONS: &[(BloodStatus, BloodStatus)] = {
 /// may move to `Compromised` when temperature or chain-of-custody rules fail.
 ///
 /// All other transitions are invalid and will be rejected. Backwards transitions
-/// (e.g., Delivered → Available, InTransit → Reserved) are explicitly forbidden
-/// to preserve the integrity of the on-chain audit trail.
+/// (e.g., Delivered → Available) are explicitly forbidden to preserve the integrity
+/// of the on-chain audit trail. The only backward moves are the InTransit return
+/// paths above.
 ///
 /// This is a pure function with no storage access, making it unit-testable in isolation.
 pub fn is_valid_transition(from: &BloodStatus, to: &BloodStatus) -> bool {
@@ -612,10 +617,10 @@ mod tests {
         assert!(!is_valid_transition(&Expired, &InTransit));
         // 8. Expired -> Delivered (backwards from terminal)
         assert!(!is_valid_transition(&Expired, &Delivered));
-        // 9. InTransit -> Available (skip backwards)
-        assert!(!is_valid_transition(&InTransit, &Available));
-        // 10. InTransit -> Reserved (backwards)
-        assert!(!is_valid_transition(&InTransit, &Reserved));
+        // 9. InTransit -> Available is a permitted aborted-run return (see allowlist)
+        assert!(is_valid_transition(&InTransit, &Available));
+        // 10. InTransit -> Reserved is a permitted aborted-run return (see allowlist)
+        assert!(is_valid_transition(&InTransit, &Reserved));
         // 11. Available -> Delivered (skip forward)
         assert!(!is_valid_transition(&Available, &Delivered));
         // 12. Available -> InTransit (skip forward)
