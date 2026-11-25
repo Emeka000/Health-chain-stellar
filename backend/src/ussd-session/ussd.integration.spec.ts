@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await */
 /**
  * Integration tests that simulate complete end-to-end USSD session flows.
  *
@@ -6,6 +7,7 @@
  */
 import { Test, TestingModule } from '@nestjs/testing';
 
+import { UssdAuthService } from './ussd-auth.service';
 import { UssdSessionStore, REDIS_CLIENT } from './ussd-session.store';
 import {
   UssdStateMachine,
@@ -13,7 +15,6 @@ import {
   VALID_QUANTITIES,
   BLOOD_BANKS,
 } from './ussd-state-machine.service';
-import { UssdSession, UssdStep } from './ussd.types';
 
 /** In-memory Redis shim so integration tests don't need a real Redis instance */
 class InMemoryRedis {
@@ -67,6 +68,18 @@ describe('USSD Integration Tests', () => {
         UssdStateMachine,
         UssdSessionStore,
         { provide: REDIS_CLIENT, useValue: redis },
+        {
+          provide: UssdAuthService,
+          useValue: {
+            verifyPin: jest
+              .fn()
+              .mockImplementation(async (_phone: string, pin: string) =>
+                /^\d{4,6}$/.test(pin)
+                  ? { success: true, userId: 'user-1' }
+                  : { success: false, reason: 'invalid_pin' },
+              ),
+          },
+        },
       ],
     }).compile();
 

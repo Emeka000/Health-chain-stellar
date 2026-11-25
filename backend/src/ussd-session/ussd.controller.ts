@@ -1,6 +1,9 @@
+import { timingSafeEqual } from 'crypto';
+
 import {
   Body,
   Controller,
+  Header,
   Headers,
   HttpCode,
   HttpStatus,
@@ -10,11 +13,11 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { timingSafeEqual } from 'crypto';
 
 import { Public } from '../auth/decorators/public.decorator';
 
 import { UssdService } from './ussd.service';
+import { UssdRequest } from './ussd.types';
 
 /**
  * Throttle tracker for the USSD gateway callback.
@@ -68,6 +71,7 @@ export class UssdController {
   @Public()
   @Post('session')
   @HttpCode(HttpStatus.OK)
+  @Header('Content-Type', 'text/plain')
   @ApiOperation({ summary: "Africa's Talking USSD session callback" })
   async handleSession(
     @Body() body: Record<string, string>,
@@ -75,7 +79,10 @@ export class UssdController {
     @Headers('x-ussd-secret') headerSecret?: string,
   ): Promise<string> {
     this.assertGatewayAuthenticated(ip, body, headerSecret);
-    return this.ussdService.handleSession(body);
+    const response = await this.ussdService.handleSession(
+      body as unknown as UssdRequest,
+    );
+    return `${response.type} ${response.message}`;
   }
 
   private assertGatewayAuthenticated(

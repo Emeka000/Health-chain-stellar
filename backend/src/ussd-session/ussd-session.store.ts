@@ -1,5 +1,6 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+
+import { Injectable, Inject, Logger } from '@nestjs/common';
 
 import { Redis } from 'ioredis';
 
@@ -9,17 +10,51 @@ import { UssdSession, UssdStep } from './ussd.types';
 
 export { REDIS_CLIENT } from '../redis/redis.constants';
 export const USSD_SESSION_TTL_SECONDS = 120; // Africa's Talking default session timeout
+export const MAX_FALLBACK_SESSIONS = 1000; // Upper bound for the in-memory fallback map
 
 @Injectable()
 export class UssdSessionStore {
   private readonly logger = new Logger(UssdSessionStore.name);
   private readonly KEY_PREFIX = 'ussd:session:';
+  // Only populated while Redis is unavailable. Insertion order is used to evict the oldest entry.
   private readonly fallbackSessions = new Map<string, UssdSession>();
 
   constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis) {}
 
   private buildKey(sessionId: string): string {
     return `${this.KEY_PREFIX}${sessionId}`;
+  }
+
+  private writeFallback(session: UssdSession): void {
+    const now = Date.now();
+    this.fallbackSessions.delete(session.sessionId);
+
+    for (const [id, entry] of this.fallbackSessions) {
+      if (this.isExpired(entry, now)) {
+        this.fallbackSessions.delete(id);
+      }
+    }
+
+    for (const id of this.fallbackSessions.keys()) {
+      if (this.fallbackSessions.size < MAX_FALLBACK_SESSIONS) {
+        break;
+      }
+      this.fallbackSessions.delete(id);
+    }
+
+    this.fallbackSessions.set(session.sessionId, this.cloneSession(session));
+  }
+
+  private getFallback(sessionId: string): UssdSession | null {
+    const fallback = this.fallbackSessions.get(sessionId);
+    if (!fallback) {
+      return null;
+    }
+    if (this.isExpired(fallback)) {
+      this.fallbackSessions.delete(sessionId);
+      return null;
+    }
+    return this.cloneSession(fallback);
   }
 
   private cloneSession(session: UssdSession): UssdSession {
@@ -63,18 +98,9 @@ export class UssdSessionStore {
       }
     } catch (err) {
       this.logger.error(`Failed to get USSD session ${sessionId}`, err);
-      const fallback = this.fallbackSessions.get(sessionId);
-      if (!fallback || this.isExpired(fallback)) {
-        return null;
-      }
-      return this.cloneSession(fallback);
     }
 
-    const fallback = this.fallbackSessions.get(sessionId);
-    if (!fallback || this.isExpired(fallback)) {
-      return null;
-    }
-    return this.cloneSession(fallback);
+    return this.getFallback(sessionId);
   }
 
   async set(session: UssdSession): Promise<void> {
@@ -86,10 +112,11 @@ export class UssdSessionStore {
         USSD_SESSION_TTL_SECONDS,
         JSON.stringify(normalized),
       );
-      this.fallbackSessions.set(session.sessionId, this.cloneSession(normalized));
+      // Redis is the source of truth again, so drop any stale copy from an outage.
+      this.fallbackSessions.delete(session.sessionId);
     } catch (err) {
       this.logger.error(`Failed to set USSD session ${session.sessionId}`, err);
-      this.fallbackSessions.set(session.sessionId, this.cloneSession(session));
+      this.writeFallback(session);
     }
   }
 
