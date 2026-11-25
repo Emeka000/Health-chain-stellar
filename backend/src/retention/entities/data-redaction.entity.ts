@@ -13,6 +13,7 @@ export enum RedactionStatus {
   IN_PROGRESS = 'in_progress',
   COMPLETED = 'completed',
   FAILED = 'failed',
+  SKIPPED_LEGAL_HOLD = 'skipped_legal_hold',
 }
 
 export enum SensitiveFieldType {

@@ -7,6 +7,7 @@ import { OrganizationEntity } from '../organizations/entities/organization.entit
 import { RiderEntity } from '../riders/entities/rider.entity';
 
 import { DataRedactionEntity, RedactionStatus } from './entities/data-redaction.entity';
+import { LegalHoldEntity } from './entities/legal-hold.entity';
 import { RetentionPolicyEntity } from './entities/retention-policy.entity';
 import { SensitiveDataService } from './sensitive-data.service';
 
@@ -24,6 +25,7 @@ describe('SensitiveDataService', () => {
   let riderRepo: ReturnType<typeof mockRepo>;
   let organizationRepo: ReturnType<typeof mockRepo>;
   let locationHistoryRepo: ReturnType<typeof mockRepo>;
+  let legalHoldRepo: ReturnType<typeof mockRepo>;
 
   beforeEach(async () => {
     dataRedactionRepo = mockRepo();
@@ -31,12 +33,15 @@ describe('SensitiveDataService', () => {
     riderRepo = mockRepo();
     organizationRepo = mockRepo();
     locationHistoryRepo = mockRepo();
+    legalHoldRepo = mockRepo();
+    legalHoldRepo.find.mockResolvedValue([]);
 
     const module = await Test.createTestingModule({
       providers: [
         SensitiveDataService,
         { provide: getRepositoryToken(RetentionPolicyEntity), useValue: mockRepo() },
         { provide: getRepositoryToken(DataRedactionEntity), useValue: dataRedactionRepo },
+        { provide: getRepositoryToken(LegalHoldEntity), useValue: legalHoldRepo },
         { provide: getRepositoryToken(BloodUnit), useValue: bloodUnitRepo },
         { provide: getRepositoryToken(RiderEntity), useValue: riderRepo },
         { provide: getRepositoryToken(OrganizationEntity), useValue: organizationRepo },
