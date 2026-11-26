@@ -1,6 +1,17 @@
 use crate::error::ContractError;
 use soroban_sdk::{contractevent, contracttype, Address, Map, String, Symbol, Vec};
 
+/// Blood component type with clinically correct shelf lives.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq, Copy)]
+pub enum BloodComponent {
+    WholeBlood,
+    RedCells,
+    Platelets,
+    Plasma,
+    Cryoprecipitate,
+}
+
 /// Blood type enumeration supporting all major blood groups
 ///
 /// Each variant represents a unique combination of ABO and Rh blood typing:
@@ -70,6 +81,9 @@ pub struct BloodUnit {
 
     /// Blood type (A+, A-, B+, B-, AB+, AB-, O+, O-)
     pub blood_type: BloodType,
+
+    /// Blood component (WholeBlood, RedCells, Platelets, Plasma, Cryoprecipitate)
+    pub component: BloodComponent,
 
     /// Volume in milliliters (ml)
     /// Standard unit: 450ml ± 10% for whole blood

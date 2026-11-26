@@ -257,6 +257,7 @@ impl InventoryContract {
         bank_id: Address,
         serial_number: String,
         blood_type: BloodType,
+        component: crate::types::BloodComponent,
         quantity_ml: u32,
         donor_id: Option<Address>,
     ) -> Result<u64, ContractError> {
@@ -268,6 +269,7 @@ impl InventoryContract {
             bank_id,
             serial_number,
             blood_type,
+            component,
             quantity_ml,
             donor_id,
         )
@@ -278,6 +280,7 @@ impl InventoryContract {
         bank_id: Address,
         serial_number: String,
         blood_type: BloodType,
+        component: crate::types::BloodComponent,
         quantity_ml: u32,
         donor_id: Option<Address>,
     ) -> Result<u64, ContractError> {
@@ -340,12 +343,19 @@ impl InventoryContract {
         // expiration checks (which compare against env.ledger().timestamp())
         // are always consistent with the stored values.
         let current_time = env.ledger().timestamp();
-        let expiration_timestamp =
-            current_time + (storage::BLOOD_SHELF_LIFE_DAYS * storage::SECONDS_PER_DAY);
+        let shelf_life_days = match component {
+            crate::types::BloodComponent::WholeBlood => storage::SHELF_LIFE_WHOLE_BLOOD_DAYS,
+            crate::types::BloodComponent::RedCells => storage::SHELF_LIFE_RED_CELLS_DAYS,
+            crate::types::BloodComponent::Platelets => storage::SHELF_LIFE_PLATELETS_DAYS,
+            crate::types::BloodComponent::Plasma => storage::SHELF_LIFE_PLASMA_DAYS,
+            crate::types::BloodComponent::Cryoprecipitate => storage::SHELF_LIFE_CRYOPRECIPITATE_DAYS,
+        };
+        let expiration_timestamp = current_time + (shelf_life_days * storage::SECONDS_PER_DAY);
 
         let blood_unit = BloodUnit {
             id: blood_unit_id,
             blood_type,
+            component,
             quantity_ml,
             bank_id: bank_id.clone(),
             donor_id: donor_id.clone(),

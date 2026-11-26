@@ -4,6 +4,13 @@ use soroban_sdk::{Address, Env, String, Vec};
 pub const SECONDS_PER_DAY: u64 = 86400;
 pub const BLOOD_SHELF_LIFE_DAYS: u64 = 35;
 
+/// Per-component shelf life in days (clinical standard values).
+pub const SHELF_LIFE_WHOLE_BLOOD_DAYS: u64 = 35;
+pub const SHELF_LIFE_RED_CELLS_DAYS: u64 = 42;
+pub const SHELF_LIFE_PLATELETS_DAYS: u64 = 5;
+pub const SHELF_LIFE_PLASMA_DAYS: u64 = 365;
+pub const SHELF_LIFE_CRYOPRECIPITATE_DAYS: u64 = 365;
+
 /// Persistent storage TTL constants (ledgers; one ledger ≈ 5 s on mainnet).
 /// Entries whose remaining TTL falls below TTL_THRESHOLD are extended to TTL_EXTEND_TO.
 pub const TTL_THRESHOLD: u32 = 518_400; // ~30 days
